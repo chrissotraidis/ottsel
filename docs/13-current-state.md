@@ -96,9 +96,15 @@ returned 1375532`) go to stderr (PTY), verified in both runs.
   verification run capturing stderr too (`2>&1`) so the durable log includes
   the dispatcher-loop lines, and rebuild `gk` so the Windowed source default
   is in the binary.
-- Then Gate S1 (Simulator shell loads the runtime) is next. Do NOT start S1
-  without updating STATUS.md/loop-log first. No touch UI / icons / marketing
-  before S1.
+- **S1 is PASS (2026-08-08)** — the shell boots the no-emit runtime to the
+  GOAL kernel dispatcher loop on the iPad Pro 11-inch (M4) Simulator
+  (`docs/evidence/S1/s13-dispatcher-loop.md`; 48,200+ iterations, zero
+  faults). The key fix: the kernel dispatcher's first call is the C export
+  `pc-prof`, which an OTTSEL_IOS guard had left unregistered (value 0 ->
+  jump to EE 0); registering the PC-port exports + a full-table fallback
+  scan in `find_symbol_from_c` (order-dependent intern could create
+  duplicate symbol entries) resolved it.
+- **Gate S2 (first frame, Metal) is next** — see `docs/BOT5_HANDOFF.md`.
 
 ## Known non-goals / boundaries
 
