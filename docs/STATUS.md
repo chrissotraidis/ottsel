@@ -13,7 +13,7 @@ Mode: Phase 2 build loop (Bot 2) — Gate H1 active
 | **H2** | **No-emit runtime on host** | **PASS (2026-08-07, host)** | `docs/evidence/H2/` |
 | **H2.5** | **Packaging form decision** | **PASS (2026-08-07)** | `docs/evidence/H2.5/`, `docs/10-code-packaging-and-signing.md` |
 | H3 | Jak 1 host AOT boot proof | **PASS (2026-08-08, host)** — GOAL kernel dispatcher executes and loops under RX, no faults; evidence captured | `docs/evidence/H3/dispatcher-loop-2026-08-08.md`, `docs/evidence/H3/boot-dispatcher-loop-2026-08-08.log`, `docs/13-current-state.md`, `docs/BOT4_HANDOFF.md` |
-| S1 | Simulator shell loads runtime | **BLOCKED (2026-08-08)** — S1.0/S1.1/S1.2 PASS; S1.3 reaches the gated-error fallback (explicit stop, no crash loop) but NOT the dispatcher loop: the no-emit symbol-slot resolution is order-dependent and reads empty/garbage function pointers on iOS (GOAL-side vs C-side resolve different entries for the same name). Stop report: `docs/reports/2026-08-08-stop-S1.md` | `docs/evidence/S1/` (S1.0-S1.2 evidence + s13 gated-stop logs/screenshots), `docs/reports/2026-08-08-stop-S1.md` |
+| S1 | Simulator shell loads runtime | **PASS (2026-08-08)** — iPad Pro 11-inch (M4) Simulator launches the shell; the no-emit ARM64 runtime maps EE RW, links all 8 KERNEL.CGO objects with RW->RX flips, boots to the GOAL kernel dispatcher loop (48,200+ iterations, zero faults). Fix: register pc-prof/PC-port exports on iOS + full-table intern fallback scan; gated-error no-crash-loop safety net retained. | `docs/evidence/S1/s13-dispatcher-loop.md`, `docs/evidence/S1/s13-dispatcher-loop.log|png`, `docs/evidence/S1/s11-*`, `docs/evidence/S1/s12-*` |
 | S2 | First frame proof | — | — |
 | S3 | Touch MVP + lifecycle | — | — |
 | R1 | Handoff package | — | — |

@@ -423,3 +423,42 @@
   blocked S1.3 across 4+ manifestations with no working fix; stop report
   written with options (fix intern order-dependence; offline prelink;
   whack-a-mole patch). S1 = NOT PASSED (gated-error fallback met).
+
+## 2026-08-08 — S1 PASS: dispatcher loop reached on Simulator (Bot 4 continuation)
+
+### Iteration — root cause found: unregistered pc-prof + order-dependent intern; fixed
+- **Acted:**
+  - Traced the dispatcher fault to the FIRST GOAL statement,
+    `(profiler-instant-event "ROOT")`, which calls the C export `pc-prof`.
+    An OTTSEL_IOS early-return in `init_common_pc_port_functions` had skipped
+    the PC-port registrations, so the symbol the GOAL side reads had value 0
+    -> call to EE offset 0. Removed the guards (the headless stubs in
+    game/ios_stubs.cpp cover the input/display/GFX symbols they reference).
+  - Added an OTTSEL_IOS full-table fallback scan in `find_symbol_from_c`:
+    the open-addressing probe is order-dependent; with thousands of kernel
+    link interns a name can become unreachable from its hash position, so a
+    later intern creates a second entry (measured: GOAL-side pc-prof entry
+    0x1982cc vs C-side *listener-function* entry 0x198cac). The scan makes
+    every intern of a name find the one canonical entry.
+  - Reverted a wrong attempt (listener value = 0): the GOAL when-test
+    compares *listener-function* against s7 and skips when equal, so the H3
+    s7.offset sentinel is correct; the listener branch is a no-op.
+  - Removed the ios_boot slot patch (it had been writing to the pc-prof
+    entry); kept the InitHeapAndSymbol reorder (C exports interned before
+    the kernel link).
+- **Validated (evidence `docs/evidence/S1/s13-dispatcher-loop.*`):**
+  - EE main memory mapped RW at 0x7000000000; all 8 KERNEL.CGO objects link
+    with RW->RX flips; `Got correct kernel version 2.0, loaded in 8.1 ms`;
+    `kernel: machine started`; listener/REPL hard-disabled.
+  - **GOAL kernel dispatcher loop runs continuously on the iPad Pro 11-inch
+    (M4) Simulator: 48,200+ iterations logged (`GOAL kernel dispatcher
+    iteration N (running)`), process alive, zero crash reports.**
+  - Visible surface screenshot captured (log rendered on the SDL window).
+- **Files changed:** worktree kscheme.cpp (fallback scan + reorder already
+  in), klisten.cpp (sentinel reverted), common/kmachine.cpp +
+  jak1/kmachine.cpp (PC-port guards removed), kboot.cpp (iteration logging +
+  debug dumps), src/shell/ios_boot.cpp (slot patch removed),
+  docs/evidence/S1/s13-dispatcher-loop.*, docs/STATUS.md,
+  docs/reports/2026-08-08-stop-S1.md (marked superseded).
+- **Next:** S1.4 handoff (BOT5_HANDOFF.md for S2 = Metal/first-frame spike);
+  regenerate + verify the canonical patch; commit.

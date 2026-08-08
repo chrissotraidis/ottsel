@@ -222,7 +222,7 @@ index c7ee549da..a92020035 100644
  
  /*!
 diff --git a/game/kernel/common/kmachine.cpp b/game/kernel/common/kmachine.cpp
-index bc2c52d86..c9cd5da97 100644
+index bc2c52d86..7e34bc51a 100644
 --- a/game/kernel/common/kmachine.cpp
 +++ b/game/kernel/common/kmachine.cpp
 @@ -73,6 +73,11 @@ void InitCD() {
@@ -237,19 +237,6 @@ index bc2c52d86..c9cd5da97 100644
    if (!SplashScreen) {
      lg::info("InitVideo: skipping splash!\n");
      return;
-@@ -1111,6 +1116,12 @@ void init_common_pc_port_functions(
-     std::function<u64(const char*)> make_string_from_c_func) {
-   g_pc_port_funcs.intern_from_c = intern_from_c_func;
-   g_pc_port_funcs.make_string_from_c = make_string_from_c_func;
-+#ifdef OTTSEL_IOS
-+  // Ottsel S1.3: the headless shell registers no PC-port C-exports (input,
-+  // graphics, discord, profiler are not linked on iOS).  The kernel boot
-+  // path does not call any of them.
-+  return;
-+#endif
-   // Get a 300MHz timer value. Called from EE thread
-   make_func_symbol_func("__read-ee-timer", (void*)read_ee_timer);
-   // Do a fast memory copy.
 diff --git a/game/kernel/common/kscheme.cpp b/game/kernel/common/kscheme.cpp
 index ae43de721..cc0b9db58 100644
 --- a/game/kernel/common/kscheme.cpp
@@ -327,7 +314,7 @@ index cf6042eca..ce8ebf9dd 100644
 \ No newline at end of file
 +}
 diff --git a/game/kernel/jak1/kboot.cpp b/game/kernel/jak1/kboot.cpp
-index 859b7e13a..b9b341d18 100644
+index 859b7e13a..95166e39c 100644
 --- a/game/kernel/jak1/kboot.cpp
 +++ b/game/kernel/jak1/kboot.cpp
 @@ -23,6 +23,7 @@
@@ -365,7 +352,7 @@ index 859b7e13a..b9b341d18 100644
  
    while (MasterExit == RuntimeExitStatus::RUNNING) {
      // try to get a message from the listener, and process it if needed
-@@ -123,6 +135,41 @@ void KernelCheckAndDispatch() {
+@@ -123,8 +135,66 @@ void KernelCheckAndDispatch() {
      Timer kernel_dispatch_timer;
      if (MasterUseKernel) {
        // use the GOAL kernel.
@@ -394,6 +381,23 @@ index 859b7e13a..b9b341d18 100644
 +                   "cside value=0x{:x}",
 +                   goal_entry, *(u32*)(g_ee_main_mem + goal_entry),
 +                   jak1::ListenerFunction.offset, jak1::ListenerFunction->value);
++          {
++            auto dump_sym = [&](const char* tag, u32 entry) {
++              u32 hash = *(u32*)(g_ee_main_mem + entry + jak1::SYM_INFO_OFFSET);
++              u32 str = *(u32*)(g_ee_main_mem + entry + jak1::SYM_INFO_OFFSET + 4);
++              char name[64] = "?";
++              if (str) {
++                // GOAL String: len at +0, data() right after
++                // GOAL String: u32 len then data
++                memcpy(name, g_ee_main_mem + str + 4, 63);
++                name[63] = 0;
++              }
++              lg::info("OTTSEL_IOS dbg: {} entry=0x{:x} hash=0x{:x} str=0x{:x} bytes={}",
++                       tag, entry, hash, str, name);
++            };
++            dump_sym("goal", goal_entry);
++            dump_sym("cside", jak1::ListenerFunction.offset);
++          }
 +        }
 +        {
 +          u8* p = g_ee_main_mem + kernel_dispatcher->value;
@@ -406,7 +410,15 @@ index 859b7e13a..b9b341d18 100644
 +#endif
        call_goal_on_stack(Ptr<Function>(kernel_dispatcher->value), goal_stack, s7.offset,
                           g_ee_main_mem);
++#ifdef OTTSEL_IOS
++      static u64 ios_dispatch_count = 0;
++      if ((++ios_dispatch_count % 200) == 0) {
++        lg::info("OTTSEL_IOS: GOAL kernel dispatcher iteration {} (running)", ios_dispatch_count);
++      }
++#endif
      } else {
+       // use a hack to just run the listener function if there's no GOAL kernel.
+       if (ListenerFunction->value != s7.offset) {
 diff --git a/game/kernel/jak1/klink.cpp b/game/kernel/jak1/klink.cpp
 index fd7199959..b1ffb6eda 100644
 --- a/game/kernel/jak1/klink.cpp
@@ -660,7 +672,7 @@ index fd7199959..b1ffb6eda 100644
  
      // inform compiler that we loaded.
 diff --git a/game/kernel/jak1/klisten.cpp b/game/kernel/jak1/klisten.cpp
-index 0731d5272..c971324e4 100644
+index 0731d5272..209a11baa 100644
 --- a/game/kernel/jak1/klisten.cpp
 +++ b/game/kernel/jak1/klisten.cpp
 @@ -4,6 +4,7 @@
@@ -671,7 +683,7 @@ index 0731d5272..c971324e4 100644
  #include "common/symbols.h"
  
  #include "game/kernel/common/kdsnetm.h"
-@@ -32,6 +33,30 @@ void klisten_init_globals() {
+@@ -32,6 +33,22 @@ void klisten_init_globals() {
   * There was an "ACK" message sent here, but this is removed because we don't need it.
   */
  void InitListener() {
@@ -685,15 +697,7 @@ index 0731d5272..c971324e4 100644
 +  kernel_dispatcher = intern_from_c("kernel-dispatcher");
 +  kernel_packages = intern_from_c("*kernel-packages*");
 +  ListenerFunction = intern_from_c("*listener-function*");
-+#ifdef OTTSEL_IOS
-+  // Ottsel S1.3: iOS hard-disables the listener.  The GOAL kernel dispatcher
-+  // tests *listener-function* for truthiness and CALLS it if set; the host's
-+  // s7.offset sentinel is non-zero, so on iOS we use GOAL #f (0) and the
-+  // listener branch is skipped entirely.
-+  ListenerFunction->value = 0;
-+#else
 +  ListenerFunction->value = s7.offset;  // no listener pending
-+#endif
 +  ListenerLinkBlock = intern_from_c("*listener-link-block*");
 +  ListenerLinkBlock->value = s7.offset;
 +  ListenerStatus = 0;
@@ -703,7 +707,7 @@ index 0731d5272..c971324e4 100644
    ListenerFunction = intern_from_c("*listener-function*");
    kernel_dispatcher = intern_from_c("kernel-dispatcher");
 diff --git a/game/kernel/jak1/kmachine.cpp b/game/kernel/jak1/kmachine.cpp
-index 459a21562..dff6696db 100644
+index 459a21562..1afcdeaed 100644
 --- a/game/kernel/jak1/kmachine.cpp
 +++ b/game/kernel/jak1/kmachine.cpp
 @@ -170,6 +170,11 @@ void InitParms(int argc, const char* const* argv) {
@@ -788,19 +792,7 @@ index 459a21562..dff6696db 100644
    if (gDiscordRpcEnabled) {
      DiscordRichPresence rpc;
      char state[128];
-@@ -539,6 +559,11 @@ void pc_set_levels(u32 l0, u32 l1) {
- }
- 
- void InitMachine_PCPort() {
-+#ifdef OTTSEL_IOS
-+  // Ottsel S1.3: PC-port C-exports are not registered on iOS (no input
-+  // manager, graphics, discord, or profiler in the headless shell).
-+  return;
-+#endif
-   // PC Port added functions
-   init_common_pc_port_functions(
-       make_function_symbol_from_c,
-@@ -610,8 +635,14 @@ void InitMachineScheme() {
+@@ -610,8 +630,14 @@ void InitMachineScheme() {
    InitMachine_PCPort();
    InitSoundScheme();
    intern_from_c("*stack-top*")->value = 0x07ffc000;
@@ -816,7 +808,7 @@ index 459a21562..dff6696db 100644
    if (DiskBoot) {
      intern_from_c("*kernel-boot-message*")->value = intern_from_c(DebugBootMessage).offset;
 diff --git a/game/kernel/jak1/kscheme.cpp b/game/kernel/jak1/kscheme.cpp
-index c8287de5a..c4e9a4c90 100644
+index c8287de5a..1810f30e0 100644
 --- a/game/kernel/jak1/kscheme.cpp
 +++ b/game/kernel/jak1/kscheme.cpp
 @@ -1,6 +1,10 @@
@@ -1122,7 +1114,36 @@ index c8287de5a..c4e9a4c90 100644
  }
  
  /*!
-@@ -1744,13 +1957,29 @@ s32 InitHeapAndSymbol() {
+@@ -719,6 +932,28 @@ Ptr<Symbol> find_symbol_from_c(const char* name) {
+       return probe;
+     }
+   }
++#ifdef OTTSEL_IOS
++  // Ottsel S1.3: the open-addressing probe above is order-dependent -- a
++  // symbol interned early (e.g. by the kernel link, which interns thousands
++  // of names) can become unreachable from its hash position, so a later
++  // intern of the same name creates a second entry and the GOAL side and the
++  // C side disagree (empty/garbage function-pointer slots -> dispatcher
++  // crashes).  Fall back to a full-table scan so every intern of a name finds
++  // the single canonical entry.
++  for (u32 i = SymbolTable2.offset; i < LastSymbol.offset; i += 8) {
++    auto sym = Ptr<Symbol>(i);
++    if (!info(sym)->hash) {
++      continue;  // empty slot
++    }
++    if (info(sym)->hash == hash) {
++      if (!strcmp(info(sym)->str->data(), name)) {
++        return sym;
++      }
++    }
++  }
++  // Not found anywhere; symbol_slot was set by the primary probe for creation.
++  return Ptr<Symbol>(0);
++#endif
+ }
+ 
+ /*!
+@@ -1744,13 +1979,29 @@ s32 InitHeapAndSymbol() {
    intern_from_c("*boot-video-mode*")->value = 0;  // (u32)BootVideoMode;
  
    lg::info("Initialized GOAL heap in {:.2} ms", heap_init_timer.getMs());
@@ -1152,7 +1173,7 @@ index c8287de5a..c4e9a4c90 100644
      method_set_symbol->value--;
  
      // check the kernel version!
-@@ -1768,6 +1997,7 @@ s32 InitHeapAndSymbol() {
+@@ -1768,6 +2019,7 @@ s32 InitHeapAndSymbol() {
      }
    }
  
@@ -1160,7 +1181,7 @@ index c8287de5a..c4e9a4c90 100644
    // setup deci2count for message counter.
    protoBlock.deci2count = intern_from_c("*deci-count*").cast<s32>();
  
-@@ -1779,6 +2009,7 @@ s32 InitHeapAndSymbol() {
+@@ -1779,6 +2031,7 @@ s32 InitHeapAndSymbol() {
  
    // testing stuff:
    make_function_symbol_from_c("test-function", (void*)test_function);

@@ -181,27 +181,6 @@ void ottsel_ios_run_boot() {
   MasterDebug = 0;
   MasterUseKernel = 1;
   if (jak1::InitMachine() >= 0) {
-    // Ottsel S1.3: hard-disable the listener at the GOAL side too.  The GOAL
-    // kernel dispatcher tests *listener-function* and CALLS it if non-zero;
-    // the linker's symbol-table probe and the C-side intern can land on
-    // different entries (OpenGOAL intern quirk), so the C-side value alone
-    // is not what the GOAL side reads.  Point the GOAL-side slot (found via
-    // the same slot chain the dispatcher uses) at the GOAL `nothing`
-    // function, so the listener branch is a safe no-op.
-    {
-      // The dispatcher reads *listener-function* through a data slot at
-      // within-segment offset 0x8f8c (gkernel main code); the dispatcher
-      // entry is at 0x5384.  Slot -> s7-relative entry -> value.
-      const u32 slot_addr = jak1::kernel_dispatcher->value + (0x8f8c - 0x5384);
-      const u32 slot = *(u32*)(g_ee_main_mem + slot_addr);
-      const u32 goal_entry = s7.offset + slot;
-      const u32 nothing_fn =
-          *(u32*)(g_ee_main_mem + s7.offset + jak1_symbols::FIX_SYM_NOTHING_FUNC);
-      lg::info("OTTSEL_IOS: listener slot 0x{:x} -> entry 0x{:x} (old value 0x{:x}); "
-               "setting to nothing-func 0x{:x}",
-               slot_addr, goal_entry, *(u32*)(g_ee_main_mem + goal_entry), nothing_fn);
-      *(u32*)(g_ee_main_mem + goal_entry) = nothing_fn;
-    }
     jak1::KernelCheckAndDispatch();
     jak1::ShutdownMachine();
     lg::info("OTTSEL_IOS: kernel dispatch loop exited cleanly");
