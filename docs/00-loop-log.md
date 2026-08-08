@@ -292,3 +292,31 @@
   per-dispatch lines is the next agent's first 5-minute task.
 - **Session close:** this run ends here per operator instruction; next agent
   continues from `docs/BOT4_HANDOFF.md`.
+
+## 2026-08-08 — S1.0 chores (Bot 4)
+
+### Iteration — durable stderr capture + Windowed rebuild + patch README
+- **Acted:**
+  - Verified source default `game/settings/settings.h` = `DisplayMode::Windowed`
+    (line 64) and user settings `display-settings.json` `display_mode: 0`.
+  - Rebuilt `gk` (binary was stale vs the settings.h change):
+    `ninja -C build/h1 game/gk` (821 targets, OK).
+  - Clean host boot with full capture: `./build/h1/game/gk -fakeiso -boot -v
+    -- -nosound 2>&1 | tee`, ~70 s of dispatcher-loop uptime, stopped by
+    operator (SIGINT).
+  - Replaced `docs/evidence/H3/boot-dispatcher-loop-2026-08-08.log` with the
+    full stdout+stderr capture (86,643 lines; superset of the old 216-line
+    file). Updated `dispatcher-loop-2026-08-08.md` to document the refresh.
+  - Wrote `patches/README.md` naming `h3-jak1-host-boot.patch` canonical;
+    verified it reverse-applies cleanly to the worktree.
+- **Validated (evidence):**
+  - `grep -c call_goal_on_stack` on the durable log = **57,632** (was 0).
+  - `grep -c "returned 1375532"` = 28,808 dispatcher-loop returns.
+  - `[DISPLAY] windowed mode - resizing window to 1280x960` present (Windowed
+    verified in-log); `kernel: machine started` present.
+  - `pgrep -fl "gk -fakeiso"` → none after the run. One runtime at a time.
+- **Files changed:** `docs/evidence/H3/boot-dispatcher-loop-2026-08-08.log`
+  (replaced), `docs/evidence/H3/dispatcher-loop-2026-08-08.md` (updated),
+  `patches/README.md` (new).
+- **Next:** S1.1 emitter validation harness (validate every word of
+  KERNEL.CGO; must catch the old `0xb8760801` load32u word).

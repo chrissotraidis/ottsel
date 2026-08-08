@@ -37,9 +37,14 @@ The crash PC `0x70001a4998` (word `0xb8760801`) was inside
 
 ## Logs
 
-- `boot-dispatcher-loop-2026-08-08.log` — captured stdout to the window-close
-  shutdown (the per-dispatch lines go to stderr, so they appear in the PTY
-  transcript, not this file; both runs confirmed them).
+- `boot-dispatcher-loop-2026-08-08.log` — **full capture (stdout+stderr,
+  `2>&1`), refreshed 2026-08-08 by Bot 4 (S1.0)**: 86,643 lines containing
+  the per-dispatch stderr lines (`call_goal_on_stack: fptr=0x70001a5384 ...
+  returned 1375532`, 57,632 `call_goal_on_stack` lines), `Got correct
+  kernel version 2.0`, `kernel: machine started`, and the windowed-mode
+  line (`windowed mode - resizing window to 1280x960`). The run used the
+  freshly rebuilt `gk` (Windowed source default) and was stopped by the
+  operator after ~70 s of dispatcher-loop uptime; zero faults before stop.
 - `boot-to-goal-entry-adrp-add.log` — prior run showing the SIGILL state
   before the load32u fix.
 
@@ -52,6 +57,6 @@ The crash PC `0x70001a4998` (word `0xb8760801`) was inside
 - The two evidence runs opened the game window in **Borderless (mode 2)**,
   which the operator flagged as fullscreen. Fixed: user settings
   `display-settings.json` now `display_mode: 0` (Windowed), and the source
-  default in `game/settings/settings.h` is now `Windowed` (rebuild gk for it
-  to take effect; the settings-file fix is immediate).
+  default in `game/settings/settings.h` is now `Windowed` (gk rebuilt with
+  it on 2026-08-08; the settings-file fix is immediate).
 - One `gk` instance at a time, always.
