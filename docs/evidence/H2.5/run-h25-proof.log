@@ -1,0 +1,22 @@
+[H2.5] add2
+  code_bytes=8
+  asm -> /Users/chrissotraidis/GitHub/ottsel/docs/evidence/H2.5/add2.s
+  macho object -> /Users/chrissotraidis/GitHub/ottsel/docs/evidence/H2.5/add2.o
+  nm: 0000000000000000 T _ottsel_aot_add2
+0000000000000000 t ltmp0
+
+[H2.5] submul
+  code_bytes=20
+  asm -> /Users/chrissotraidis/GitHub/ottsel/docs/evidence/H2.5/submul.s
+  macho object -> /Users/chrissotraidis/GitHub/ottsel/docs/evidence/H2.5/submul.o
+  nm: 0000000000000000 T _ottsel_aot_submul
+0000000000000000 t ltmp0
+
+[H2.5] loop
+  code_bytes=44
+  asm -> /Users/chrissotraidis/GitHub/ottsel/docs/evidence/H2.5/loop.s
+  macho object -> /Users/chrissotraidis/GitHub/ottsel/docs/evidence/H2.5/loop.o
+  nm: 0000000000000000 T _ottsel_aot_loop
+0000000000000000 t ltmp0
+
+[H2.5] MACH-O PACKAGING PATH PASS cases=3

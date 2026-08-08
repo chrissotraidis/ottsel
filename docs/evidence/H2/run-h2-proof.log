@@ -1,0 +1,36 @@
+[H2] add2
+  code_bytes=8
+  hex=0 0 1 8b c0 3 5f d6 
+  protection=R-X size=16384 (RX-only OK)
+  got=42 expected=42
+  code hash before=a778c4cf60295fdb after=a778c4cf60295fdb (unchanged)
+  late-mprotect(PROT_WRITE) probe=denied (informational)
+[H2] const
+  code_bytes=8
+  hex=60 f 80 d2 c0 3 5f d6 
+  protection=R-X size=16384 (RX-only OK)
+  got=123 expected=123
+  code hash before=7c18b8af095a6af8 after=7c18b8af095a6af8 (unchanged)
+  late-mprotect(PROT_WRITE) probe=denied (informational)
+[H2] submul
+  code_bytes=20
+  hex=0 0 1 cb 69 0 80 d2 0 7c 9 1b 0 7c 40 93 c0 3 5f d6 
+  protection=R-X size=16384 (RX-only OK)
+  got=18 expected=18
+  code hash before=1eed8e9a994333a9 after=1eed8e9a994333a9 (unchanged)
+  late-mprotect(PROT_WRITE) probe=denied (informational)
+[H2] branch
+  code_bytes=32
+  hex=29 1 9 ca 3f 1 20 eb aa 0 0 54 29 1 9 ca 29 1 0 cb e0 3 9 aa 1 0 0 14 c0 3 5f d6 
+  protection=R-X size=16384 (RX-only OK)
+  got=7 expected=7
+  code hash before=58f41eb097f55b58 after=58f41eb097f55b58 (unchanged)
+  late-mprotect(PROT_WRITE) probe=denied (informational)
+[H2] loop
+  code_bytes=44
+  hex=29 1 9 ca 8 1 8 ca 4 0 0 14 29 1 8 8b 21 0 80 d2 8 1 1 8b 1f 1 20 eb 8b ff ff 54 e8 3 15 aa e0 3 9 aa c0 3 5f d6 
+  protection=R-X size=16384 (RX-only OK)
+  got=45 expected=45
+  code hash before=d1b96d37c9be56a8 after=d1b96d37c9be56a8 (unchanged)
+  late-mprotect(PROT_WRITE) probe=denied (informational)
+[H2] RX-ONLY EXEC PASS cases=5

@@ -1,0 +1,26 @@
+[H1] add2
+  function=ottsel-h1-add
+  code_bytes=8
+  hex=0 0 1 8b c0 3 5f d6 
+  got=42 expected=42
+[H1] const
+  function=ottsel-h1-const
+  code_bytes=8
+  hex=60 f 80 d2 c0 3 5f d6 
+  got=123 expected=123
+[H1] submul
+  function=ottsel-h1-submul
+  code_bytes=44
+  hex=ff 43 0 d1 e9 3 80 3d e9 f 1f f8 0 0 1 cb 69 0 80 d2 0 7c 9 1b 0 7c 40 93 e9 7 41 f8 e9 3 c0 3d ff 43 0 91 c0 3 5f d6 
+  got=18 expected=18
+[H1] branch
+  function=ottsel-h1-abs
+  code_bytes=56
+  hex=ff 43 0 d1 e9 3 80 3d e9 f 1f f8 29 1 9 ca 3f 1 20 eb aa 0 0 54 29 1 9 ca 29 1 0 cb e0 3 9 aa 1 0 0 14 e9 7 41 f8 e9 3 c0 3d ff 43 0 91 c0 3 5f d6 
+  got=7 expected=7
+[H1] callish-move
+  function=ottsel-h1-id
+  code_bytes=4
+  hex=c0 3 5f d6 
+  got=99 expected=99
+[H1] PASS cases=5

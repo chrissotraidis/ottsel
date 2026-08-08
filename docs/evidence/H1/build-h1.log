@@ -1,0 +1,30 @@
+ninja: Entering directory `build/h1'
+[0/2] Re-checking globbed directories...
+[1/22] Building CXX object goalc/CMakeFiles/compiler.dir/compiler/compilation/ConstantPropagation.cpp.o
+[2/22] Building CXX object goalc/CMakeFiles/compiler.dir/compiler/compilation/Block.cpp.o
+[3/22] Building CXX object goalc/CMakeFiles/compiler.dir/compiler/compilation/Math.cpp.o
+[4/22] Building CXX object goalc/CMakeFiles/compiler.dir/compiler/compilation/Define.cpp.o
+[5/22] Building CXX object goalc/CMakeFiles/compiler.dir/compiler/compilation/Debug.cpp.o
+[6/22] Building CXX object goalc/CMakeFiles/compiler.dir/compiler/compilation/Macro.cpp.o
+[7/22] Building CXX object goalc/CMakeFiles/compiler.dir/compiler/compilation/Asm.cpp.o
+[8/22] Building CXX object goalc/CMakeFiles/compiler.dir/compiler/compilation/Atoms.cpp.o
+[9/22] Building CXX object goalc/CMakeFiles/compiler.dir/compiler/Compiler.cpp.o
+[10/22] Building CXX object goalc/CMakeFiles/compiler.dir/compiler/compilation/ControlFlow.cpp.o
+[11/22] Building CXX object goalc/CMakeFiles/compiler.dir/compiler/Util.cpp.o
+[12/22] Building CXX object goalc/CMakeFiles/compiler.dir/compiler/compilation/CompilerControl.cpp.o
+[13/22] Building CXX object goalc/CMakeFiles/compiler.dir/compiler/compilation/State.cpp.o
+[14/22] Building CXX object goalc/CMakeFiles/compiler.dir/compiler/compilation/Function.cpp.o
+[15/22] Building CXX object goalc/CMakeFiles/compiler.dir/compiler/compilation/Static.cpp.o
+[16/22] Building CXX object goalc/CMakeFiles/compiler.dir/compiler/compilation/Type.cpp.o
+[17/22] Building CXX object goalc/CMakeFiles/ottsel-h1-proof.dir/__/tools/ottsel_h1/h1_arm64_codegen_proof.cpp.o
+/Users/chrissotraidis/GitHub/ottsel/out/jak-project/tools/ottsel_h1/h1_arm64_codegen_proof.cpp:66:46: warning: unused parameter 'f' [-Wunused-parameter]
+   66 |     auto codegen_supported = [](FunctionEnv* f) {
+      |                                              ^
+/Users/chrissotraidis/GitHub/ottsel/out/jak-project/tools/ottsel_h1/h1_arm64_codegen_proof.cpp:66:10: warning: unused variable 'codegen_supported' [-Wunused-variable]
+   66 |     auto codegen_supported = [](FunctionEnv* f) {
+      |          ^~~~~~~~~~~~~~~~~
+2 warnings generated.
+[18/22] Building CXX object goalc/CMakeFiles/compiler.dir/make/Tools.cpp.o
+[19/22] Building CXX object goalc/CMakeFiles/compiler.dir/debugger/DebugServer.cpp.o
+[20/22] Linking CXX shared library goalc/libcompiler.dylib
+[21/22] Linking CXX executable goalc/ottsel-h1-proof

@@ -1,0 +1,216 @@
+[08:31] [[38;2;144;238;144minfo[0m] Compiled Version: 641fb572e
+[08:31] [[38;2;255;255;000mwarn[0m] cpuid not implemented on this platform
+[08:31] [[38;2;255;255;000mwarn[0m] cpuid not implemented on this platform
+[08:31] [[38;2;255;255;000mwarn[0m] cpuid not implemented on this platform
+[08:31] [[38;2;255;255;000mwarn[0m] cpuid not implemented on this platform
+[08:31] [[38;2;255;255;000mwarn[0m] cpuid not implemented on this platform
+[08:31] [[38;2;255;255;000mwarn[0m] cpuid not implemented on this platform
+-------- CPU Information --------
+ Brand: 
+ Model: 
+ AVX  : false
+ AVX2 : false
+[08:31] [[38;2;144;238;144minfo[0m] No project path provided, looking for data/ folder in current directory
+[08:31] [[38;2;064;224;208mdebug[0m] Current executable directory - /Users/chrissotraidis/GitHub/ottsel/out/jak-project/build/h1/game/gk
+[08:31] [[38;2;064;224;208mdebug[0m] Using development repo path: /Users/chrissotraidis/GitHub/ottsel/out/jak-project
+[08:31] [[38;2;144;238;144minfo[0m] AVX2 mode disabled
+[08:31] [[38;2;064;224;208mdebug[0m] removing 1 log files
+[08:31] [[38;2;064;224;208mdebug[0m] removing /Users/chrissotraidis/GitHub/ottsel/out/jak-project/log/jak1.2026-08-08T09-40-24.log
+[08:31] [[38;2;144;238;144minfo[0m] OpenGOAL Runtime 1.0
+[08:31] [[38;2;144;238;144minfo[0m] GFX Init
+[08:31] [[38;2;144;238;144minfo[0m] Loading debug settings at /Users/chrissotraidis/Library/Application Support/OpenGOAL/jak1/misc/debug-settings.json
+[08:34] [[38;2;144;238;144minfo[0m] SDL Initialized, compiled with version - 3004010 | linked with version - 3004010
+[08:34] [[38;2;144;238;144minfo[0m] gl init took 3.030s
+
+[08:35] [[38;2;144;238;144minfo[0m] OpenGL context version: 4.1 Metal - 90.5
+[08:35] [[38;2;144;238;144minfo[0m] OpenGL context renderer: Apple M1
+[08:35] [[38;2;144;238;144minfo[0m] OpenGL context vendor: Apple
+[08:35] [[38;2;144;238;144minfo[0m] OpenGL context shading language version: 4.10
+[08:35] [[38;2;255;255;000mwarn[0m] OTTSEL_NO_EMIT: missing GAME.fr3, booting with empty common level
+[08:35] [[38;2;144;238;144minfo[0m] OpenGL initialized - v4.1 | Renderer: 4.1 Metal - 90.5
+[08:35] [[38;2;144;238;144minfo[0m] [DISPLAY] Updating current display info
+[08:35] [[38;2;144;238;144minfo[0m] [DISPLAY] current display index is 0
+[08:35] [[38;2;144;238;144minfo[0m] [DISPLAY] Enumerating video modes
+[08:35] [[38;2;144;238;144minfo[0m] [DISPLAY]: Found monitor Built-in Retina Display, currently set to 1680x1050@60hz. Format: 372645892, Orientation: 0
+[08:35] [[38;2;144;238;144minfo[0m] [DISPLAY] Enumerating resolutions
+[08:35] [[38;2;144;238;144minfo[0m] [DISPLAY]: 2560x1600 is supported
+[08:35] [[38;2;144;238;144minfo[0m] [DISPLAY]: 2048x1280 is supported
+[08:35] [[38;2;144;238;144minfo[0m] [DISPLAY]: 1680x1050 is supported
+[08:35] [[38;2;144;238;144minfo[0m] [DISPLAY]: 1650x1050 is supported
+[08:35] [[38;2;144;238;144minfo[0m] [DISPLAY]: 1440x900 is supported
+[08:35] [[38;2;144;238;144minfo[0m] [DISPLAY]: 1440x900 is supported
+[08:35] [[38;2;144;238;144minfo[0m] [DISPLAY]: 1280x800 is supported
+[08:35] [[38;2;144;238;144minfo[0m] [DISPLAY]: 1280x800 is supported
+[08:35] [[38;2;144;238;144minfo[0m] [DISPLAY]: 1152x720 is supported
+[08:35] [[38;2;144;238;144minfo[0m] [DISPLAY]: 1024x768 is supported
+[08:35] [[38;2;144;238;144minfo[0m] [DISPLAY]: 1024x640 is supported
+[08:35] [[38;2;144;238;144minfo[0m] [DISPLAY]: 840x525 is supported
+[08:35] [[38;2;144;238;144minfo[0m] [DISPLAY]: 825x525 is supported
+[08:35] [[38;2;144;238;144minfo[0m] [DISPLAY]: 800x600 is supported
+[08:35] [[38;2;144;238;144minfo[0m] Loading display settings at /Users/chrissotraidis/Library/Application Support/OpenGOAL/jak1/settings/display-settings.json
+[08:35] [[38;2;144;238;144minfo[0m] [DISPLAY] Setting to display mode: 2, with window_size: 1280,960
+[08:35] [[38;2;144;238;144minfo[0m] Loading input settings at /Users/chrissotraidis/Library/Application Support/OpenGOAL/jak1/settings/input-settings.json
+[08:35] [[38;2;255;255;000mwarn[0m] No active game controllers could be found or loaded successfully - inputs will not work!
+[08:36] [[38;2;064;224;208mdebug[0m] # Initialize IOP...
+[08:36] [[38;2;064;224;208mdebug[0m] [IOP] Restart!
+[08:36] [[38;2;064;224;208mdebug[0m] # IOP initialized
+[08:36] [[38;2;064;224;208mdebug[0m] # Initialize DMP...
+[08:36] [[38;2;064;224;208mdebug[0m] [IOP] Wait for OVERLORD to start...
+[08:36] [[38;2;064;224;208mdebug[0m] # DMP initialized
+[08:36] [[38;2;064;224;208mdebug[0m] # Initialize EE-Worker...
+[08:36] [[38;2;064;224;208mdebug[0m] [DECI2] Waiting for EE to register protos
+[08:36] [[38;2;064;224;208mdebug[0m] # EE-Worker initialized
+[08:36] [[38;2;064;224;208mdebug[0m] # Initialize EE...
+[08:36] [[38;2;064;224;208mdebug[0m] Main memory mapped at 0x0000007000000000
+[08:36] [[38;2;064;224;208mdebug[0m] Main memory size 0x8000000 bytes (128.000 MB)
+[08:36] [[38;2;064;224;208mdebug[0m] [EE] Initialization complete!
+[08:36] [[38;2;064;224;208mdebug[0m] # EE initialized
+[08:36] [[38;2;144;238;144minfo[0m] GFX Loop
+[08:36] [[38;2;064;224;208mdebug[0m] [EE] Run!
+allow_debugging not implemented on macOS
+dkernel: no sound mode
+[08:36] [[38;2;144;238;144minfo[0m] gkernel: global heap 0x0013fd20 to 0x03eb82e0 (size 61.470 MB)
+[08:36] [[38;2;144;238;144minfo[0m] gkernel: debug heap 0x05000000 to 0x07ff0000 (size 47.938 MB, gap 17.281 MB)
+[08:36] [[38;2;144;238;144minfo[0m] Initializing CD drive. This may take a while...
+[08:36] [[38;2;064;224;208mdebug[0m] Disk type 20
+
+[08:36] [[38;2;064;224;208mdebug[0m] Rebooting IOP...
+[08:36] [[38;2;144;238;144minfo[0m] Initializing CD drive. This may take a while...
+[08:36] [[38;2;064;224;208mdebug[0m] Disk type 20
+
+[08:36] [[38;2;064;224;208mdebug[0m] Initializing CD library in ISO_CD mode...
+arg 1 : fakeiso
+arg 2 : SCREEN1.USA
+arg 3 : -nosound
+[08:36] [[38;2;064;224;208mdebug[0m] [IOP] Run!
+[08:36] [[38;2;255;000;000merror[0m] [FAKEISO] failed to find TWEAKVALMUS
+
+[08:36] [[38;2;255;000;000merror[0m] [FAKEISO] failed to find VAGDIR  AYB
+
+IOP: ======================================================================
+IOP : iso InitISOFS : cannot load VAG directory
+IOP: ======================================================================
+[08:36] [[38;2;255;000;000merror[0m] [FAKEISO] failed to find SCREEN1 USA
+
+[08:36] [[38;2;144;238;144minfo[0m] InitIOP OK
+[08:36] [[38;2;255;255;000mwarn[0m] InitVideo: splash screen not found!
+
+[08:36] [[38;2;144;238;144minfo[0m] [DECI2] Add new protocol driver 1 for 0xe042
+gproto: proto open at socket 1
+[08:36] [[38;2;144;238;144minfo[0m] InitSound
+[08:36] [[38;2;144;238;144minfo[0m] InitRPC
+kernel: RPC port #0 started [DEB1]
+kernel: RPC port #1 started [DEB2]
+kernel: RPC port #2 started [DEB3]
+kernel: RPC port #3 started [DEB4]
+kernel: RPC port #4 started [DEB5]
+kernel: RPC port #5 started [DEB6]
+[08:36] [[38;2;064;224;208mdebug[0m] [XSocketServer:8112] initialized
+[08:36] [[38;2;144;238;144minfo[0m] [Deci2Server:8112] awaiting connections
+[08:36] [[38;2;064;224;208mdebug[0m] [DECI2] Waiting for listener...
+[08:36] [[38;2;144;238;144minfo[0m] Initialized GOAL heap in 0.45 ms
+[08:36] [[38;2;064;224;208mdebug[0m] [Load and Link DGO From C] kernel
+[08:36] [[38;2;064;224;208mdebug[0m] [Begin Loading DGO RPC] KERNEL.CGO, 0x36b82c0, 0x3ab82c0, 0x180e80
+[08:36] [[38;2;064;224;208mdebug[0m] [OVERLORD] Queue 0 (1/4), LoadDGO
+[08:36] [[38;2;064;224;208mdebug[0m]   PRI 0 elt 0 LoadDGO @ #x100470BA0
+[08:36] [[38;2;064;224;208mdebug[0m] [OVERLORD] FS Open KERNEL  CGO
+[08:36] [[38;2;144;238;144minfo[0m] [Overlord DGO] Got DGO file header for KERNEL.CGO with 8 objects
+[08:36] [[38;2;064;224;208mdebug[0m] [link and exec] gcommon            0  77662 heap-use   266538  3145728: 0x180e4a
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: stub arena A flipped RX (4680 bytes used)
+[08:36] [[38;2;064;224;208mdebug[0m] link finish: gcommon
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level seg 2 offset 0x36b0000 size 0x4184
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level code pages flipped RX (481093681152..481093697536)
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: main seg 0 offset 0x184000 size 0x8c38 code 0x8000
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: main code pages flipped RX (481037926400..481037959168)
+OTTSEL link: executing top-level of gcommon entry=0x36b0004 stack=0x7007fffff0 st=0x14fd24
+OTTSEL link: top-level of gcommon returned
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level code pages back to RW (481093681152..481093697536)
+[08:36] [[38;2;064;224;208mdebug[0m] [link and exec] gstring-h          0  16486 heap-use   329792  3162376: 0x190560
+[08:36] [[38;2;064;224;208mdebug[0m] link finish: gstring-h
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level seg 2 offset 0x36b4000 size 0x4000
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level code pages flipped RX (481093697536..481093713920)
+OTTSEL link: executing top-level of gstring-h entry=0x36b4004 stack=0x7007fffff0 st=0x14fd24
+OTTSEL link: top-level of gstring-h returned
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level code pages back to RW (481093697536..481093713920)
+[08:36] [[38;2;064;224;208mdebug[0m] [link and exec] gkernel-h          0  61422 heap-use   329792  3162376: 0x190560
+[08:36] [[38;2;064;224;208mdebug[0m] link finish: gkernel-h
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level seg 2 offset 0x36b0000 size 0x4104
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level code pages flipped RX (481093681152..481093697536)
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: main seg 0 offset 0x194000 size 0x40cc code 0x4000
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: main code pages flipped RX (481037991936..481038008320)
+OTTSEL link: executing top-level of gkernel-h entry=0x36b0004 stack=0x7007fffff0 st=0x14fd24
+OTTSEL link: top-level of gkernel-h returned
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level code pages back to RW (481093681152..481093697536)
+[08:36] [[38;2;064;224;208mdebug[0m] [link and exec] gkernel            0  88107 heap-use   378608  3183732: 0x19c410
+[08:36] [[38;2;064;224;208mdebug[0m] link finish: gkernel
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level seg 2 offset 0x36b0000 size 0x43f8
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level code pages flipped RX (481093681152..481093697536)
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: main seg 0 offset 0x1a0000 size 0x9094 code 0x8000
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: main code pages flipped RX (481038041088..481038073856)
+OTTSEL link: executing top-level of gkernel entry=0x36b0004 stack=0x7007fffff0 st=0x14fd24
+OTTSEL link: top-level of gkernel returned
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level code pages back to RW (481093681152..481093697536)
+[08:36] [[38;2;064;224;208mdebug[0m] [link and exec] pskernel           0  53735 heap-use  3901284  4267443: 0x4f8484
+[08:36] [[38;2;064;224;208mdebug[0m] link finish: pskernel
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level seg 2 offset 0x36b0000 size 0x4050
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level code pages flipped RX (481093681152..481093697536)
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: main seg 0 offset 0x4fc000 size 0x433c code 0x4000
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: main code pages flipped RX (481041563648..481041580032)
+OTTSEL link: executing top-level of pskernel entry=0x36b0004 stack=0x7007fffff0 st=0x14fd24
+OTTSEL link: top-level of pskernel returned
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level code pages back to RW (481093681152..481093697536)
+[08:36] [[38;2;064;224;208mdebug[0m] [link and exec] gstring            0  37752 heap-use  3949968  4284400: 0x5042b0
+[08:36] [[38;2;064;224;208mdebug[0m] link finish: gstring
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level seg 2 offset 0x36b0000 size 0x4110
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level code pages flipped RX (481093681152..481093697536)
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: main seg 0 offset 0x508000 size 0x40fc code 0x4000
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: main code pages flipped RX (481041612800..481041629184)
+OTTSEL link: executing top-level of gstring entry=0x36b0004 stack=0x7007fffff0 st=0x14fd24
+OTTSEL link: top-level of gstring returned
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level code pages back to RW (481093681152..481093697536)
+[08:36] [[38;2;064;224;208mdebug[0m] [link and exec] dgo-h              0  33858 heap-use  4234661  4284400: 0x549ac5
+[08:36] [[38;2;064;224;208mdebug[0m] link finish: dgo-h
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level seg 2 offset 0x36b0000 size 0x4028
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level code pages flipped RX (481093681152..481093697536)
+OTTSEL link: executing top-level of dgo-h entry=0x36b0004 stack=0x7007fffff0 st=0x14fd24
+OTTSEL link: top-level of dgo-h returned
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level code pages back to RW (481093681152..481093697536)
+[08:36] [[38;2;064;224;208mdebug[0m] [OVERLORD] FS_Close KERNEL  CGO @ 0/240
+[08:36] [[38;2;064;224;208mdebug[0m] [link and exec] gstate             1  34262 heap-use  4234864  4301072: 0x549b90
+[08:36] [[38;2;064;224;208mdebug[0m] link finish: gstate
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level seg 2 offset 0x3eac000 size 0x4020
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level code pages flipped RX (481102053376..481102069760)
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: main seg 0 offset 0x54c000 size 0x4118 code 0x4000
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: main code pages flipped RX (481041891328..481041907712)
+OTTSEL link: executing top-level of gstate entry=0x3eac004 stack=0x7007fffff0 st=0x14fd24
+OTTSEL link: top-level of gstate returned
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: top-level code pages back to RW (481102053376..481102069760)
+[08:36] [[38;2;144;238;144minfo[0m] Got correct kernel version 2.0, loaded in 13 ms
+[08:36] [[38;2;255;255;000mwarn[0m] OTTSEL_NO_EMIT: listener code receive is disabled
+[08:36] [[38;2;144;238;144minfo[0m] InitListenerConnect
+[08:36] [[38;2;144;238;144minfo[0m] InitCheckListener
+kernel: machine started
+[08:36] [[38;2;064;224;208mdebug[0m] OTTSEL no-emit: stub arena B flipped RX (8568 bytes used)
+IOP shut down
+DMA shut down
+dconnect: closed socket at kernel side
+kernel: machine shutdown
+[08:40] [[38;2;064;224;208mdebug[0m] [EE] Done!
+[08:40] [[38;2;064;224;208mdebug[0m] # Stop DMP
+[08:40] [[38;2;064;224;208mdebug[0m] # Stop IOP
+[08:40] [[38;2;064;224;208mdebug[0m] # Stop EE
+[08:40] [[38;2;064;224;208mdebug[0m] # Stop EE-Worker
+[08:40] [[38;2;064;224;208mdebug[0m] [SYSTEM] Thread EE is returning
+[08:40] [[38;2;064;224;208mdebug[0m] [SYSTEM] Thread IOP is returning
+[08:40] [[38;2;064;224;208mdebug[0m] [SYSTEM] Thread EE-Worker is returning
+[08:40] [[38;2;064;224;208mdebug[0m] [SYSTEM] Thread DMP is returning
+[08:40] [[38;2;064;224;208mdebug[0m] # Stop DMP
+[08:40] [[38;2;064;224;208mdebug[0m] # Stop IOP
+[08:40] [[38;2;064;224;208mdebug[0m] # Stop EE
+[08:40] [[38;2;064;224;208mdebug[0m] # Stop EE-Worker
+[08:40] [[38;2;064;224;208mdebug[0m]  # Join DMP
+[08:40] [[38;2;064;224;208mdebug[0m]  # Join IOP
+[08:40] [[38;2;064;224;208mdebug[0m]  # Join EE
+[08:40] [[38;2;064;224;208mdebug[0m]  # Join EE-Worker
+[08:40] [[38;2;144;238;144minfo[0m] GFX Exit
+[08:40] [[38;2;144;238;144minfo[0m] GOAL Runtime Shutdown (code 2)

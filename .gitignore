@@ -1,0 +1,26 @@
+.DS_Store
+# user game content / extracts
+iso_data/
+assets-user/
+user-content/
+out/
+*.iso
+*.cso
+*.bin
+*.cue
+*.img
+*.mdf
+*.nrg
+
+# local build trees if created later
+build/
+.build/
+DerivedData/
+*.xcuserstate
+
+# editor
+.idea/
+.vscode/
+
+# local research corpus (upstream clones with nested .git; keep out of repo git)
+ref/
