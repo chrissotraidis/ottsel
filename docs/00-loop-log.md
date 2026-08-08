@@ -356,3 +356,32 @@
   `patches/h3-jak1-host-boot.patch` (regenerated).
 - **Next:** S1.2 — iOS Simulator app shell (src/ target, SDL3 window,
   renderer stubbed, listener disabled).
+
+## 2026-08-08 — S1.2 iOS Simulator app shell (Bot 4)
+
+### Iteration — SDL3 iOS shell launches on iPad Pro 11-inch (M4), lifecycle clean
+- **Acted:**
+  - Built SDL3 3.4.10 static for iphonesimulator arm64 (CMake
+    `-DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphonesimulator26.5
+    -DCMAKE_OSX_DEPLOYMENT_TARGET=18.5 -DSDL_STATIC=ON`) -> `out/ios/sdl/`.
+  - Wrote `src/shell/main.cpp` (video-only SDL3, no renderer, window-surface
+    fill, lifecycle logging via SDL_AddEventWatch, log file in app
+    container), `src/shell/Info.plist` (bundle com.ottsel.shell, min iOS
+    18.5), `scripts/build-ios-shell.sh` (compile with
+    `-target arm64-apple-ios18.5-simulator`, full framework list, bundle +
+    ad-hoc codesign).
+  - Booted iPad Pro 11-inch (M4) simulator (only booted device), installed,
+    launched.
+- **Validated (evidence in `docs/evidence/S1/`):**
+  - App visible on Simulator: `s12-shell-launch.png`,
+    `s12-shell-window.png`.
+  - Log `s12-shell-log.txt`: SDL init ok, window created (no renderer),
+    surface filled; background (Settings) -> DID_ENTER_BACKGROUND (alive);
+    foreground (relaunch) -> DID_ENTER_FOREGROUND (alive); same PID 53163
+    through the cycle. No crash, no fullscreen flag.
+- **Files changed:** `src/shell/main.cpp`, `src/shell/Info.plist`,
+  `scripts/build-ios-shell.sh`, `docs/evidence/S1/s12-shell.md`,
+  `docs/evidence/S1/s12-*.png|txt`.
+- **Next:** S1.3 — link the no-emit runtime into the shell: EE memory map +
+  RW->RX flip under the Simulator, bundle KERNEL.CGO as an app resource,
+  boot to the dispatcher loop, log to file + visible surface.
