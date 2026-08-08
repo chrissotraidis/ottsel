@@ -221,6 +221,35 @@ index c7ee549da..a92020035 100644
  }
  
  /*!
+diff --git a/game/kernel/common/kmachine.cpp b/game/kernel/common/kmachine.cpp
+index bc2c52d86..c9cd5da97 100644
+--- a/game/kernel/common/kmachine.cpp
++++ b/game/kernel/common/kmachine.cpp
+@@ -73,6 +73,11 @@ void InitCD() {
+  * Initialize the GS and display the splash screen.
+  */
+ void InitVideo() {
++#ifdef OTTSEL_IOS
++  // Ottsel S1.3: no graphics init on iOS (headless-renderer shell).
++  lg::info("InitVideo: skipped (OTTSEL_IOS headless shell)");
++  return;
++#endif
+   if (!SplashScreen) {
+     lg::info("InitVideo: skipping splash!\n");
+     return;
+@@ -1111,6 +1116,12 @@ void init_common_pc_port_functions(
+     std::function<u64(const char*)> make_string_from_c_func) {
+   g_pc_port_funcs.intern_from_c = intern_from_c_func;
+   g_pc_port_funcs.make_string_from_c = make_string_from_c_func;
++#ifdef OTTSEL_IOS
++  // Ottsel S1.3: the headless shell registers no PC-port C-exports (input,
++  // graphics, discord, profiler are not linked on iOS).  The kernel boot
++  // path does not call any of them.
++  return;
++#endif
+   // Get a 300MHz timer value. Called from EE thread
+   make_func_symbol_func("__read-ee-timer", (void*)read_ee_timer);
+   // Do a fast memory copy.
 diff --git a/game/kernel/common/kscheme.cpp b/game/kernel/common/kscheme.cpp
 index ae43de721..cc0b9db58 100644
 --- a/game/kernel/common/kscheme.cpp
@@ -274,8 +303,31 @@ index ae43de721..cc0b9db58 100644
  #elif _WIN32
    return _call_goal_on_stack_asm_win32(rsp, fptr, st_ptr, offset);
  #endif
+diff --git a/game/kernel/common/ksocket.cpp b/game/kernel/common/ksocket.cpp
+index cf6042eca..ce8ebf9dd 100644
+--- a/game/kernel/common/ksocket.cpp
++++ b/game/kernel/common/ksocket.cpp
+@@ -80,6 +80,11 @@ void InitCheckListener() {}
+  * DONE, EXACT
+  */
+ Ptr<char> WaitForMessageAndAck() {
++#ifdef OTTSEL_IOS
++  // Ottsel S1.3: listener/REPL is hard-disabled on iOS; never block on a
++  // socket.  The dispatcher loop runs with no incoming messages.
++  return Ptr<char>(0);
++#endif
+   if (!MasterDebug) {
+     MessCount = -1;
+   } else {
+@@ -99,4 +104,4 @@ Ptr<char> WaitForMessageAndAck() {
+  */
+ void CloseListener() {
+   Msg(6, "dconnect: closed socket at kernel side\n");
+-}
+\ No newline at end of file
++}
 diff --git a/game/kernel/jak1/kboot.cpp b/game/kernel/jak1/kboot.cpp
-index 859b7e13a..b6b2a47c3 100644
+index 859b7e13a..b9b341d18 100644
 --- a/game/kernel/jak1/kboot.cpp
 +++ b/game/kernel/jak1/kboot.cpp
 @@ -23,6 +23,7 @@
@@ -313,8 +365,50 @@ index 859b7e13a..b6b2a47c3 100644
  
    while (MasterExit == RuntimeExitStatus::RUNNING) {
      // try to get a message from the listener, and process it if needed
+@@ -123,6 +135,41 @@ void KernelCheckAndDispatch() {
+     Timer kernel_dispatch_timer;
+     if (MasterUseKernel) {
+       // use the GOAL kernel.
++#if defined(OTTSEL_IOS) || defined(OTTSEL_NO_EMIT)
++      static int dbg_count = 0;
++      if (dbg_count++ < 8) {
++        lg::info("OTTSEL_IOS dbg: kernel_dispatcher->value=0x{:x} off=0x{:x} fptr=0x{:x} "
++                 "listener-fn=0x{:x} kernel-pkgs=0x{:x} active-pool-sym=0x{:x}",
++                 kernel_dispatcher->value, (u64)g_ee_main_mem,
++                 (u64)(g_ee_main_mem + kernel_dispatcher->value),
++                 jak1::ListenerFunction->value,
++                 jak1::kernel_packages->value,
++                 intern_from_c("*active-pool*")->value);
++        lg::info("OTTSEL_IOS dbg: listener-proc=0x{:x} null-proc=0x{:x} enable-method-set=0x{:x}",
++                 intern_from_c("*listener-process*")->value,
++                 intern_from_c("*null-process*")->value,
++                 intern_from_c("*enable-method-set*")->value);
++        lg::info("OTTSEL_IOS dbg: ListenerFunction ptr=0x{:x} slot[0x{:x}]=0x{:x}",
++                 jak1::ListenerFunction.offset,
++                 (u64)(g_ee_main_mem + kernel_dispatcher->value + 0x3c08),
++                 *(u32*)(g_ee_main_mem + kernel_dispatcher->value + 0x3c08));
++        {
++          u32 slot = *(u32*)(g_ee_main_mem + kernel_dispatcher->value + 0x3c08);
++          u32 goal_entry = s7.offset + slot;
++          lg::info("OTTSEL_IOS dbg: goal-side entry=0x{:x} goal value=0x{:x} cside entry=0x{:x} "
++                   "cside value=0x{:x}",
++                   goal_entry, *(u32*)(g_ee_main_mem + goal_entry),
++                   jak1::ListenerFunction.offset, jak1::ListenerFunction->value);
++        }
++        {
++          u8* p = g_ee_main_mem + kernel_dispatcher->value;
++          lg::info("OTTSEL_IOS dbg: entry words: {:02x}{:02x}{:02x}{:02x} {:02x}{:02x}{:02x}{:02x} "
++                   "{:02x}{:02x}{:02x}{:02x} {:02x}{:02x}{:02x}{:02x}",
++                   p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10], p[11],
++                   p[12], p[13], p[14], p[15]);
++        }
++      }
++#endif
+       call_goal_on_stack(Ptr<Function>(kernel_dispatcher->value), goal_stack, s7.offset,
+                          g_ee_main_mem);
+     } else {
 diff --git a/game/kernel/jak1/klink.cpp b/game/kernel/jak1/klink.cpp
-index fd7199959..e7af40744 100644
+index fd7199959..b1ffb6eda 100644
 --- a/game/kernel/jak1/klink.cpp
 +++ b/game/kernel/jak1/klink.cpp
 @@ -14,6 +14,9 @@
@@ -377,9 +471,15 @@ index fd7199959..e7af40744 100644
    } else if (size == 8) {
      *Ptr<int64_t>(offset_of_patch).c() = diff;
    } else {
-@@ -218,6 +263,27 @@ uint32_t link_control::jak1_work_v3() {
+@@ -217,7 +262,33 @@ uint32_t link_control::jak1_work_v3() {
+         if (ofh->code_infos[seg_id].size == 0) {
            ofh->code_infos[seg_id].offset = 0;
          } else {
++#ifdef OTTSEL_IOS
++          lg::info("OTTSEL_IOS dbg: obj_data=0x{:x} code_infos[{}].offset=0x{:x} size=0x{:x}",
++                   m_object_data.offset, seg_id, ofh->code_infos[seg_id].offset,
++                   ofh->code_infos[seg_id].size);
++#endif
            Ptr<u8> src(ofh->code_infos[seg_id].offset);
 +#ifdef OTTSEL_NO_EMIT
 +          // Ottsel H3 no-emit: the main segment contains code followed by
@@ -405,7 +505,7 @@ index fd7199959..e7af40744 100644
            ofh->code_infos[seg_id].offset =
                kmalloc(m_heap, ofh->code_infos[seg_id].size, 0, "main-segment").offset;
            if (ofh->code_infos[seg_id].offset == 0) {
-@@ -225,6 +291,7 @@ uint32_t link_control::jak1_work_v3() {
+@@ -225,6 +296,7 @@ uint32_t link_control::jak1_work_v3() {
                     ofh->code_infos[seg_id].size);
              return 1;
            }
@@ -413,7 +513,7 @@ index fd7199959..e7af40744 100644
            jak1::ultimate_memcpy(Ptr<u8>(ofh->code_infos[seg_id].offset).c(), src.c(),
                                  ofh->code_infos[seg_id].size);
          }
-@@ -233,6 +300,26 @@ uint32_t link_control::jak1_work_v3() {
+@@ -233,6 +305,26 @@ uint32_t link_control::jak1_work_v3() {
            ofh->code_infos[seg_id].offset = 0;
          } else {
            Ptr<u8> src(ofh->code_infos[seg_id].offset);
@@ -440,7 +540,7 @@ index fd7199959..e7af40744 100644
            ofh->code_infos[seg_id].offset =
                kmalloc(m_heap, ofh->code_infos[seg_id].size, KMALLOC_TOP, "top-level-segment")
                    .offset;
-@@ -241,6 +328,7 @@ uint32_t link_control::jak1_work_v3() {
+@@ -241,6 +333,7 @@ uint32_t link_control::jak1_work_v3() {
                     ofh->code_infos[seg_id].size);
              return 1;
            }
@@ -448,7 +548,7 @@ index fd7199959..e7af40744 100644
            jak1::ultimate_memcpy(Ptr<u8>(ofh->code_infos[seg_id].offset).c(), src.c(),
                                  ofh->code_infos[seg_id].size);
          }
-@@ -514,6 +602,17 @@ uint32_t link_control::jak1_work_v2() {
+@@ -514,6 +607,17 @@ uint32_t link_control::jak1_work_v2() {
   * Complete linking. This will execute the top-level code for v3 object files, if requested.
   */
  void link_control::jak1_finish(bool jump_from_c_to_goal) {
@@ -466,7 +566,7 @@ index fd7199959..e7af40744 100644
    CacheFlush(m_code_start.c(), m_code_size);
    auto old_debug_segment = DebugSegment;
    if (m_keep_debug) {
-@@ -540,12 +639,91 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
+@@ -540,12 +644,91 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
  
      // execute top level!
      if (m_entry.offset && (m_flags & LINK_FLAG_EXECUTE)) {
@@ -560,7 +660,7 @@ index fd7199959..e7af40744 100644
  
      // inform compiler that we loaded.
 diff --git a/game/kernel/jak1/klisten.cpp b/game/kernel/jak1/klisten.cpp
-index 0731d5272..209a11baa 100644
+index 0731d5272..c971324e4 100644
 --- a/game/kernel/jak1/klisten.cpp
 +++ b/game/kernel/jak1/klisten.cpp
 @@ -4,6 +4,7 @@
@@ -571,7 +671,7 @@ index 0731d5272..209a11baa 100644
  #include "common/symbols.h"
  
  #include "game/kernel/common/kdsnetm.h"
-@@ -32,6 +33,22 @@ void klisten_init_globals() {
+@@ -32,6 +33,30 @@ void klisten_init_globals() {
   * There was an "ACK" message sent here, but this is removed because we don't need it.
   */
  void InitListener() {
@@ -585,7 +685,15 @@ index 0731d5272..209a11baa 100644
 +  kernel_dispatcher = intern_from_c("kernel-dispatcher");
 +  kernel_packages = intern_from_c("*kernel-packages*");
 +  ListenerFunction = intern_from_c("*listener-function*");
++#ifdef OTTSEL_IOS
++  // Ottsel S1.3: iOS hard-disables the listener.  The GOAL kernel dispatcher
++  // tests *listener-function* for truthiness and CALLS it if set; the host's
++  // s7.offset sentinel is non-zero, so on iOS we use GOAL #f (0) and the
++  // listener branch is skipped entirely.
++  ListenerFunction->value = 0;
++#else
 +  ListenerFunction->value = s7.offset;  // no listener pending
++#endif
 +  ListenerLinkBlock = intern_from_c("*listener-link-block*");
 +  ListenerLinkBlock->value = s7.offset;
 +  ListenerStatus = 0;
@@ -595,10 +703,104 @@ index 0731d5272..209a11baa 100644
    ListenerFunction = intern_from_c("*listener-function*");
    kernel_dispatcher = intern_from_c("kernel-dispatcher");
 diff --git a/game/kernel/jak1/kmachine.cpp b/game/kernel/jak1/kmachine.cpp
-index 459a21562..0a876379a 100644
+index 459a21562..dff6696db 100644
 --- a/game/kernel/jak1/kmachine.cpp
 +++ b/game/kernel/jak1/kmachine.cpp
-@@ -610,8 +610,14 @@ void InitMachineScheme() {
+@@ -170,6 +170,11 @@ void InitParms(int argc, const char* const* argv) {
+  * Removed calls to exit(0) if loading modules fails.
+  */
+ void InitIOP() {
++#ifdef OTTSEL_IOS
++  // Ottsel S1.3: no IOP emulation on iOS; the kernel DGO is loaded directly
++  // from the app bundle (see ottsel_ios_load_kernel_from_bundle).
++  return;
++#endif
+   // before doing anything with the I/O Processor, we need to set up SIF RPC
+   sceSifInitRpc(0);
+ 
+@@ -330,11 +335,13 @@ int InitMachine() {
+   }
+ 
+   init_output();    // GOAL input/output buffer setup
++#ifndef OTTSEL_IOS
+   jak1::InitIOP();  // start IOP/OVERLORD, loading our legal splash screen
+ 
+   // sceGsResetPath(); // reset VIF1, VU1, GIF
+ 
+   InitVideo();  // display legal splash screen
++#endif
+ 
+   // FlushCache(WRITEBACK_DCACHE);
+   // FlushCache(INVALIDATE_ICACHE);
+@@ -344,6 +351,7 @@ int InitMachine() {
+   //   MsgErr("dkernel: !init pad\n");
+   // }
+ 
++#ifndef OTTSEL_IOS
+   if (MasterDebug) {  // connect to GOAL compiler
+     InitGoalProto();
+   } else {
+@@ -355,6 +363,7 @@ int InitMachine() {
+   InitSound();  // do nothing!
+   lg::info("InitRPC");
+   InitRPC();       // connect to IOP
++#endif
+   reset_output();  // reset output buffers
+   clear_print();
+ 
+@@ -368,10 +377,14 @@ int InitMachine() {
+   g_auto_splitter_block_jak1.pointer_to_symbol =
+       (u64)g_ee_main_mem + intern_from_c("*autosplit-info-jak1*")->value;
+ 
++#ifndef OTTSEL_IOS
+   lg::info("InitListenerConnect");
+   InitListenerConnect();
+   lg::info("InitCheckListener");
+   InitCheckListener();
++#else
++  lg::info("OTTSEL_IOS: listener/REPL hard-disabled");
++#endif
+   Msg(6, "kernel: machine started\n");
+   return 0;
+ }
+@@ -380,10 +393,12 @@ int InitMachine() {
+  * Shutdown the runtime.
+  */
+ int ShutdownMachine() {
++#ifndef OTTSEL_IOS
+   StopIOP();
+   CloseListener();
+   ShutdownSound();
+   ShutdownGoalProto();
++#endif
+ 
+   Msg(6, "kernel: machine shutdown\n");
+   return 0;
+@@ -420,6 +435,11 @@ void PutDisplayEnv(u32 ptr) {
+ }
+ 
+ void update_discord_rpc(u32 discord_info) {
++#ifdef OTTSEL_IOS
++  // Ottsel S1.3: no Discord integration in the iOS shell.
++  (void)discord_info;
++  return;
++#endif
+   if (gDiscordRpcEnabled) {
+     DiscordRichPresence rpc;
+     char state[128];
+@@ -539,6 +559,11 @@ void pc_set_levels(u32 l0, u32 l1) {
+ }
+ 
+ void InitMachine_PCPort() {
++#ifdef OTTSEL_IOS
++  // Ottsel S1.3: PC-port C-exports are not registered on iOS (no input
++  // manager, graphics, discord, or profiler in the headless shell).
++  return;
++#endif
+   // PC Port added functions
+   init_common_pc_port_functions(
+       make_function_symbol_from_c,
+@@ -610,8 +635,14 @@ void InitMachineScheme() {
    InitMachine_PCPort();
    InitSoundScheme();
    intern_from_c("*stack-top*")->value = 0x07ffc000;
@@ -614,7 +816,7 @@ index 459a21562..0a876379a 100644
    if (DiskBoot) {
      intern_from_c("*kernel-boot-message*")->value = intern_from_c(DebugBootMessage).offset;
 diff --git a/game/kernel/jak1/kscheme.cpp b/game/kernel/jak1/kscheme.cpp
-index c8287de5a..c5fc54a62 100644
+index c8287de5a..c4e9a4c90 100644
 --- a/game/kernel/jak1/kscheme.cpp
 +++ b/game/kernel/jak1/kscheme.cpp
 @@ -1,6 +1,10 @@
@@ -628,7 +830,18 @@ index c8287de5a..c5fc54a62 100644
  
  #include "common/common_types.h"
  #include "common/log/log.h"
-@@ -279,11 +283,119 @@ void _arg_call_arm64();
+@@ -26,6 +30,10 @@
+ using namespace jak1_symbols;
+ 
+ namespace jak1 {
++#ifdef OTTSEL_IOS
++// Ottsel S1.3: declared by the iOS boot driver (src/shell/ios_boot.cpp).
++extern "C" void ottsel_ios_load_kernel_from_bundle();
++#endif
+ // where to put a new symbol for the most recently searched for symbol that wasn't found
+ u32 symbol_slot;
+ 
+@@ -279,11 +287,119 @@ void _arg_call_arm64();
  #endif
  }
  
@@ -748,7 +961,7 @@ index c8287de5a..c5fc54a62 100644
    auto mem = Ptr<u8>(alloc_heap_object(s7.offset + FIX_SYM_GLOBAL_HEAP,
                                         *(s7 + FIX_SYM_FUNCTION_TYPE), 0x40, UNKNOWN_PP));
    auto f = (uint64_t)func;
-@@ -294,10 +406,42 @@ Ptr<Function> make_function_from_c_systemv(void* func, bool arg3_is_pp) {
+@@ -294,10 +410,42 @@ Ptr<Function> make_function_from_c_systemv(void* func, bool arg3_is_pp) {
    auto trampoline_function_addr = _arg_call_arm64;
  #endif
    auto trampoline = (u8*)&trampoline_function_addr;
@@ -794,7 +1007,7 @@ index c8287de5a..c5fc54a62 100644
    mem.c()[offset++] = 0x48;
    mem.c()[offset++] = 0xb8;
    for (int i = 0; i < 8; i++) {
-@@ -327,8 +471,10 @@ Ptr<Function> make_function_from_c_systemv(void* func, bool arg3_is_pp) {
+@@ -327,8 +475,10 @@ Ptr<Function> make_function_from_c_systemv(void* func, bool arg3_is_pp) {
    // the asm function's ret will return to the caller of this (GOAL code) directlyz.
  
    // CacheFlush(mem, 0x34);
@@ -805,7 +1018,7 @@ index c8287de5a..c5fc54a62 100644
  }
  
  /*!
-@@ -417,6 +563,39 @@ void _stack_call_arm64();
+@@ -417,6 +567,39 @@ void _stack_call_arm64();
  }
  
  Ptr<Function> make_stack_arg_function_from_c_systemv(void* func) {
@@ -845,7 +1058,7 @@ index c8287de5a..c5fc54a62 100644
    // allocate a function object on the global heap
    auto mem = Ptr<u8>(alloc_heap_object(s7.offset + FIX_SYM_GLOBAL_HEAP,
                                         *(s7 + FIX_SYM_FUNCTION_TYPE), 0x40, UNKNOWN_PP));
-@@ -454,6 +633,7 @@ Ptr<Function> make_stack_arg_function_from_c_systemv(void* func) {
+@@ -454,6 +637,7 @@ Ptr<Function> make_stack_arg_function_from_c_systemv(void* func) {
    // CacheFlush(mem, 0x34);
  
    return mem.cast<Function>();
@@ -853,7 +1066,7 @@ index c8287de5a..c5fc54a62 100644
  }
  
  #ifdef _WIN32
-@@ -529,6 +709,17 @@ Ptr<Function> make_stack_arg_function_from_c(void* func) {
+@@ -529,6 +713,17 @@ Ptr<Function> make_stack_arg_function_from_c(void* func) {
   * Create a GOAL function which does nothing and immediately returns.
   */
  Ptr<Function> make_nothing_func() {
@@ -871,7 +1084,7 @@ index c8287de5a..c5fc54a62 100644
    auto mem = Ptr<u8>(alloc_heap_object(s7.offset + FIX_SYM_GLOBAL_HEAP,
                                         *(s7 + FIX_SYM_FUNCTION_TYPE), 0x14, UNKNOWN_PP));
  
-@@ -536,12 +727,29 @@ Ptr<Function> make_nothing_func() {
+@@ -536,12 +731,29 @@ Ptr<Function> make_nothing_func() {
    mem.c()[0] = 0xc3;
    // CacheFlush(mem, 8);
    return mem.cast<Function>();
@@ -901,7 +1114,7 @@ index c8287de5a..c5fc54a62 100644
    auto mem = Ptr<u8>(alloc_heap_object(s7.offset + FIX_SYM_GLOBAL_HEAP,
                                         *(s7 + FIX_SYM_FUNCTION_TYPE), 0x14, UNKNOWN_PP));
    // xor eax, eax
-@@ -551,6 +759,7 @@ Ptr<Function> make_zero_func() {
+@@ -551,6 +763,7 @@ Ptr<Function> make_zero_func() {
    mem.c()[2] = 0xc3;
    // CacheFlush(mem, 8);
    return mem.cast<Function>();
@@ -909,6 +1122,52 @@ index c8287de5a..c5fc54a62 100644
  }
  
  /*!
+@@ -1744,13 +1957,29 @@ s32 InitHeapAndSymbol() {
+   intern_from_c("*boot-video-mode*")->value = 0;  // (u32)BootVideoMode;
+ 
+   lg::info("Initialized GOAL heap in {:.2} ms", heap_init_timer.getMs());
++#ifdef OTTSEL_IOS
++  // Ottsel S1.3: register the C-side symbols/exports BEFORE the kernel link.
++  // If they are interned after the load, the hash-probe can land on different
++  // entries than the linker's intern, so the GOAL side reads empty/garbage
++  // function-pointer slots (data-dependent top-level/dispatcher crashes).
++  protoBlock.deci2count = intern_from_c("*deci-count*").cast<s32>();
++  InitListener();
++  jak1::InitMachineScheme();
++  make_function_symbol_from_c("test-function", (void*)test_function);
++#endif
+   // load the kernel!
+   if (MasterUseKernel) {
+     Timer kernel_load_timer;
+     method_set_symbol->value++;
++#ifdef OTTSEL_IOS
++    // Ottsel S1.3: iOS has no IOP/OVERLORD path.  The kernel DGO is read
++    // directly from the app bundle and linked by the no-emit linker.
++    ottsel_ios_load_kernel_from_bundle();
++#else
+     load_and_link_dgo_from_c("kernel", kglobalheap,
+                              LINK_FLAG_OUTPUT_LOAD | LINK_FLAG_EXECUTE | LINK_FLAG_PRINT_LOGIN,
+                              0x400000, true);
++#endif
+     method_set_symbol->value--;
+ 
+     // check the kernel version!
+@@ -1768,6 +1997,7 @@ s32 InitHeapAndSymbol() {
+     }
+   }
+ 
++#ifndef OTTSEL_IOS
+   // setup deci2count for message counter.
+   protoBlock.deci2count = intern_from_c("*deci-count*").cast<s32>();
+ 
+@@ -1779,6 +2009,7 @@ s32 InitHeapAndSymbol() {
+ 
+   // testing stuff:
+   make_function_symbol_from_c("test-function", (void*)test_function);
++#endif
+ 
+   return 0;
+ }
 diff --git a/game/kernel/jak1/kscheme.h b/game/kernel/jak1/kscheme.h
 index ab8a32c48..e65e1e508 100644
 --- a/game/kernel/jak1/kscheme.h
@@ -930,6 +1189,38 @@ index ab8a32c48..e65e1e508 100644
  s32 InitHeapAndSymbol();
  u64 call_goal_function_by_name(const char* name);
  Ptr<Type> alloc_and_init_type(Ptr<Symbol> sym, u32 method_count);
+diff --git a/game/mips2c/mips2c_table.cpp b/game/mips2c/mips2c_table.cpp
+index 018b0d331..59a7f3d8b 100644
+--- a/game/mips2c/mips2c_table.cpp
++++ b/game/mips2c/mips2c_table.cpp
+@@ -19,6 +19,22 @@ void _mips2c_call_systemv() asm("_mips2c_call_systemv");
+ void _mips2c_call_windows();
+ }
+ 
++#ifdef OTTSEL_IOS
++// Ottsel S1.3: iOS builds link no engine code yet, so there are no mips2c
++// functions.  Keep the tables empty (klink lookups find nothing).
++namespace Mips2C {
++LinkedFunctionTable gLinkedFunctionTable;
++Rng gRng;
++PerGameVersion<std::unordered_map<std::string, std::vector<void (*)()>>> gMips2CLinkCallbacks(
++    {}, {}, {}, {});
++
++u32 LinkedFunctionTable::get(const std::string& name) {
++  ASSERT_NOT_REACHED_MSG(fmt::format("mips2c function {} is unknown (empty OTTSEL_IOS table)",
++                                     name));
++  return 0;
++}
++}  // namespace Mips2C
++#else
+ // clang-format off
+ namespace Mips2C {
+ 
+@@ -749,3 +765,4 @@ u32 LinkedFunctionTable::get(const std::string& name) {
+   return it->second.goal_trampoline.offset;
+ }
+ }  // namespace Mips2C
++#endif
 diff --git a/game/runtime.cpp b/game/runtime.cpp
 index 4f7cc5e18..cc2d2e926 100644
 --- a/game/runtime.cpp

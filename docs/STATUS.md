@@ -13,7 +13,7 @@ Mode: Phase 2 build loop (Bot 2) — Gate H1 active
 | **H2** | **No-emit runtime on host** | **PASS (2026-08-07, host)** | `docs/evidence/H2/` |
 | **H2.5** | **Packaging form decision** | **PASS (2026-08-07)** | `docs/evidence/H2.5/`, `docs/10-code-packaging-and-signing.md` |
 | H3 | Jak 1 host AOT boot proof | **PASS (2026-08-08, host)** — GOAL kernel dispatcher executes and loops under RX, no faults; evidence captured | `docs/evidence/H3/dispatcher-loop-2026-08-08.md`, `docs/evidence/H3/boot-dispatcher-loop-2026-08-08.log`, `docs/13-current-state.md`, `docs/BOT4_HANDOFF.md` |
-| S1 | Simulator shell loads runtime | **IN PROGRESS** — S1.0 done 2026-08-08 (durable H3 log, Windowed gk, patches README); **S1.1 PASS 2026-08-08** (emitter harness validates all 86,016 KERNEL.CGO words; 43 latent invalid encodings found and fixed in 7 emitters; host boot re-verified) | `docs/evidence/S1/s11-emitter-validation.md`, `docs/evidence/S1/s11-kernel-validation.log`, `docs/evidence/S1/s11-host-boot-after-emitter-fixes.log`, `scripts/validate-arm64-emission.py` |
+| S1 | Simulator shell loads runtime | **BLOCKED (2026-08-08)** — S1.0/S1.1/S1.2 PASS; S1.3 reaches the gated-error fallback (explicit stop, no crash loop) but NOT the dispatcher loop: the no-emit symbol-slot resolution is order-dependent and reads empty/garbage function pointers on iOS (GOAL-side vs C-side resolve different entries for the same name). Stop report: `docs/reports/2026-08-08-stop-S1.md` | `docs/evidence/S1/` (S1.0-S1.2 evidence + s13 gated-stop logs/screenshots), `docs/reports/2026-08-08-stop-S1.md` |
 | S2 | First frame proof | — | — |
 | S3 | Touch MVP + lifecycle | — | — |
 | R1 | Handoff package | — | — |

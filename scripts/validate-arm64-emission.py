@@ -66,13 +66,18 @@ def parse_object(blob):
     link_seg = [struct.unpack_from("<II", blob, 16 + 8 * i) for i in range(N_SEG)]
     code_seg = [struct.unpack_from("<II", blob, 16 + 24 + 8 * i) for i in range(N_SEG)]
     code_size = list(struct.unpack_from("<III", blob, 16 + 48))
-    hdr = 76
-    link2 = hdr
-    link1 = link2 + link_seg[2][1]
-    link0 = link1 + link_seg[1][1]
-    code2 = link0 + link_seg[0][1]
-    code1 = code2 + code_seg[2][1]
-    code0 = code1 + code_seg[1][1]
+    (link_block_length,) = struct.unpack_from("<I", blob, 16 + 60)
+    # The object layout is: "GOAL" magic (4) + ObjectFileHeader struct (76) +
+    # link tables (per link_seg sizes) + segment data.  code_seg[i].offset is
+    # relative to the start of the segment-data region, which sits at file
+    # offset link_block_length (the header field == 80 + total link size,
+    # which is exactly where the data region begins; note this can be
+    # non-4-aligned).  The runtime linker reads code_infos[seg].offset the
+    # same way (it copies from m_object_data + offset), so validating these
+    # file ranges validates exactly the bytes the runtime executes.
+    code0 = link_block_length + code_seg[0][0]
+    code1 = link_block_length + code_seg[1][0]
+    code2 = link_block_length + code_seg[2][0]
     code_off = [code0, code1, code2]
     ranges = []
     for seg in range(N_SEG):

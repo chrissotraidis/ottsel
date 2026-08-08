@@ -385,3 +385,41 @@
 - **Next:** S1.3 — link the no-emit runtime into the shell: EE memory map +
   RW->RX flip under the Simulator, bundle KERNEL.CGO as an app resource,
   boot to the dispatcher loop, log to file + visible surface.
+
+## 2026-08-08 — S1.3 runtime boot in-app: gated-error fallback reached, root cause characterized (Bot 4)
+
+### Iteration — iOS runtime links all 8 kernel objects with RX flips; dispatcher call faults; honest stop
+- **Acted:**
+  - Built the iOS runtime lib (common subset + game/kernel + sce + mips2c +
+    ios_stubs, 62 objects) with OTTSEL_NO_EMIT + OTTSEL_IOS; app bundles
+    KERNEL.CGO and boots the no-emit runtime on a background thread with the
+    log tail rendered on the SDL window surface (5x7 bitmap font, no GPU).
+  - Patched the worktree under OTTSEL_IOS: InitMachine skips IOP/gfx/sound/
+    listener-connect; ksocket WaitForMessageAndAck returns null; mips2c table
+    empty; InitHeapAndSymbol loads the kernel from the bundle
+    (ottsel_ios_load_kernel_from_bundle) and (later) registers C exports
+    before the link; InitListener value=0; gated signal handler installed.
+- **Validated (evidence `docs/evidence/S1/s13-*`):**
+  - EE memory mapped RW at 0x7000000000; all 8 KERNEL.CGO objects link with
+    the same RW->RX code-page flips as the host; `Got correct kernel version
+    2.0`; `kernel: machine started`; listener/REPL hard-disabled.
+  - The GOAL kernel dispatcher's first calls fault (jump to EE offset 0 /
+    SIGSEGV on a raw EE offset as a host address) because the no-emit
+    symbol-slot resolution reads empty/garbage function pointers. The GOAL
+    side and C side resolve *different symbol-table entries* for the same
+    name (0x1982cc vs 0x198cb4) — an order-dependent linear-probe defect in
+    OpenGOAL's intern interacting with the H3 no-emit slot scheme.
+  - Gated error fallback works: `OTTSEL_IOS BOOT FAILED (gated): signal 10
+    at pc=0x7000000000` -> clean exit, no crash loop, visible surface shows
+    the log.
+  - Host note: the same class of fault showed non-deterministically in one
+    early rerun (1/3) but 4/4 clean in a later rerun; the H3 host boot
+    remains otherwise reliable.
+- **Files changed:** `src/shell/` (ios_boot, main, font, plist),
+  `scripts/build-ios.sh`, worktree OTTSEL_IOS guards (kscheme, kmachine,
+  klisten, ksocket, kdgo loader via ios_boot, mips2c, common kmachine,
+  game/ios_stubs.cpp), `docs/reports/2026-08-08-stop-S1.md`.
+- **Stop per loop rules:** same root cause (no-emit symbol-slot resolution)
+  blocked S1.3 across 4+ manifestations with no working fix; stop report
+  written with options (fix intern order-dependence; offline prelink;
+  whack-a-mole patch). S1 = NOT PASSED (gated-error fallback met).
