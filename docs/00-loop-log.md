@@ -320,3 +320,39 @@
   `patches/README.md` (new).
 - **Next:** S1.1 emitter validation harness (validate every word of
   KERNEL.CGO; must catch the old `0xb8760801` load32u word).
+
+## 2026-08-08 — S1.1 emitter validation harness + latent-encoding fixes (Bot 4)
+
+### Iteration — harness built, 43 invalid kernel words found and fixed, PASS
+- **Acted:**
+  - Built `scripts/validate-arm64-emission.py`: decodes every code word of
+    each object inside KERNEL.CGO via `as` + `llvm-objdump` (invalid
+    encodings = "invalid instruction encoding" warning + address gap), plus
+    an as-reassembly round-trip for non-PC-rel words and a hand-computed
+    encoding check for PC-relative/literal instructions (Apple `as` cannot
+    express cross-page adrp). 0xaeaeaeae function type-tag words skipped.
+    `--selftest` must catch the known-bad `0xb8760801`.
+  - Ran on the kernel: **43 invalid words** in gcommon/gkernel/pskernel main
+    segments (div-family 0x1ac10000/0x1ac30000; 64-bit load-family
+    0xf87608xx; vector load/store 0x3ce4/0x3ce3/0x3cb6) — all latent SIGILLs
+    in code paths the H3 boot never executes.
+  - Fixed `goalc/emitter/IGenARM64.cpp` (7 emitters): sdiv/udiv opcode bits;
+    load64, store16, store32_xmm32 (also Rn/Rm swap), loadvf (also
+    Rm(addr1)->Rm(addr2)), storevf — all missing the SXTX option bits
+    (same class as the H3 load32u fix). Rebuilt goalc, regenerated
+    KERNEL.CGO.
+- **Validated (evidence in `docs/evidence/S1/`):**
+  - `s11-harness-selftest.log`: SELFTEST PASS (catches 0xb8760801 at +0x4).
+  - `s11-kernel-validation.log`: PASS — all 86,016 code words across 8
+    objects validate (decode + round-trip); 226 type-tag words skipped.
+  - `s11-host-boot-after-emitter-fixes.log`: host boot with the fixed
+    kernel — `kernel: machine started`, Windowed 1280x960, 43,274
+    `call_goal_on_stack` dispatcher-loop lines in 30 s, zero SIGILL.
+  - `s11-emitter-validation.md`: family-by-family root cause + fix table.
+  - Patch regenerated (`h3-jak1-host-boot.patch`, 37 files) and verified
+    `git apply --check` on a fresh pin worktree.
+- **Files changed:** `scripts/validate-arm64-emission.py` (new),
+  `goalc/emitter/IGenARM64.cpp` (7 fixes), `docs/evidence/S1/*` (new),
+  `patches/h3-jak1-host-boot.patch` (regenerated).
+- **Next:** S1.2 — iOS Simulator app shell (src/ target, SDL3 window,
+  renderer stubbed, listener disabled).

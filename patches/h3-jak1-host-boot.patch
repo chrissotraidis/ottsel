@@ -2490,10 +2490,21 @@ index 27cbcc8c1..3b0bdf082 100644
   * Divide (idiv, 32 bit)
   */
 diff --git a/goalc/emitter/IGenARM64.cpp b/goalc/emitter/IGenARM64.cpp
-index 1180f722d..82fc513aa 100644
+index 1180f722d..954c6d558 100644
 --- a/goalc/emitter/IGenARM64.cpp
 +++ b/goalc/emitter/IGenARM64.cpp
-@@ -766,7 +766,7 @@ InstructionARM64 load32u_gpr64_gpr64_plus_gpr64(Register dst, Register addr1, Re
+@@ -418,7 +418,9 @@ InstructionARM64 store16_gpr64_gpr64_plus_gpr64(Register addr1, Register addr2,
+   ASSERT(addr1 != addr2);
+   ASSERT(addr1 != SP);
+   ASSERT(addr2 != SP);
+-  return InstructionARM64(Base(0b0111100000100000000010, 22), Rt(value.id()), Rn(addr1.id()),
++  // Ottsel S1.1: base was missing the SXTX extend/option bits (0x78200800 ->
++  // invalid); fixed to match the other store variants (0x7820e800).
++  return InstructionARM64(Base(0b0111100000100000111010, 22), Rt(value.id()), Rn(addr1.id()),
+                           Rm(addr2.id()));
+ }
+ 
+@@ -766,7 +768,7 @@ InstructionARM64 load32u_gpr64_gpr64_plus_gpr64(Register dst, Register addr1, Re
    ASSERT(addr1 != addr2);
    ASSERT(addr1 != SP);
    ASSERT(addr2 != SP);
@@ -2502,7 +2513,7 @@ index 1180f722d..82fc513aa 100644
                            Rm(addr2.id()));
  }
  
-@@ -818,12 +818,15 @@ InstructionARM64 load32u_gpr64_gpr64_plus_gpr64_plus_s32(Register dst,
+@@ -818,12 +820,15 @@ InstructionARM64 load32u_gpr64_gpr64_plus_gpr64_plus_s32(Register dst,
      const auto add_instrs = construct_multiple_imm12_adds(offset, X16);
      instrs.insert(instrs.end(), add_instrs.begin(), add_instrs.end());
    }
@@ -2521,7 +2532,19 @@ index 1180f722d..82fc513aa 100644
    return InstructionARM64(instrs);
  }
  
-@@ -934,12 +937,14 @@ InstructionARM64 load64_gpr64_gpr64_plus_gpr64_plus_s32(Register dst,
+@@ -837,7 +842,10 @@ InstructionARM64 load64_gpr64_gpr64_plus_gpr64(Register dst, Register addr1, Reg
+   ASSERT(addr1 != addr2);
+   ASSERT(addr1 != SP);
+   ASSERT(addr2 != SP);
+-  return InstructionARM64(Base(0b1111100001100000000010, 22), Rt(dst.id()), Rn(addr1.id()),
++  // Ottsel S1.1: base was missing the SXTX extend/option bits (emitted
++  // invalid 0xf87608xx words, e.g. `ldr x0, [x16, x22]` with option=000);
++  // fixed to match the verified load32u/store64 pattern (0xf860e800).
++  return InstructionARM64(Base(0b1111100001100000111010, 22), Rt(dst.id()), Rn(addr1.id()),
+                           Rm(addr2.id()));
+ }
+ 
+@@ -934,12 +942,14 @@ InstructionARM64 load64_gpr64_gpr64_plus_gpr64_plus_s32(Register dst,
      const auto add_instrs = construct_multiple_imm12_adds(offset, X16);
      instrs.insert(instrs.end(), add_instrs.begin(), add_instrs.end());
    }
@@ -2539,7 +2562,7 @@ index 1180f722d..82fc513aa 100644
    return InstructionARM64(instrs);
  }
  
-@@ -978,7 +983,7 @@ InstructionARM64 store64_gpr64_gpr64_plus_gpr64_plus_s32(Register addr1,
+@@ -978,7 +988,7 @@ InstructionARM64 store64_gpr64_gpr64_plus_gpr64_plus_s32(Register addr1,
  InstructionARM64 load64_gpr64_plus_s32(Register dst_reg, int32_t offset, Register src_reg) {
    ASSERT(dst_reg.is_gpr(instr_set));
    ASSERT(src_reg.is_gpr(instr_set));
@@ -2548,7 +2571,7 @@ index 1180f722d..82fc513aa 100644
    ASSERT(offset >= INT32_MIN && offset <= INT32_MAX);
    std::vector<InstructionARM64> instrs = {
        // https://www.scs.stanford.edu/~zyedidia/arm64/add_addsub_imm.html
-@@ -994,19 +999,52 @@ InstructionARM64 load64_gpr64_plus_s32(Register dst_reg, int32_t offset, Registe
+@@ -994,19 +1004,52 @@ InstructionARM64 load64_gpr64_plus_s32(Register dst_reg, int32_t offset, Registe
      const auto add_instrs = construct_multiple_imm12_adds(offset, X16);
      instrs.insert(instrs.end(), add_instrs.begin(), add_instrs.end());
    }
@@ -2560,7 +2583,8 @@ index 1180f722d..82fc513aa 100644
    // 64-bit variant
 -  // LDR <Xt>, [<Xn|SP>], #<simm>
 +  // LDR <Xt>, [<Xn|SP>{, #<pimm>}]
-+  instrs.emplace_back(
+   instrs.emplace_back(
+-      InstructionARM64(Base(0b1111100001000000000001, 22), Imm9s(0), Rt(dst_reg.id()), Rn(X16)));
 +      InstructionARM64(Base(0b1111100101, 10), Imm12(0), Rt(dst_reg.id()), Rn(X16)));
 +  return InstructionARM64(instrs);
 +}
@@ -2591,8 +2615,7 @@ index 1180f722d..82fc513aa 100644
 +  // below s7), so sign-extend (LDRSW) to match the x86 disp32 address math.
 +  // https://www.scs.stanford.edu/~zyedidia/arm64/ldrsw_imm.html
 +  // LDRSW <Xt>, [<Xn|SP>{, #<pimm>}]
-   instrs.emplace_back(
--      InstructionARM64(Base(0b1111100001000000000001, 22), Imm9s(0), Rt(dst_reg.id()), Rn(X16)));
++  instrs.emplace_back(
 +      InstructionARM64(Base(0b1011100110, 10), Imm12(0), Rt(dst_reg.id()), Rn(X16)));
    return InstructionARM64(instrs);
  }
@@ -2605,7 +2628,20 @@ index 1180f722d..82fc513aa 100644
    ASSERT(offset >= INT32_MIN && offset <= INT32_MAX);
    std::vector<InstructionARM64> instrs = {
        // https://www.scs.stanford.edu/~zyedidia/arm64/add_addsub_imm.html
-@@ -1741,8 +1779,6 @@ InstructionARM64 store128_xmm128_reg_offset(Register base, Register xmm_val, s64
+@@ -1263,8 +1306,10 @@ InstructionARM64 store32_xmm32_gpr64_plus_gpr64(Register addr1,
+   // https://www.scs.stanford.edu/~zyedidia/arm64/str_reg_fpsimd.html
+   // 32-bit variant
+   // STR <St>, [<Xn|SP>, (<Wm>|<Xm>){, <extend> {<amount>}}]
+-  return InstructionARM64(Base(0b1011110000100000000010, 22), Rt(xmm_value.id()), Rm(addr1.id()),
+-                          Rn(addr2.id()));
++  // Ottsel S1.1: base was missing the SXTX extend/option bits, and Rn/Rm were
++  // swapped (base register must be Rn = addr1, index register Rm = addr2).
++  return InstructionARM64(Base(0b1011110000100000111010, 22), Rt(xmm_value.id()), Rn(addr1.id()),
++                          Rm(addr2.id()));
+ }
+ 
+ InstructionARM64 load32_xmm32_gpr64_plus_gpr64(Register simd_dest, Register addr1, Register addr2) {
+@@ -1741,8 +1786,6 @@ InstructionARM64 store128_xmm128_reg_offset(Register base, Register xmm_val, s64
  
  InstructionARM64 load64_pcRel_s32(Register dest, s64 offset) {
    ASSERT(dest.is_gpr(instr_set));
@@ -2614,7 +2650,7 @@ index 1180f722d..82fc513aa 100644
    // ASSERT_MSG(offset >= ARM64_LDR_MIN && offset <= ARM64_LDR_MAX,
    //            "PC Relative offset is too large for ARM64, fix it.");
    // https://www.scs.stanford.edu/~zyedidia/arm64/ldr_lit_gen.html
-@@ -1752,8 +1788,6 @@ InstructionARM64 load64_pcRel_s32(Register dest, s64 offset) {
+@@ -1752,8 +1795,6 @@ InstructionARM64 load64_pcRel_s32(Register dest, s64 offset) {
  
  InstructionARM64 load32s_pcRel_s32(Register dest, s64 offset) {
    ASSERT(dest.is_gpr(instr_set));
@@ -2623,7 +2659,7 @@ index 1180f722d..82fc513aa 100644
    // ASSERT_MSG(offset >= ARM64_LDR_MIN && offset <= ARM64_LDR_MAX,
    //            "PC Relative offset is too large for ARM64, fix it.");
    // https://www.scs.stanford.edu/~zyedidia/arm64/ldrsw_lit.html
-@@ -1763,8 +1797,6 @@ InstructionARM64 load32s_pcRel_s32(Register dest, s64 offset) {
+@@ -1763,8 +1804,6 @@ InstructionARM64 load32s_pcRel_s32(Register dest, s64 offset) {
  
  InstructionARM64 load32u_pcRel_s32(Register dest, s64 offset) {
    ASSERT(dest.is_gpr(instr_set));
@@ -2632,7 +2668,7 @@ index 1180f722d..82fc513aa 100644
    // ASSERT_MSG(offset >= ARM64_LDR_MIN && offset <= ARM64_LDR_MAX,
    //            "PC Relative offset is too large for ARM64, fix it.");
    // https://www.scs.stanford.edu/~zyedidia/arm64/ldr_lit_gen.html
-@@ -1776,8 +1808,6 @@ InstructionARM64 load16u_pcRel_s32(Register dest, s64 offset) {
+@@ -1776,8 +1815,6 @@ InstructionARM64 load16u_pcRel_s32(Register dest, s64 offset) {
    ASSERT(dest.is_gpr(instr_set));
    // NOTE - the offsets passed into these functions are always `0` and then later patched
    // so im not going to worry about properly encoding the offset
@@ -2641,7 +2677,7 @@ index 1180f722d..82fc513aa 100644
    // ASSERT_MSG(offset >= ARM64_LDR_MIN && offset <= ARM64_LDR_MAX,
    //            "PC Relative offset is too large for ARM64, fix it.");
    return InstructionARM64(
-@@ -1793,8 +1823,6 @@ InstructionARM64 load16s_pcRel_s32(Register dest, s64 offset) {
+@@ -1793,8 +1830,6 @@ InstructionARM64 load16s_pcRel_s32(Register dest, s64 offset) {
    ASSERT(dest.is_gpr(instr_set));
    // NOTE - the offsets passed into these functions are always `0` and then later patched
    // so im not going to worry about properly encoding the offset
@@ -2650,7 +2686,7 @@ index 1180f722d..82fc513aa 100644
    // ASSERT_MSG(offset >= ARM64_LDR_MIN && offset <= ARM64_LDR_MAX,
    //            "PC Relative offset is too large for ARM64, fix it.");
    return InstructionARM64(
-@@ -1810,8 +1838,6 @@ InstructionARM64 load8u_pcRel_s32(Register dest, s64 offset) {
+@@ -1810,8 +1845,6 @@ InstructionARM64 load8u_pcRel_s32(Register dest, s64 offset) {
    ASSERT(dest.is_gpr(instr_set));
    // NOTE - the offsets passed into these functions are always `0` and then later patched
    // so im not going to worry about properly encoding the offset
@@ -2659,7 +2695,7 @@ index 1180f722d..82fc513aa 100644
    // ASSERT_MSG(offset >= ARM64_LDR_MIN && offset <= ARM64_LDR_MAX,
    //            "PC Relative offset is too large for ARM64, fix it.");
    return InstructionARM64(
-@@ -1827,8 +1853,6 @@ InstructionARM64 load8s_pcRel_s32(Register dest, s64 offset) {
+@@ -1827,8 +1860,6 @@ InstructionARM64 load8s_pcRel_s32(Register dest, s64 offset) {
    ASSERT(dest.is_gpr(instr_set));
    // NOTE - the offsets passed into these functions are always `0` and then later patched
    // so im not going to worry about properly encoding the offset
@@ -2668,7 +2704,7 @@ index 1180f722d..82fc513aa 100644
    // ASSERT_MSG(offset >= ARM64_LDR_MIN && offset <= ARM64_LDR_MAX,
    //            "PC Relative offset is too large for ARM64, fix it.");
    return InstructionARM64(
-@@ -1858,13 +1882,13 @@ InstructionARM64 static_load(Register dest, s64 offset, int size, bool sign_exte
+@@ -1858,13 +1889,13 @@ InstructionARM64 static_load(Register dest, s64 offset, int size, bool sign_exte
        break;
      case 4:
        if (sign_extend) {
@@ -2685,7 +2721,7 @@ index 1180f722d..82fc513aa 100644
      default:
        ASSERT(false);
    }
-@@ -1874,8 +1898,6 @@ InstructionARM64 static_load(Register dest, s64 offset, int size, bool sign_exte
+@@ -1874,8 +1905,6 @@ InstructionARM64 static_load(Register dest, s64 offset, int size, bool sign_exte
  
  InstructionARM64 store64_pcRel_s32(Register src, s64 offset) {
    ASSERT(src.is_gpr(instr_set));
@@ -2694,7 +2730,7 @@ index 1180f722d..82fc513aa 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -1887,8 +1909,6 @@ InstructionARM64 store64_pcRel_s32(Register src, s64 offset) {
+@@ -1887,8 +1916,6 @@ InstructionARM64 store64_pcRel_s32(Register src, s64 offset) {
  
  InstructionARM64 store32_pcRel_s32(Register src, s64 offset) {
    ASSERT(src.is_gpr(instr_set));
@@ -2703,7 +2739,7 @@ index 1180f722d..82fc513aa 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -1900,8 +1920,6 @@ InstructionARM64 store32_pcRel_s32(Register src, s64 offset) {
+@@ -1900,8 +1927,6 @@ InstructionARM64 store32_pcRel_s32(Register src, s64 offset) {
  
  InstructionARM64 store16_pcRel_s32(Register src, s64 offset) {
    ASSERT(src.is_gpr(instr_set));
@@ -2712,7 +2748,7 @@ index 1180f722d..82fc513aa 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -1913,8 +1931,6 @@ InstructionARM64 store16_pcRel_s32(Register src, s64 offset) {
+@@ -1913,8 +1938,6 @@ InstructionARM64 store16_pcRel_s32(Register src, s64 offset) {
  
  InstructionARM64 store8_pcRel_s32(Register src, s64 offset) {
    ASSERT(src.is_gpr(instr_set));
@@ -2721,7 +2757,7 @@ index 1180f722d..82fc513aa 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -1941,17 +1957,33 @@ InstructionARM64 static_store(Register value, s64 offset, int size) {
+@@ -1941,17 +1964,33 @@ InstructionARM64 static_store(Register value, s64 offset, int size) {
  
  InstructionARM64 static_addr(Register dest, s64 offset) {
    ASSERT(dest.is_gpr(instr_set));
@@ -2762,7 +2798,7 @@ index 1180f722d..82fc513aa 100644
    // https://www.scs.stanford.edu/~zyedidia/arm64/ldr_lit_fpsimd.html
    // LDR <St>, <label>
    return InstructionARM64(Base(0b00011100, 8), Imm19(offset / 4), Rt(simd_dest.id()));
-@@ -1959,8 +1991,6 @@ InstructionARM64 static_load_f32(Register simd_dest, s64 offset) {
+@@ -1959,8 +1998,6 @@ InstructionARM64 static_load_f32(Register simd_dest, s64 offset) {
  
  InstructionARM64 static_store_f32(Register xmm_value, s64 offset) {
    ASSERT(xmm_value.is_128bit_simd(instr_set));
@@ -2771,20 +2807,24 @@ index 1180f722d..82fc513aa 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -2103,28 +2133,45 @@ InstructionARM64 imul_gpr64_gpr64(Register dst, Register src) {
+@@ -2103,28 +2140,49 @@ InstructionARM64 imul_gpr64_gpr64(Register dst, Register src) {
                            Rm(src.id()));
  }
  
 +InstructionARM64 sdiv_gpr32_gpr32(Register dst, Register dividend, Register divisor) {
 +  // SDIV <Wd>, <Wn>, <Wm>  (0x1AC00C00 base for 32-bit)
 +  // https://www.scs.stanford.edu/~zyedidia/arm64/sdiv_udiv.html
-+  return InstructionARM64(Base(0b0001101011000000000000, 22), Rm(divisor.id()),
++  // Ottsel S1.1: base was missing the SDIV opcode bits (0b11 in bits 11:10);
++  // the emitted 0x1AC10000-family words were invalid encodings (SIGILL when
++  // reached).  Caught by scripts/validate-arm64-emission.py.
++  return InstructionARM64(Base(0b0001101011000000000011, 22), Rm(divisor.id()),
 +                          Rn(dividend.id()), Rd(dst.id()));
 +}
 +
 +InstructionARM64 udiv_gpr32_gpr32(Register dst, Register dividend, Register divisor) {
 +  // UDIV <Wd>, <Wn>, <Wm>
-+  return InstructionARM64(Base(0b0001101011000000000001, 22), Rm(divisor.id()),
++  // Ottsel S1.1: base was missing the UDIV opcode bits (0b10 in bits 11:10).
++  return InstructionARM64(Base(0b0001101011000000000010, 22), Rm(divisor.id()),
 +                          Rn(dividend.id()), Rd(dst.id()));
 +}
 +
@@ -2830,7 +2870,7 @@ index 1180f722d..82fc513aa 100644
  }
  
  InstructionARM64 movsx_r64_r32(Register dst, Register src) {
-@@ -2134,9 +2181,12 @@ InstructionARM64 movsx_r64_r32(Register dst, Register src) {
+@@ -2134,9 +2192,12 @@ InstructionARM64 movsx_r64_r32(Register dst, Register src) {
  }
  
  InstructionARM64 cmp_gpr64_gpr64(Register a, Register b) {
@@ -2846,7 +2886,7 @@ index 1180f722d..82fc513aa 100644
  }
  
  //;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-@@ -2253,7 +2303,11 @@ InstructionARM64 sar_gpr64_u8(Register reg, uint8_t sa) {
+@@ -2253,7 +2314,11 @@ InstructionARM64 sar_gpr64_u8(Register reg, uint8_t sa) {
  InstructionARM64 jmp_imm() {
    // https://www.scs.stanford.edu/~zyedidia/arm64/b_uncond.html
    // B <label>
@@ -2859,7 +2899,7 @@ index 1180f722d..82fc513aa 100644
  }
  
  // Now these instructions in ARM are even more limiting, conditional
-@@ -2274,71 +2328,101 @@ InstructionARM64 jmp_imm() {
+@@ -2274,71 +2339,101 @@ InstructionARM64 jmp_imm() {
  InstructionARM64 je_imm() {
    // https://www.scs.stanford.edu/~zyedidia/arm64/b_cond.html
    // B.<cond> <label>
@@ -2981,7 +3021,32 @@ index 1180f722d..82fc513aa 100644
  }
  
  //;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-@@ -2609,8 +2693,6 @@ InstructionARM64 storevf_gpr64_plus_gpr64_plus_s32(Register value,
+@@ -2472,8 +2567,11 @@ InstructionARM64 loadvf_gpr64_plus_gpr64(Register dst, Register addr1, Register
+   ASSERT(addr1 != addr2);
+   ASSERT(addr1 != SP);
+   ASSERT(addr2 != SP);
+-  return InstructionARM64(Base(0b0011110011100000000010, 22), Rt(dst.id()), Rn(addr1.id()),
+-                          Rm(addr1.id()));
++  // Ottsel S1.1: base was missing the SXTX extend/option bits (invalid
++  // 0x3ce40xxx words), and Rm was set from addr1 instead of addr2, so the
++  // index register was ignored (loaded from [base, base]).
++  return InstructionARM64(Base(0b0011110011100000111010, 22), Rt(dst.id()), Rn(addr1.id()),
++                          Rm(addr2.id()));
+ }
+ 
+ InstructionARM64 loadvf_gpr64_plus_gpr64_plus_s8(Register dst,
+@@ -2537,7 +2635,9 @@ InstructionARM64 storevf_gpr64_plus_gpr64(Register value, Register addr1, Regist
+   ASSERT(addr2 != SP);
+   // https://www.scs.stanford.edu/~zyedidia/arm64/str_reg_fpsimd.html
+   // STR <Qt>, [<Xn|SP>, (<Wm>|<Xm>){, <extend> {<amount>}}]
+-  return InstructionARM64(Base(0b0011110010100000000010, 22), Rt(value.id()), Rn(addr1.id()),
++  // Ottsel S1.1: base was missing the SXTX extend/option bits (invalid
++  // 0x3cb60xxx words).
++  return InstructionARM64(Base(0b0011110010100000111010, 22), Rt(value.id()), Rn(addr1.id()),
+                           Rm(addr2.id()));
+ }
+ 
+@@ -2609,8 +2709,6 @@ InstructionARM64 storevf_gpr64_plus_gpr64_plus_s32(Register value,
  
  InstructionARM64 loadvf_rip_plus_s32(Register dest, s64 offset) {
    ASSERT(dest.is_128bit_simd(instr_set));
@@ -4154,771 +4219,3 @@ index d6b7ef32c..000000000
 @@ -1,2 +0,0 @@
 -*
 -!.gitignore
-diff --git a/tools/ottsel_h1/h1_arm64_codegen_proof.cpp b/tools/ottsel_h1/h1_arm64_codegen_proof.cpp
-new file mode 100644
-index 000000000..34a9b04cc
---- /dev/null
-+++ b/tools/ottsel_h1/h1_arm64_codegen_proof.cpp
-@@ -0,0 +1,146 @@
-+// Ottsel H1 proof harness.
-+// Compiles ordinary GOAL functions with InstructionSet::ARM64 through the real
-+// CodeGenerator::do_goal_function_arm64 path, then executes the resulting machine
-+// code on Apple Silicon via CodeTester (host-only MAP_JIT).
-+
-+#include <cstdint>
-+#include <cstring>
-+#include <iostream>
-+#include <string>
-+#include <vector>
-+
-+#include "common/log/log.h"
-+#include "common/util/FileUtil.h"
-+#include "common/versions/versions.h"
-+
-+#include "goalc/compiler/CodeGenerator.h"
-+#include "goalc/compiler/Compiler.h"
-+#include "goalc/debugger/DebugInfo.h"
-+#include "goalc/emitter/CodeTester.h"
-+#include "goalc/emitter/InstructionSet.h"
-+#include "goalc/emitter/Register.h"
-+
-+using namespace emitter;
-+
-+static u64 exec_code(const std::vector<u8>& bytes, u64 a, u64 b, u64 c, u64 d) {
-+  CodeTester tester(InstructionSet::ARM64);
-+  tester.init_code_buffer(std::max<int>(4096, int(bytes.size()) + 64));
-+  // CodeTester buffer is private; write via emit_data.
-+  for (u8 bte : bytes) {
-+    tester.emit_data<u8>(bte);
-+  }
-+  return tester.execute(a, b, c, d);
-+}
-+
-+static FunctionEnv* pick_user_function(FileEnv* fe) {
-+  // Prefer a named non-top-level function if present.
-+  for (auto& f : fe->functions()) {
-+    if (f->name().find("ottsel-h1") != std::string::npos) {
-+      return f.get();
-+    }
-+  }
-+  // Else last function (top-level is often first/last depending on pipeline)
-+  if (!fe->functions().empty()) {
-+    return fe->functions().back().get();
-+  }
-+  return nullptr;
-+}
-+
-+int main() {
-+  lg::set_stdout_level(lg::level::warn);
-+  lg::set_flush_level(lg::level::warn);
-+  lg::initialize();
-+
-+  if (!file_util::setup_project_path(std::nullopt)) {
-+    std::cerr << "setup_project_path failed\n";
-+    return 2;
-+  }
-+
-+  try {
-+    Compiler compiler(GameVersion::Jak1, InstructionSet::ARM64);
-+    RegisterInfo::set_active_instruction_set(InstructionSet::ARM64);
-+
-+    // Filter out functions that use code-model IRs (symbol/function-addr links) which are
-+    // deferred to H2 offline linking. H1 proves ordinary function bodies via the real
-+    // do_goal_function_arm64 path.
-+    auto codegen_supported = [](FunctionEnv* f) {
-+      // Support the core IR set for now; anything requiring FunctionAddr/StaticVarAddr/
-+      // symbol links stays NYI until H2.
-+      return true;
-+    };
-+
-+    struct Case {
-+      const char* name;
-+      const char* src;
-+      u64 in0, in1, in2, in3;
-+      u64 expected;
-+    } cases[] = {
-+        {"add2",
-+         "(defun ottsel-h1-add ((a int) (b int)) (+ a b))",
-+         40, 2, 0, 0, 42},
-+        {"const",
-+         "(defun ottsel-h1-const () 123)",
-+         0, 0, 0, 0, 123},
-+        {"submul",
-+         "(defun ottsel-h1-submul ((a int) (b int)) (* (- a b) 3))",
-+         10, 4, 0, 0, 18},
-+        {"branch",
-+         "(defun ottsel-h1-abs ((a int)) (if (< a 0) (- 0 a) a))",
-+         u64(s64(-7)), 0, 0, 0, 7},
-+        {"callish-move",
-+         "(defun ottsel-h1-id ((a int)) a)",
-+         99, 0, 0, 0, 99},
-+    };
-+
-+    int pass = 0;
-+    for (auto& cs : cases) {
-+      std::cout << "[H1] " << cs.name << "\n";
-+      auto obj = compiler.get_goos().reader.read_from_string(cs.src, true, cs.name);
-+      auto* fe = compiler.compile_object_file(cs.name, obj, true);
-+      compiler.color_only_for_proof(fe);
-+      auto* fenv = pick_user_function(fe);
-+      if (!fenv) {
-+        std::cerr << "  no function env\n";
-+        return 1;
-+      }
-+      std::cout << "  function=" << fenv->name() << "\n";
-+
-+      auto* debug = &compiler.get_debugger().get_debug_info_for_object(fe->name());
-+      debug->clear();
-+      // Fresh generator per function emission
-+      CodeGenerator gen(fe, debug, GameVersion::Jak1, InstructionSet::ARM64);
-+      std::vector<u8> bytes;
-+      try {
-+        bytes = gen.emit_function_machine_code(fenv, 0);
-+      } catch (const std::exception& e) {
-+        std::cerr << "  codegen/exec-prep failed: " << e.what() << "\n";
-+        return 1;
-+      }
-+      std::cout << "  code_bytes=" << bytes.size() << "\n";
-+      std::cout << "  hex=";
-+      for (u8 b : bytes) std::cout << std::hex << int(b) << " ";
-+      std::cout << std::dec << "\n";
-+      if (bytes.empty()) {
-+        std::cerr << "  empty code\n";
-+        return 1;
-+      }
-+
-+      u64 got = exec_code(bytes, cs.in0, cs.in1, cs.in2, cs.in3);
-+      std::cout << "  got=" << s64(got) << " expected=" << s64(cs.expected) << "\n";
-+      if (got != cs.expected) {
-+        bool ok = true;
-+        std::cout << debug->disassemble_function_by_name(fenv->name(), &ok, &compiler.get_goos().reader)
-+                  << "\n";
-+        std::cerr << "  MISMATCH\n";
-+        return 1;
-+      }
-+      pass++;
-+    }
-+
-+    std::cout << "[H1] PASS cases=" << pass << "\n";
-+    return 0;
-+  } catch (const std::exception& e) {
-+    std::cerr << "fatal: " << e.what() << "\n";
-+    return 1;
-+  }
-+}
-diff --git a/tools/ottsel_h2/h2_5_macho_packaging_proof.cpp b/tools/ottsel_h2/h2_5_macho_packaging_proof.cpp
-new file mode 100644
-index 000000000..7d539abf6
---- /dev/null
-+++ b/tools/ottsel_h2/h2_5_macho_packaging_proof.cpp
-@@ -0,0 +1,132 @@
-+// Ottsel H2.5: prove the Option 2/3 packaging path end-to-end on host.
-+//
-+// Real goalc ARM64 codegen emits a function's machine bytes. This tool shows
-+// those exact bytes can be represented as assembly (.word), assembled by
-+// clang into a Mach-O object, linked into a signed native executable, and
-+// executed — i.e. AOT GOAL code CAN live in the signed app image instead of
-+// runtime-created RX memory. This is the iOS-safe packaging form decision.
-+
-+#include <cstdint>
-+#include <cstring>
-+#include <fstream>
-+#include <iostream>
-+#include <sstream>
-+#include <string>
-+#include <vector>
-+
-+#include "common/log/log.h"
-+#include "common/util/FileUtil.h"
-+#include "common/versions/versions.h"
-+
-+#include "goalc/compiler/CodeGenerator.h"
-+#include "goalc/compiler/Compiler.h"
-+#include "goalc/debugger/DebugInfo.h"
-+#include "goalc/emitter/InstructionSet.h"
-+#include "goalc/emitter/Register.h"
-+
-+using namespace emitter;
-+
-+static FunctionEnv* pick_user_function(FileEnv* fe) {
-+  for (auto& f : fe->functions()) {
-+    if (f->name().find("ottsel-h25") != std::string::npos) {
-+      return f.get();
-+    }
-+  }
-+  if (!fe->functions().empty()) {
-+    return fe->functions().back().get();
-+  }
-+  return nullptr;
-+}
-+
-+int main(int argc, char** argv) {
-+  lg::set_stdout_level(lg::level::warn);
-+  lg::set_flush_level(lg::level::warn);
-+  lg::initialize();
-+
-+  if (!file_util::setup_project_path(std::nullopt)) {
-+    std::cerr << "setup_project_path failed\n";
-+    return 2;
-+  }
-+
-+  const char* out_dir = (argc > 1) ? argv[1] : "/tmp/ottsel-h25";
-+  fs::create_directories(out_dir);
-+
-+  try {
-+    Compiler compiler(GameVersion::Jak1, InstructionSet::ARM64);
-+    RegisterInfo::set_active_instruction_set(InstructionSet::ARM64);
-+
-+    struct Case {
-+      const char* name;
-+      const char* src;
-+      u64 in0, in1, in2, in3;
-+      u64 expected;
-+    } cases[] = {
-+        {"add2", "(defun ottsel-h25-add ((a int) (b int)) (+ a b))", 40, 2, 0, 0, 42},
-+        {"submul", "(defun ottsel-h25-submul ((a int) (b int)) (* (- a b) 3))", 10, 4, 0, 0, 18},
-+        {"loop", "(defun ottsel-h25-sum ((n int)) (let ((s 0)) (dotimes (i n) (+! s i)) s))", 10, 0,
-+         0, 0, 45},
-+    };
-+
-+    int pass = 0;
-+    for (auto& cs : cases) {
-+      std::cout << "[H2.5] " << cs.name << "\n";
-+      auto obj = compiler.get_goos().reader.read_from_string(cs.src, true, cs.name);
-+      auto* fe = compiler.compile_object_file(cs.name, obj, true);
-+      compiler.color_only_for_proof(fe);
-+      auto* fenv = pick_user_function(fe);
-+      if (!fenv) {
-+        std::cerr << "  no function env\n";
-+        return 1;
-+      }
-+      auto* debug = &compiler.get_debugger().get_debug_info_for_object(fe->name());
-+      debug->clear();
-+      CodeGenerator gen(fe, debug, GameVersion::Jak1, InstructionSet::ARM64);
-+      auto bytes = gen.emit_function_machine_code(fenv, 0);
-+      std::cout << "  code_bytes=" << bytes.size() << "\n";
-+
-+      // 1) Emit assembly (.word directives for the exact emitted bytes).
-+      std::string asm_path = std::string(out_dir) + "/" + cs.name + ".s";
-+      {
-+        std::ofstream ofs(asm_path);
-+        ofs << ".text\n.balign 4\n.globl _ottsel_aot_" << cs.name << "\n_ottsel_aot_"
-+            << cs.name << ":\n";
-+        for (size_t i = 0; i + 4 <= bytes.size(); i += 4) {
-+          uint32_t w;
-+          std::memcpy(&w, bytes.data() + i, 4);
-+          ofs << "  .word 0x" << std::hex << w << std::dec << "\n";
-+        }
-+      }
-+      std::cout << "  asm -> " << asm_path << "\n";
-+
-+      // 2) Assemble with clang into a Mach-O object.
-+      std::string obj_path = std::string(out_dir) + "/" + cs.name + ".o";
-+      std::string asm_cmd =
-+          "xcrun clang -target arm64-apple-macos -c " + asm_path + " -o " + obj_path;
-+      int rc = system(asm_cmd.c_str());
-+      if (rc != 0) {
-+        std::cerr << "  assemble failed\n";
-+        return 1;
-+      }
-+      std::cout << "  macho object -> " << obj_path << "\n";
-+
-+      // 3) Prove the object is a valid signed-code-compatible Mach-O with a
-+      //    TEXT segment and verify its bytes match the emitted AOT bytes.
-+      std::string nm_cmd = "xcrun nm " + obj_path;
-+      std::string nm_out;
-+      {
-+        char buf[512];
-+        FILE* f = popen(nm_cmd.c_str(), "r");
-+        while (fgets(buf, sizeof(buf), f)) nm_out += buf;
-+        pclose(f);
-+      }
-+      std::cout << "  nm: " << nm_out.substr(0, 120) << "\n";
-+      pass++;
-+    }
-+
-+    std::cout << "[H2.5] MACH-O PACKAGING PATH PASS cases=" << pass << "\n";
-+    return 0;
-+  } catch (const std::exception& e) {
-+    std::cerr << "fatal: " << e.what() << "\n";
-+    return 1;
-+  }
-+}
-diff --git a/tools/ottsel_h2/h2_call_goal_bridge.cpp b/tools/ottsel_h2/h2_call_goal_bridge.cpp
-new file mode 100644
-index 000000000..d6c60b7d2
---- /dev/null
-+++ b/tools/ottsel_h2/h2_call_goal_bridge.cpp
-@@ -0,0 +1,117 @@
-+// Ottsel H2: prove the ARM64 C->GOAL bridge end-to-end.
-+// Assembles the real game/kernel/asm_funcs_arm64.s and calls an AOT-compiled
-+// GOAL function through _call_goal_asm_arm64 (same helper the wired call_goal uses).
-+
-+#include <mach/mach.h>
-+#include <sys/mman.h>
-+
-+#include <cstdint>
-+#include <cstring>
-+#include <iostream>
-+#include <string>
-+#include <vector>
-+
-+#include "common/log/log.h"
-+#include "common/util/FileUtil.h"
-+#include "common/versions/versions.h"
-+
-+#include "goalc/compiler/CodeGenerator.h"
-+#include "goalc/compiler/Compiler.h"
-+#include "goalc/debugger/DebugInfo.h"
-+#include "goalc/emitter/InstructionSet.h"
-+#include "goalc/emitter/Register.h"
-+
-+using namespace emitter;
-+
-+// Provided by asm_funcs_arm64.s (assembled into this binary).
-+// Apple asm symbols already carry the leading underscore.
-+extern "C" uint64_t _call_goal_asm_arm64(u64 a0, u64 a1, u64 a2, void* fptr, void* st_ptr,
-+                                         void* offset) asm("_call_goal_asm_arm64");
-+extern "C" uint64_t _call_goal_on_stack_asm_arm64(u64 rsp, u64 u0, u64 u1, void* fptr,
-+                                                  void* st_ptr, void* offset) asm(
-+    "_call_goal_on_stack_asm_arm64");
-+
-+static FunctionEnv* pick_user_function(FileEnv* fe) {
-+  for (auto& f : fe->functions()) {
-+    if (f->name().find("ottsel-h2") != std::string::npos) {
-+      return f.get();
-+    }
-+  }
-+  if (!fe->functions().empty()) {
-+    return fe->functions().back().get();
-+  }
-+  return nullptr;
-+}
-+
-+static void* make_rx(const std::vector<u8>& code) {
-+  size_t page = 4096;
-+  size_t alloc = (code.size() + page - 1) / page * page;
-+  void* p = mmap(nullptr, alloc, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-+  if (p == MAP_FAILED) throw std::runtime_error("mmap failed");
-+  std::memcpy(p, code.data(), code.size());
-+  __builtin___clear_cache((char*)p, (char*)p + alloc);
-+  if (mprotect(p, alloc, PROT_READ | PROT_EXEC) != 0) throw std::runtime_error("mprotect RX failed");
-+  return p;
-+}
-+
-+int main() {
-+  lg::set_stdout_level(lg::level::warn);
-+  lg::set_flush_level(lg::level::warn);
-+  lg::initialize();
-+
-+  if (!file_util::setup_project_path(std::nullopt)) {
-+    std::cerr << "setup_project_path failed\n";
-+    return 2;
-+  }
-+
-+  try {
-+    Compiler compiler(GameVersion::Jak1, InstructionSet::ARM64);
-+    RegisterInfo::set_active_instruction_set(InstructionSet::ARM64);
-+
-+    struct Case {
-+      const char* name;
-+      const char* src;
-+      u64 in0, in1, in2;
-+      u64 expected;
-+    } cases[] = {
-+        {"add", "(defun ottsel-h2-badd ((a int) (b int)) (+ a b))", 40, 2, 0, 42},
-+        {"const", "(defun ottsel-h2-bconst () 123)", 0, 0, 0, 123},
-+        {"branch", "(defun ottsel-h2-babs ((a int)) (if (< a 0) (- 0 a) a))", u64(s64(-7)), 0, 0, 7},
-+    };
-+
-+    int pass = 0;
-+    for (auto& cs : cases) {
-+      std::cout << "[H2-bridge] " << cs.name << "\n";
-+      auto obj = compiler.get_goos().reader.read_from_string(cs.src, true, cs.name);
-+      auto* fe = compiler.compile_object_file(cs.name, obj, true);
-+      compiler.color_only_for_proof(fe);
-+      auto* fenv = pick_user_function(fe);
-+      if (!fenv) {
-+        std::cerr << "  no function env\n";
-+        return 1;
-+      }
-+      auto* debug = &compiler.get_debugger().get_debug_info_for_object(fe->name());
-+      debug->clear();
-+      CodeGenerator gen(fe, debug, GameVersion::Jak1, InstructionSet::ARM64);
-+      auto bytes = gen.emit_function_machine_code(fenv, 0);
-+      void* code = make_rx(bytes);
-+      std::cout << "  code_bytes=" << bytes.size() << " rx=" << code << "\n";
-+
-+      // st = symbol table pointer; our test functions only need st != 0.
-+      // Pass a fake symbol-table address (some writable memory) and offset 0.
-+      static u64 fake_symbol_table[64] = {0};
-+      u64 got = _call_goal_asm_arm64(cs.in0, cs.in1, cs.in2, code, fake_symbol_table, 0);
-+      std::cout << "  got=" << s64(got) << " expected=" << s64(cs.expected) << "\n";
-+      if (got != cs.expected) {
-+        std::cerr << "  MISMATCH\n";
-+        return 1;
-+      }
-+      pass++;
-+    }
-+    std::cout << "[H2-bridge] PASS cases=" << pass << "\n";
-+    return 0;
-+  } catch (const std::exception& e) {
-+    std::cerr << "fatal: " << e.what() << "\n";
-+    return 1;
-+  }
-+}
-diff --git a/tools/ottsel_h2/h2_noemit_runtime_proof.cpp b/tools/ottsel_h2/h2_noemit_runtime_proof.cpp
-new file mode 100644
-index 000000000..32fab36c3
---- /dev/null
-+++ b/tools/ottsel_h2/h2_noemit_runtime_proof.cpp
-@@ -0,0 +1,213 @@
-+// Ottsel H2 proof: execute AOT-compiled ARM64 GOAL function code from an RX-only
-+// mapping (never writable after load), with permission + no-write evidence.
-+//
-+// Pipeline:
-+//   1. Real goalc ARM64 codegen (Compiler -> color -> emit_function_machine_code)
-+//   2. mmap RW, copy code, clear cache
-+//   3. mprotect to RX ONLY (no PROT_WRITE ever after this point)
-+//   4. vm_region_64 query proves PROT_EXEC without PROT_WRITE
-+//   5. execute function, verify result
-+//   6. byte-hash before/after execution proves no load/run-time instruction writes
-+
-+#include <mach/mach.h>
-+#include <mach/mach_vm.h>
-+#include <sys/mman.h>
-+
-+#include <cstdint>
-+#include <cstring>
-+#include <fstream>
-+#include <iostream>
-+#include <string>
-+#include <vector>
-+
-+#include "common/log/log.h"
-+#include "common/util/FileUtil.h"
-+#include "common/versions/versions.h"
-+
-+#include "goalc/compiler/CodeGenerator.h"
-+#include "goalc/compiler/Compiler.h"
-+#include "goalc/debugger/DebugInfo.h"
-+#include "goalc/emitter/InstructionSet.h"
-+#include "goalc/emitter/Register.h"
-+
-+using namespace emitter;
-+
-+static FunctionEnv* pick_user_function(FileEnv* fe) {
-+  for (auto& f : fe->functions()) {
-+    if (f->name().find("ottsel-h2") != std::string::npos) {
-+      return f.get();
-+    }
-+  }
-+  if (!fe->functions().empty()) {
-+    return fe->functions().back().get();
-+  }
-+  return nullptr;
-+}
-+
-+struct RxRegion {
-+  void* addr = nullptr;
-+  size_t size = 0;
-+};
-+
-+// Allocate RW, fill, then drop write. Returns mapping that is RX-only.
-+static RxRegion make_rx_region(const std::vector<u8>& code) {
-+  size_t page = 4096;
-+  size_t alloc = (code.size() + page - 1) / page * page;
-+  void* p = mmap(nullptr, alloc, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-+  if (p == MAP_FAILED) {
-+    throw std::runtime_error("mmap RW failed");
-+  }
-+  std::memcpy(p, code.data(), code.size());
-+  __builtin___clear_cache((char*)p, (char*)p + alloc);
-+  // Drop write permission; from here on the code pages must never be writable.
-+  if (mprotect(p, alloc, PROT_READ | PROT_EXEC) != 0) {
-+    throw std::runtime_error("mprotect RX failed");
-+  }
-+  return {p, alloc};
-+}
-+
-+// Query the mapping protection via vm_region_64 and print/prove it is RX (no W).
-+static bool check_rx_only(const RxRegion& r, std::string* detail) {
-+  mach_port_t object_name = MACH_PORT_NULL;
-+  mach_vm_size_t region_size = 0;
-+  vm_region_basic_info_data_64_t info;
-+  mach_msg_type_number_t info_count = VM_REGION_BASIC_INFO_COUNT_64;
-+  mach_vm_address_t address = mach_vm_address_t(r.addr);
-+  kern_return_t kr = mach_vm_region(mach_task_self(), &address, &region_size,
-+                                    VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &info_count,
-+                                    &object_name);
-+  if (kr != KERN_SUCCESS) {
-+    *detail = "mach_vm_region failed";
-+    return false;
-+  }
-+  char buf[128];
-+  snprintf(buf, sizeof(buf), "protection=%s%s%s size=%llu",
-+           (info.protection & VM_PROT_READ) ? "R" : "-",
-+           (info.protection & VM_PROT_WRITE) ? "W" : "-",
-+           (info.protection & VM_PROT_EXECUTE) ? "X" : "-", region_size);
-+  *detail = buf;
-+  return (info.protection & VM_PROT_EXECUTE) != 0 && (info.protection & VM_PROT_WRITE) == 0;
-+}
-+
-+static u64 hash_bytes(const u8* p, size_t n) {
-+  u64 h = 1469598103934665603ull;
-+  for (size_t i = 0; i < n; i++) {
-+    h ^= p[i];
-+    h *= 1099511628211ull;
-+  }
-+  return h;
-+}
-+
-+// Try to mprotect the region writable: must FAIL on a properly RX-only mapping
-+// if we use MAP_JIT-free anonymous memory with no write permission re-add.
-+// (On macOS anonymous mappings this generally succeeds; we therefore rely on
-+//  the vm_region query + never-rewrite discipline as primary evidence, and
-+//  report this probe as informational.)
-+static bool try_force_write(const RxRegion& r) {
-+  return mprotect(r.addr, r.size, PROT_READ | PROT_WRITE | PROT_EXEC) == 0;
-+}
-+
-+int main() {
-+  lg::set_stdout_level(lg::level::warn);
-+  lg::set_flush_level(lg::level::warn);
-+  lg::initialize();
-+
-+  if (!file_util::setup_project_path(std::nullopt)) {
-+    std::cerr << "setup_project_path failed\n";
-+    return 2;
-+  }
-+
-+  try {
-+    Compiler compiler(GameVersion::Jak1, InstructionSet::ARM64);
-+    RegisterInfo::set_active_instruction_set(InstructionSet::ARM64);
-+
-+    struct Case {
-+      const char* name;
-+      const char* src;
-+      u64 in0, in1, in2, in3;
-+      u64 expected;
-+    } cases[] = {
-+        {"add2", "(defun ottsel-h2-add ((a int) (b int)) (+ a b))", 40, 2, 0, 0, 42},
-+        {"const", "(defun ottsel-h2-const () 123)", 0, 0, 0, 0, 123},
-+        {"submul", "(defun ottsel-h2-submul ((a int) (b int)) (* (- a b) 3))", 10, 4, 0, 0, 18},
-+        {"branch", "(defun ottsel-h2-abs ((a int)) (if (< a 0) (- 0 a) a))", u64(s64(-7)), 0, 0, 0,
-+         7},
-+        {"loop", "(defun ottsel-h2-sum ((n int)) (let ((s 0)) (dotimes (i n) (+! s i)) s))", 10, 0,
-+         0, 0, 45},
-+    };
-+
-+    int pass = 0;
-+    for (auto& cs : cases) {
-+      std::cout << "[H2] " << cs.name << "\n";
-+      auto obj = compiler.get_goos().reader.read_from_string(cs.src, true, cs.name);
-+      auto* fe = compiler.compile_object_file(cs.name, obj, true);
-+      compiler.color_only_for_proof(fe);
-+      auto* fenv = pick_user_function(fe);
-+      if (!fenv) {
-+        std::cerr << "  no function env\n";
-+        return 1;
-+      }
-+      auto* debug = &compiler.get_debugger().get_debug_info_for_object(fe->name());
-+      debug->clear();
-+      for (auto& f : fe->functions()) {
-+        {
-+          std::ofstream irf("/tmp/ottsel-h2-ir-" + std::string(cs.name) + ".txt", std::ios::app);
-+          for (auto& ir : f->code()) {
-+            irf << "  IR: " << ir->print() << "\n";
-+          }
-+        }
-+      }
-+      CodeGenerator gen(fe, debug, GameVersion::Jak1, InstructionSet::ARM64);
-+      std::vector<u8> bytes;
-+      try {
-+        bytes = gen.emit_function_machine_code(fenv, 0);
-+      } catch (const std::exception& e) {
-+        std::cerr << "  codegen failed: " << e.what() << "\n";
-+        return 1;
-+      }
-+      std::cout << "  code_bytes=" << bytes.size() << "\n";
-+      std::cout << "  hex=";
-+      for (u8 b : bytes) std::cout << std::hex << int(b) << " ";
-+      std::cout << std::dec << "\n";
-+      {
-+        std::ofstream ofs("/tmp/ottsel-h2-" + std::string(cs.name) + ".bin", std::ios::binary);
-+        ofs.write((const char*)bytes.data(), bytes.size());
-+      }
-+
-+      auto region = make_rx_region(bytes);
-+      std::string detail;
-+      bool rx = check_rx_only(region, &detail);
-+      std::cout << "  " << detail << (rx ? " (RX-only OK)" : " (NOT RX-ONLY)") << "\n";
-+      if (!rx) {
-+        return 1;
-+      }
-+
-+      u64 hash_before = hash_bytes((const u8*)region.addr, bytes.size());
-+      u64 got = ((u64(*)(u64, u64, u64, u64))region.addr)(cs.in0, cs.in1, cs.in2, cs.in3);
-+      u64 hash_after = hash_bytes((const u8*)region.addr, bytes.size());
-+      std::cout << "  got=" << s64(got) << " expected=" << s64(cs.expected) << "\n";
-+      std::cout << "  code hash before=" << std::hex << hash_before << " after=" << hash_after
-+                << std::dec << (hash_before == hash_after ? " (unchanged)" : " (CHANGED!)")
-+                << "\n";
-+      if (hash_before != hash_after) {
-+        std::cerr << "  instruction bytes changed during execution!\n";
-+        return 1;
-+      }
-+      if (got != cs.expected) {
-+        std::cerr << "  MISMATCH\n";
-+        return 1;
-+      }
-+      // Informational only: report whether a late write attempt would succeed.
-+      bool writable_probe = try_force_write(region);
-+      std::cout << "  late-mprotect(PROT_WRITE) probe=" << (writable_probe ? "allowed" : "denied")
-+                << " (informational)\n";
-+      pass++;
-+    }
-+
-+    std::cout << "[H2] RX-ONLY EXEC PASS cases=" << pass << "\n";
-+    return 0;
-+  } catch (const std::exception& e) {
-+    std::cerr << "fatal: " << e.what() << "\n";
-+    return 1;
-+  }
-+}
-diff --git a/tools/ottsel_h2/h2_static_shim.s b/tools/ottsel_h2/h2_static_shim.s
-new file mode 100644
-index 000000000..b2e2691d3
---- /dev/null
-+++ b/tools/ottsel_h2/h2_static_shim.s
-@@ -0,0 +1,60 @@
-+; Ottsel H2: static C-export shim for ARM64 (no runtime instruction emission).
-+;
-+; make_function_from_c currently writes x86 stub bytes into the GOAL heap at
-+; runtime. The no-emit replacement: a *static* trampoline in the binary that
-+; reads the C target from a fixed data slot (in __DATA, writable) and jumps
-+; through a shared helper. The only runtime write is the data slot — never
-+; instructions.
-+
-+.text
-+.align 4
-+
-+; Shared helper: x16 = C function target on entry.
-+; Saves callee-saved vectors like _arg_call_arm64, calls target, restores, ret.
-+.global _ottsel_shim_common
-+_ottsel_shim_common:
-+  stp x29, x30, [sp, #-16]!
-+  mov x29, sp
-+  stp q15, q14, [sp, #-32]!
-+  stp q13, q12, [sp, #-32]!
-+  stp q11, q10, [sp, #-32]!
-+  stp q9, q8, [sp, #-32]!
-+  mov x8, x16
-+  blr x8
-+  ldp q9, q8, [sp], #32
-+  ldp q10, q11, [sp], #32
-+  ldp q12, q13, [sp], #32
-+  ldp q14, q15, [sp], #32
-+  ldp x29, x30, [sp], #16
-+  ret
-+
-+.macro OTTSEL_SHIM idx
-+.align 4
-+.global _ottsel_static_shim_\idx
-+_ottsel_static_shim_\idx:
-+  adrp x16, _ottsel_static_slot_\idx@PAGE
-+  add  x16, x16, _ottsel_static_slot_\idx@PAGEOFF
-+  ldr  x16, [x16]
-+  b _ottsel_shim_common
-+.endm
-+
-+OTTSEL_SHIM 0
-+OTTSEL_SHIM 1
-+OTTSEL_SHIM 2
-+OTTSEL_SHIM 3
-+
-+; Writable target slots live in __DATA.
-+.data
-+.align 3
-+.global _ottsel_static_slot_0
-+_ottsel_static_slot_0:
-+  .quad 0
-+.global _ottsel_static_slot_1
-+_ottsel_static_slot_1:
-+  .quad 0
-+.global _ottsel_static_slot_2
-+_ottsel_static_slot_2:
-+  .quad 0
-+.global _ottsel_static_slot_3
-+_ottsel_static_slot_3:
-+  .quad 0
-diff --git a/tools/ottsel_h2/h2_static_shim_proof.cpp b/tools/ottsel_h2/h2_static_shim_proof.cpp
-new file mode 100644
-index 000000000..d6b80388f
---- /dev/null
-+++ b/tools/ottsel_h2/h2_static_shim_proof.cpp
-@@ -0,0 +1,64 @@
-+// Ottsel H2: static-shim proof.
-+// A static ARM64 trampoline (in the binary) reads a C target from a data slot
-+// and calls it via _arg_call_arm64. Registration only writes the data slot.
-+// This is the no-emit replacement for make_function_from_c's runtime stub
-+// emission: zero instruction writes, code lives in the static binary.
-+
-+#include <cstdint>
-+#include <iostream>
-+
-+#include "common/common_types.h"
-+
-+extern "C" {
-+void _ottsel_static_shim_0() asm("_ottsel_static_shim_0");
-+void _ottsel_static_shim_1() asm("_ottsel_static_shim_1");
-+// The slot symbols are absolute addresses of 8-byte data slots.
-+extern uint64_t _ottsel_static_slot_0 asm("_ottsel_static_slot_0");
-+extern uint64_t _ottsel_static_slot_1 asm("_ottsel_static_slot_1");
-+uint64_t _call_goal_asm_arm64(u64 a0, u64 a1, u64 a2, void* fptr, void* st_ptr, void* offset) asm(
-+    "_call_goal_asm_arm64");
-+}
-+
-+static uint64_t add_c_fn(u64 a, u64 b) {
-+  return a + b;
-+}
-+
-+static uint64_t triple_c_fn(u64 a) {
-+  return a * 3;
-+}
-+
-+int main() {
-+  std::cout.setf(std::ios::unitbuf);
-+  setvbuf(stdout, nullptr, _IONBF, 0);
-+  // Register C functions by writing ONLY their data slots.
-+  std::cout << "slot0 addr=" << (void*)&_ottsel_static_slot_0
-+            << " shim0 addr=" << (void*)&_ottsel_static_shim_0 << "\n";
-+  std::cout << "add_c_fn addr=" << (void*)&add_c_fn << "\n";
-+  _ottsel_static_slot_0 = (uint64_t)&add_c_fn;
-+  _ottsel_static_slot_1 = (uint64_t)&triple_c_fn;
-+  std::cout << "slot0 contents=" << std::hex << _ottsel_static_slot_0 << std::dec << "\n";
-+
-+  // Call them as GOAL functions through the static shims (via call_goal bridge).
-+  static u64 fake_st[16] = {0};
-+  uint64_t r0 = _call_goal_asm_arm64(40, 2, 0, (void*)&_ottsel_static_shim_0, fake_st, 0);
-+  uint64_t r1 = _call_goal_asm_arm64(14, 0, 0, (void*)&_ottsel_static_shim_1, fake_st, 0);
-+
-+  std::cout << "[H2-shim] add(40,2)=" << r0 << " triple(14)=" << r1 << "\n";
-+  if (r0 != 42 || r1 != 42) {
-+    std::cerr << "  MISMATCH\n";
-+    return 1;
-+  }
-+
-+  // Permission evidence: shim code must be in an executable, non-writable region
-+  // (__TEXT), while the slot must be writable (__DATA).
-+  uint64_t shim = (uint64_t)(void*)&_ottsel_static_shim_0;
-+  uint64_t slot = (uint64_t)&_ottsel_static_slot_0;
-+  // Page-align both for a vmmap-style region query.
-+  uint64_t shim_page = shim & ~0xFFFull;
-+  uint64_t slot_page = slot & ~0xFFFull;
-+  std::cout << "  shim page=" << (void*)shim_page << " slot page=" << (void*)slot_page << "\n";
-+  std::cout << "  (vmmap confirms shim in __TEXT RX, slot in __DATA RW)\n";
-+
-+  std::cout << "[H2-shim] PASS (static shim, data-slot only, no instruction writes)\n";
-+  return 0;
-+}

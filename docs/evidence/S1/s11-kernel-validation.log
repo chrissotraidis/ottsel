@@ -1,0 +1,1 @@
+PASS: all 86016 code words across 8 objects validate (decode + round-trip); 226 type-tag words skipped
