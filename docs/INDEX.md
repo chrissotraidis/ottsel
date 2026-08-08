@@ -20,8 +20,9 @@ Reading order for Phase 1 outputs (including deep pass).
 | [11-graphics-audio-input-deep-dive.md](11-graphics-audio-input-deep-dive.md) | Secondary platform systems detail | done |
 | [12-research-confidence.md](12-research-confidence.md) | Confidence ratings + falsifiers | done |
 | [13-current-state.md](13-current-state.md) | Authoritative state snapshot (Bot 3, 2026-08-08) | done |
+| [14-progress-review.md](14-progress-review.md) | Progress review: why the loop stalled + S1 sub-gate plan | done |
 | [BOT2_PROMPT.md](BOT2_PROMPT.md) | Full build-agent goal loop | done (hardened) |
 | [BOT3_HANDOFF.md](BOT3_HANDOFF.md) | Next-bot goal-based handoff prompt | done |
-| [BOT4_HANDOFF.md](BOT4_HANDOFF.md) | Next-bot goal-based handoff prompt (H3 PASS → S1) | done |
+| [BOT4_HANDOFF.md](BOT4_HANDOFF.md) | Next-bot goal-based handoff prompt (H3 PASS → S1) | done (revised 2026-08-08 with S1.0–S1.4) |
 
 Also see repo brief copy at [`jak1-researchloop.md`](jak1-researchloop.md).

@@ -1,5 +1,25 @@
 # 00 — Loop log
 
+## 2026-08-08 — Progress review (operator-requested, no gate work)
+
+- **Acted:** Whole-repo review after the operator reported the system was
+  having major problems progressing. Found the problems are structural, not
+  technical: S1 was declared IN PROGRESS with zero scaffolding (`src/`,
+  `scripts/` empty; no `evidence/S1/`); the H3 debug loop (20-min rebuild →
+  boot → SIGILL hunt → one encoder fix) won't scale to GAME.CGO/engine
+  code; Bot 3's two pre-S1 chores (stderr capture, windowed rebuild) were
+  never executed — the durable H3 log contains **zero** dispatcher-loop
+  lines (verified by grep); patch hygiene ambiguous (4 overlapping patches);
+  disk down to ~16 GiB.
+- **Acted:** wrote `docs/14-progress-review.md` (findings F1–F6 + S1
+  sub-gate plan S1.0–S1.4); rewrote `docs/BOT4_HANDOFF.md` as the S1 goal
+  prompt with the sub-gates (original preserved in git at `346a9da`);
+  updated INDEX. Key scope decision recorded: **S1 is a headless-renderer
+  shell — no OpenGL/GLES work inside S1**; first pixels are S2's Metal
+  spike. Also recorded: build the emitter-validation harness (S1.1) before
+  debugging any further boot fault.
+- **Next:** Bot 4 executes S1.0 → S1.4 per `docs/BOT4_HANDOFF.md`.
+
 ## 2026-08-07 — Gate H1: ARM64 GOAL function codegen (Bot 2, first build loop)
 
 ### Iteration 1 — H1 worktree + ARM ABI
