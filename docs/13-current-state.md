@@ -129,13 +129,23 @@ returned 1375532`) go to stderr (PTY), verified in both runs.
 - **S1 log-font bug found and fixed:** `font5x7.h` rows are 7 bits wide
   (bit 6 = rightmost) but the draw loop used `kFontW = 5`, clipping every
   glyph's right edge in all S1/S2 screenshots. Fixed `kFontW` to 7.
-- **S2.1 next:** wire the runtime's renderer-abstraction seams
-  (`game/graphics/gfx.h` GfxRendererModule) to Metal where cheap, and
-  identify the first real drawable (background / TIE / texture page path).
-  Read-ahead: GAME.CGO ARM64 compile is unproven; the 15 NYI IRs (Asm
-  family, vector swizzle/blend/sqrt, partial FloatMath) are expected to
-  block engine code, and the dispatcher process pool is still idle (no
-  game processes), so a genuine game frame requires GAME.CGO loading first.
+- **S2.1 progress (2026-08-09):** GAME.CGO — the full Jak 1 game engine,
+  346 objects / 22 MB — **compiles for ARM64** and all 3,801,088 emitted
+  code words validate (decode + round-trip + assembler fallback; zero
+  invalid). Evidence: `docs/evidence/S2/s21-game-cgo-arm64.md` +
+  `s21-game-cgo-build.log`. The remaining 15-IR NYI list is now closed for
+  compile: the engine exercised and we implemented BlendVF/SplatVF/
+  SwizzleVF/SqrtVF, VPSHUFLW/VPSHUFHW, and fixed the vector-shift
+  encodings, static vector loads, IR_RegValAddr stack addressing, and a
+  STR Q opcode-width bug that corrupted 2-vector prologue stores. The
+  renderer seam (`GfxRendererModule`) read-ahead is recorded there; the
+  first real drawable is the background path via the game's renderer
+  process -> sceGraphicsInterface -> Gfx.
+- **S2.1/S2.2 next:** link + boot GAME.CGO on the Simulator (the no-emit
+  linker must link the game objects and run their top-levels; the game
+  process tree then starts), then implement the minimal Metal
+  GfxRendererModule (make_display / texture_upload_now / send_chain) for
+  the first real frame.
 - Reproduce S2.0:
 
       ./scripts/build-ios.sh

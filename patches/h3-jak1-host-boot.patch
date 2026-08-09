@@ -1632,10 +1632,66 @@ index 06a8e6475..e85277149 100644
    void poke_target() { m_listener.send_poke(); }
    bool connect_to_target();
 diff --git a/goalc/compiler/IR.cpp b/goalc/compiler/IR.cpp
-index ce4f98f91..30a8b92cf 100644
+index ce4f98f91..3eb72bc48 100644
 --- a/goalc/compiler/IR.cpp
 +++ b/goalc/compiler/IR.cpp
-@@ -201,7 +201,13 @@ void IR_Return::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -6,6 +6,7 @@
+ 
+ #include "goalc/compiler/Env.h"
+ #include "goalc/emitter/IGen.h"
++#include "goalc/emitter/IGenARM64.h"
+ 
+ #include "fmt/format.h"
+ 
+@@ -14,6 +15,47 @@
+ 
+ using namespace emitter;
+ namespace {
++
++/*!
++ * ARM64 in-place 16-bit word permutation of one half of a vector register
++ * (VPSHUFLW/VPSHUFHW): word (base + i) of `reg` becomes word
++ * (base + ((imm >> (2*i)) & 3)) of the original value, for i in 0..3.
++ * Uses the reserved X16/X17 scratch GPRs with a cycle rotation so the
++ * permutation is safe in place.
++ */
++void rotate_vf_words_arm64(emitter::ObjectGenerator* gen,
++                           emitter::IR_Record irec,
++                           emitter::Register reg,
++                           u8 imm,
++                           int base) {
++  u8 sel[4];
++  for (int i = 0; i < 4; i++) {
++    sel[i] = (imm >> (2 * i)) & 3;
++  }
++  bool visited[4] = {};
++  for (int i = 0; i < 4; i++) {
++    if (visited[i] || sel[i] == i) {
++      visited[i] = true;
++      continue;
++    }
++    std::vector<int> cycle;
++    int cur = i;
++    while (!visited[cur]) {
++      visited[cur] = true;
++      cycle.push_back(cur);
++      cur = sel[cur];
++    }
++    gen->add_instr(IGen::ARM64::umov_gpr32_vf_h_element(emitter::X16, reg, base + cycle[0]), irec);
++    for (size_t j = 1; j < cycle.size(); j++) {
++      gen->add_instr(IGen::ARM64::umov_gpr32_vf_h_element(emitter::X17, reg, base + cycle[j]),
++                     irec);
++      gen->add_instr(IGen::ARM64::ins_vf_h_element_gpr32(reg, base + cycle[j], emitter::X16), irec);
++      gen->add_instr(IGen::mov_gpr64_gpr64(*gen, emitter::X16, emitter::X17), irec);
++    }
++    gen->add_instr(IGen::ARM64::ins_vf_h_element_gpr32(reg, base + cycle[0], emitter::X16), irec);
++  }
++}
++
+ Register get_reg(const RegVal* rv, const AllocationResult& allocs, emitter::IR_Record irec) {
+   if (rv->rlet_constraint().has_value()) {
+     auto& range = allocs.ass_as_ranges;
+@@ -201,7 +243,13 @@ void IR_Return::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_Return::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                   const AllocationResult& allocs,
                                   emitter::IR_Record irec) {
@@ -1650,7 +1706,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  /////////////////////
-@@ -230,7 +236,8 @@ void IR_LoadConstant64::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -230,7 +278,8 @@ void IR_LoadConstant64::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_LoadConstant64::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                           const AllocationResult& allocs,
                                           emitter::IR_Record irec) {
@@ -1660,7 +1716,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  /////////////////////
-@@ -278,7 +285,32 @@ void IR_LoadSymbolPointer::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -278,7 +327,32 @@ void IR_LoadSymbolPointer::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_LoadSymbolPointer::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                              const AllocationResult& allocs,
                                              emitter::IR_Record irec) {
@@ -1694,7 +1750,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  /////////////////////
-@@ -310,9 +342,25 @@ void IR_SetSymbolValue::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -310,9 +384,25 @@ void IR_SetSymbolValue::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_SetSymbolValue::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -1723,7 +1779,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  /////////////////////
-@@ -352,9 +400,36 @@ void IR_GetSymbolValue::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -352,9 +442,36 @@ void IR_GetSymbolValue::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_GetSymbolValue::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -1763,7 +1819,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  /////////////////////
-@@ -382,7 +457,7 @@ void IR_RegSet::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -382,7 +499,7 @@ void IR_RegSet::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_RegSet::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                   const AllocationResult& allocs,
                                   emitter::IR_Record irec) {
@@ -1772,7 +1828,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  std::string IR_RegSet::print() {
-@@ -425,7 +500,9 @@ void IR_GotoLabel::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -425,7 +542,9 @@ void IR_GotoLabel::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_GotoLabel::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                      const AllocationResult& allocs,
                                      emitter::IR_Record irec) {
@@ -1783,7 +1839,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  void IR_GotoLabel::resolve(const Label* dest) {
-@@ -508,7 +585,9 @@ void IR_FunctionCall::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -508,7 +627,9 @@ void IR_FunctionCall::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_FunctionCall::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                         const AllocationResult& allocs,
                                         emitter::IR_Record irec) {
@@ -1794,7 +1850,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  /////////////////////
-@@ -540,9 +619,13 @@ void IR_RegValAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -540,9 +661,15 @@ void IR_RegValAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_RegValAddr::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -1803,15 +1859,17 @@ index ce4f98f91..30a8b92cf 100644
 -  throw std::runtime_error("NYI - IR_RegValAddr::do_codegen_arm64");
 +                                      const AllocationResult& allocs,
 +                                      emitter::IR_Record irec) {
-+  auto dest = get_reg(m_dest, allocs, irec);
-+  auto src = get_reg(m_src, allocs, irec);
-+  // take address of a register value = src - offset (GOAL pointer model)
-+  gen->add_instr(IGen::mov_gpr64_gpr64(*gen, dest, src), irec);
-+  gen->add_instr(IGen::sub_gpr64_gpr64(*gen, dest, emitter::gRegInfo.get_offset_reg()), irec);
++  int stack_offset = get_stack_offset(m_src, allocs);
++  auto dst = get_reg(m_dest, allocs, irec);
++  // ARM64 pointer to var: address of the variable's stack slot (SP +
++  // stack_offset), then the GOAL pointer model (subtract the EE base
++  // offset) — matching the x86 LEA path.
++  gen->add_instr(IGen::lea_reg_plus_off(*gen, dst, emitter::SP, stack_offset), irec);
++  gen->add_instr(IGen::sub_gpr64_gpr64(*gen, dst, emitter::gRegInfo.get_offset_reg()), irec);
  }
  
  /////////////////////
-@@ -574,7 +657,10 @@ void IR_StaticVarAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -574,7 +701,10 @@ void IR_StaticVarAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_StaticVarAddr::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                          const AllocationResult& allocs,
                                          emitter::IR_Record irec) {
@@ -1823,7 +1881,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  /////////////////////
-@@ -603,9 +689,12 @@ void IR_FunctionAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -603,9 +733,12 @@ void IR_FunctionAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_FunctionAddr::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -1839,7 +1897,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  /////////////////////
-@@ -783,7 +872,104 @@ void IR_IntegerMath::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -783,7 +916,104 @@ void IR_IntegerMath::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_IntegerMath::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                        const AllocationResult& allocs,
                                        emitter::IR_Record irec) {
@@ -1945,7 +2003,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  /////////////////////
-@@ -870,7 +1056,44 @@ void IR_FloatMath::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -870,7 +1100,44 @@ void IR_FloatMath::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_FloatMath::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                      const AllocationResult& allocs,
                                      emitter::IR_Record irec) {
@@ -1991,7 +2049,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  /////////////////////
-@@ -918,7 +1141,31 @@ void IR_StaticVarLoad::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -918,7 +1185,30 @@ void IR_StaticVarLoad::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_StaticVarLoad::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                          const AllocationResult& allocs,
                                          emitter::IR_Record irec) {
@@ -2015,8 +2073,7 @@ index ce4f98f91..30a8b92cf 100644
 +    gen->link_instruction_static(instr, m_src->rec, 0);
 +  } else if (m_dest->ireg().reg_class == RegClass::VECTOR_FLOAT) {
 +    auto instr =
-+        gen->add_instr(IGen::load128_simd128_gpr64_s32(*gen, get_reg(m_dest, allocs, irec), 0, 0),
-+                       irec);
++        gen->add_instr(IGen::loadvf_rip_plus_s32(*gen, get_reg(m_dest, allocs, irec), 0), irec);
 +    gen->link_instruction_static(instr, m_src->rec, 0);
 +  } else {
 +    ASSERT(false);
@@ -2024,13 +2081,14 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  /////////////////////
-@@ -1026,9 +1273,62 @@ void IR_ConditionalBranch::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1026,20 +1316,73 @@ void IR_ConditionalBranch::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_ConditionalBranch::do_codegen_arm64(emitter::ObjectGenerator* gen,
 -                                            const AllocationResult& allocs,
 -                                            emitter::IR_Record irec) {
 -  throw std::runtime_error("NYI - IR_ConditionalBranch::do_codegen_arm64");
+-}
 +                                          const AllocationResult& allocs,
 +                                          emitter::IR_Record irec) {
 +  Instruction jump_instr = InstructionX86(0);
@@ -2056,7 +2114,10 @@ index ce4f98f91..30a8b92cf 100644
 +        jump_instr = IGen::jae_imm(*gen);
 +      }
 +      break;
-+
+ 
+-/////////////////////
+-// LoadConstantOffset
+-/////////////////////
 +    case ConditionKind::LT:
 +      if (condition.is_signed) {
 +        jump_instr = IGen::jl_imm(*gen);
@@ -2074,7 +2135,12 @@ index ce4f98f91..30a8b92cf 100644
 +    default:
 +      ASSERT(false);
 +  }
-+
+ 
+-IR_LoadConstOffset::IR_LoadConstOffset(const RegVal* dest,
+-                                       int offset,
+-                                       const RegVal* base,
+-                                       MemLoadInfo info,
+-                                       bool use_coloring)
 +  if (condition.is_float) {
 +    gen->add_instr(IGen::cmp_f32_f32(*gen, get_reg(condition.a, allocs, irec),
 +                                     get_reg(condition.b, allocs, irec)),
@@ -2087,17 +2153,27 @@ index ce4f98f91..30a8b92cf 100644
 +
 +  auto jump_rec = gen->add_instr(jump_instr, irec);
 +  gen->link_instruction_jump(jump_rec, gen->get_future_ir_record_in_same_func(irec, label.idx));
- }
++}
++
++/////////////////////
++// LoadConstantOffset
++/////////////////////
++
++IR_LoadConstOffset::IR_LoadConstOffset(const RegVal* dest,
++                                       int offset,
++                                       const RegVal* base,
++                                       MemLoadInfo info,
++                                       bool use_coloring)
+     : IR_Asm(use_coloring), m_dest(dest), m_offset(offset), m_base(base), m_info(info) {}
  
- /////////////////////
-@@ -1081,10 +1381,31 @@ void IR_LoadConstOffset::do_codegen_x86(emitter::ObjectGenerator* gen,
+ std::string IR_LoadConstOffset::print() {
+@@ -1081,9 +1424,30 @@ void IR_LoadConstOffset::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_LoadConstOffset::do_codegen_arm64(emitter::ObjectGenerator* gen,
 -                                          const AllocationResult& allocs,
 -                                          emitter::IR_Record irec) {
 -  throw std::runtime_error("NYI - IR_LoadConstOffset::do_codegen_arm64");
--}
 +                                        const AllocationResult& allocs,
 +                                        emitter::IR_Record irec) {
 +  auto dest_reg = m_use_coloring ? get_reg(m_dest, allocs, irec) : get_no_color_reg(m_dest);
@@ -2122,11 +2198,10 @@ index ce4f98f91..30a8b92cf 100644
 +  } else {
 +    throw std::runtime_error("IR_LoadConstOffset::do_codegen_arm64 not supported");
 +  }
-+}
+ }
  
  ///////////////////////
- // StoreConstantOffset
-@@ -1135,9 +1456,30 @@ void IR_StoreConstOffset::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1135,9 +1499,30 @@ void IR_StoreConstOffset::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_StoreConstOffset::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2160,7 +2235,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  ///////////////////////
-@@ -1162,7 +1504,9 @@ void IR_Null::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1162,7 +1547,9 @@ void IR_Null::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_Null::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                 const AllocationResult& allocs,
                                 emitter::IR_Record irec) {
@@ -2171,7 +2246,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  ///////////////////////
-@@ -1191,9 +1535,11 @@ void IR_ValueReset::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1191,9 +1578,11 @@ void IR_ValueReset::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_ValueReset::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2186,7 +2261,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  ///////////////////////
-@@ -1226,7 +1572,11 @@ void IR_FloatToInt::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1226,7 +1615,11 @@ void IR_FloatToInt::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_FloatToInt::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                       const AllocationResult& allocs,
                                       emitter::IR_Record irec) {
@@ -2199,7 +2274,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  ///////////////////////
-@@ -1256,7 +1606,8 @@ void IR_IntToFloat::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1256,7 +1649,8 @@ void IR_IntToFloat::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_IntToFloat::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                       const AllocationResult& allocs,
                                       emitter::IR_Record irec) {
@@ -2209,7 +2284,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  ///////////////////////
-@@ -1295,7 +1646,16 @@ void IR_GetStackAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1295,7 +1689,16 @@ void IR_GetStackAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_GetStackAddr::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                         const AllocationResult& allocs,
                                         emitter::IR_Record irec) {
@@ -2227,7 +2302,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  ///////////////////////
-@@ -1321,7 +1681,8 @@ void IR_Nop::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1321,7 +1724,8 @@ void IR_Nop::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_Nop::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                const AllocationResult& allocs,
                                emitter::IR_Record irec) {
@@ -2237,7 +2312,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  ///////////////////////
-@@ -1360,9 +1721,10 @@ void IR_AsmRet::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1360,9 +1764,10 @@ void IR_AsmRet::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmRet::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2251,7 +2326,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  ///////////////////////
-@@ -1387,9 +1749,10 @@ void IR_AsmFNop::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1387,9 +1792,10 @@ void IR_AsmFNop::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmFNop::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2265,7 +2340,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  ///////////////////////
-@@ -1414,9 +1777,10 @@ void IR_AsmFWait::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1414,9 +1820,10 @@ void IR_AsmFWait::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmFWait::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2279,7 +2354,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  ///////////////////////
-@@ -1448,9 +1812,13 @@ void IR_AsmPush::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1448,9 +1855,13 @@ void IR_AsmPush::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmPush::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2296,7 +2371,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  ///////////////////////
-@@ -1482,9 +1850,13 @@ void IR_AsmPop::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1482,9 +1893,13 @@ void IR_AsmPop::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmPop::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2313,7 +2388,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  ///////////////////////
-@@ -1522,9 +1894,16 @@ void IR_AsmSub::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1522,9 +1937,16 @@ void IR_AsmSub::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmSub::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2333,7 +2408,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  ///////////////////////
-@@ -1562,9 +1941,16 @@ void IR_AsmAdd::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1562,9 +1984,16 @@ void IR_AsmAdd::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmAdd::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2353,7 +2428,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  ///////////////////////
-@@ -1608,10 +1994,34 @@ void IR_GetSymbolValueAsm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1608,10 +2037,34 @@ void IR_GetSymbolValueAsm::do_codegen_x86(emitter::ObjectGenerator* gen,
    }
  }
  
@@ -2392,7 +2467,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  ///////////////////////
-@@ -1640,9 +2050,10 @@ void IR_JumpReg::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1640,9 +2093,10 @@ void IR_JumpReg::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_JumpReg::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2406,7 +2481,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  ///////////////////////
-@@ -1674,7 +2085,7 @@ void IR_RegSetAsm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1674,7 +2128,7 @@ void IR_RegSetAsm::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_RegSetAsm::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                      const AllocationResult& allocs,
                                      emitter::IR_Record irec) {
@@ -2415,7 +2490,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  ///////////////////////
-@@ -1764,9 +2175,37 @@ void IR_VFMath3Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1764,9 +2218,37 @@ void IR_VFMath3Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_VFMath3Asm::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2456,7 +2531,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  ///////////////////////
-@@ -1942,9 +2381,84 @@ void IR_Int128Math3Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1942,9 +2424,84 @@ void IR_Int128Math3Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_Int128Math3Asm::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2544,7 +2619,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  ///////////////////////
-@@ -1999,9 +2513,21 @@ void IR_VFMath2Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1999,9 +2556,21 @@ void IR_VFMath2Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_VFMath2Asm::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2569,7 +2644,7 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  ///////////////////////
-@@ -2147,9 +2673,71 @@ void IR_Int128Math2Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -2147,9 +2716,78 @@ void IR_Int128Math2Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_Int128Math2Asm::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2630,13 +2705,20 @@ index ce4f98f91..30a8b92cf 100644
 +      ASSERT(m_imm.has_value());
 +      ASSERT(*m_imm >= 0);
 +      ASSERT(*m_imm <= 255);
-+      gen->add_instr(IGen::vpshuflw(*gen, dst, src, *m_imm), irec);
++      // x86 VPSHUFLW: dst words 0-3 = permute(src words 0-3) per imm,
++      // dst words 4-7 copied unchanged.  Copy first (handles dst == src and
++      // the unchanged high half), then rotate the low half in place.
++      gen->add_instr(IGen::mov_vf_vf(*gen, dst, src), irec);
++      rotate_vf_words_arm64(gen, irec, dst, *m_imm, 0);
 +      break;
 +    case Kind::VPSHUFHW:
 +      ASSERT(m_imm.has_value());
 +      ASSERT(*m_imm >= 0);
 +      ASSERT(*m_imm <= 255);
-+      gen->add_instr(IGen::vpshufhw(*gen, dst, src, *m_imm), irec);
++      // x86 VPSHUFHW: dst words 4-7 = permute(src words 4-7) per imm,
++      // dst words 0-3 copied unchanged.
++      gen->add_instr(IGen::mov_vf_vf(*gen, dst, src), irec);
++      rotate_vf_words_arm64(gen, irec, dst, *m_imm, 4);
 +      break;
 +    default:
 +      ASSERT(false);
@@ -2644,6 +2726,87 @@ index ce4f98f91..30a8b92cf 100644
  }
  
  // ---- Blend VF
+@@ -2188,7 +2826,17 @@ void IR_BlendVF::do_codegen_x86(emitter::ObjectGenerator* gen,
+ void IR_BlendVF::do_codegen_arm64(emitter::ObjectGenerator* gen,
+                                   const AllocationResult& allocs,
+                                   emitter::IR_Record irec) {
+-  throw std::runtime_error("NYI - IR_BlendVF::do_codegen_arm64");
++  // x86 VBLENDPS semantics: dst lane i = mask bit i ? src2[i] : src1[i].
++  // Per-lane UMOV/INS via the reserved X16 scratch; safe when dst aliases
++  // src1/src2 because each lane is read before its slot is written.
++  auto dst = get_reg_asm(m_dst, allocs, irec, m_use_coloring);
++  auto src1 = get_reg_asm(m_src1, allocs, irec, m_use_coloring);
++  auto src2 = get_reg_asm(m_src2, allocs, irec, m_use_coloring);
++  for (int i = 0; i < 4; i++) {
++    auto src = (m_mask & (1 << i)) ? src2 : src1;
++    gen->add_instr(IGen::ARM64::umov_gpr32_vf_element(emitter::X16, src, i), irec);
++    gen->add_instr(IGen::ARM64::ins_vf_element_gpr32(dst, i, emitter::X16), irec);
++  }
+ }
+ 
+ // ----- Splat VF
+@@ -2224,7 +2872,9 @@ void IR_SplatVF::do_codegen_x86(emitter::ObjectGenerator* gen,
+ void IR_SplatVF::do_codegen_arm64(emitter::ObjectGenerator* gen,
+                                   const AllocationResult& allocs,
+                                   emitter::IR_Record irec) {
+-  throw std::runtime_error("NYI - IR_SplatVF::do_codegen_arm64");
++  auto dst = get_reg_asm(m_dst, allocs, irec, m_use_coloring);
++  auto src = get_reg_asm(m_src, allocs, irec, m_use_coloring);
++  gen->add_instr(IGen::splat_vf(*gen, dst, src, m_element), irec);
+ }
+ 
+ // ---- Swizzle VF
+@@ -2260,7 +2910,40 @@ void IR_SwizzleVF::do_codegen_x86(emitter::ObjectGenerator* gen,
+ void IR_SwizzleVF::do_codegen_arm64(emitter::ObjectGenerator* gen,
+                                     const AllocationResult& allocs,
+                                     emitter::IR_Record irec) {
+-  throw std::runtime_error("NYI - IR_SwizzleVF::do_codegen_arm64");
++  // dst lane i = src lane ((m_controlBytes >> (2*i)) & 3).
++  // In-place-safe cycle rotation using the reserved X16/X17 scratch GPRs.
++  auto dst = get_reg_asm(m_dst, allocs, irec, m_use_coloring);
++  auto src = get_reg_asm(m_src, allocs, irec, m_use_coloring);
++  u8 sel[4] = {};
++  for (int i = 0; i < 4; i++) {
++    sel[i] = (m_controlBytes >> (2 * i)) & 3;
++  }
++  bool visited[4] = {};
++  for (int i = 0; i < 4; i++) {
++    if (visited[i] || sel[i] == i) {
++      visited[i] = true;
++      continue;
++    }
++    // walk the cycle starting at i: i -> sel[i] -> ...
++    std::vector<int> cycle;
++    int cur = i;
++    while (!visited[cur]) {
++      visited[cur] = true;
++      cycle.push_back(cur);
++      cur = sel[cur];
++    }
++    // rotate with two 32-bit scratch values (W16/W17):
++    //   t = src.cycle[0]
++    //   for j = 1..k: save src.cycle[j] in u, write dst.cycle[j] = t, t = u
++    //   write dst.cycle[0] = t
++    gen->add_instr(IGen::ARM64::umov_gpr32_vf_element(emitter::X16, src, cycle[0]), irec);
++    for (size_t j = 1; j < cycle.size(); j++) {
++      gen->add_instr(IGen::ARM64::umov_gpr32_vf_element(emitter::X17, src, cycle[j]), irec);
++      gen->add_instr(IGen::ARM64::ins_vf_element_gpr32(dst, cycle[j], emitter::X16), irec);
++      gen->add_instr(IGen::mov_gpr64_gpr64(*gen, emitter::X16, emitter::X17), irec);
++    }
++    gen->add_instr(IGen::ARM64::ins_vf_element_gpr32(dst, cycle[0], emitter::X16), irec);
++  }
+ }
+ 
+ // ---- Square Root VF
+@@ -2293,5 +2976,7 @@ void IR_SqrtVF::do_codegen_x86(emitter::ObjectGenerator* gen,
+ void IR_SqrtVF::do_codegen_arm64(emitter::ObjectGenerator* gen,
+                                  const AllocationResult& allocs,
+                                  emitter::IR_Record irec) {
+-  throw std::runtime_error("NYI - IR_SqrtVF::do_codegen_arm64");
++  auto dst = get_reg_asm(m_dst, allocs, irec, m_use_coloring);
++  auto src = get_reg_asm(m_src, allocs, irec, m_use_coloring);
++  gen->add_instr(IGen::sqrt_vf(*gen, dst, src), irec);
+ }
 diff --git a/goalc/compiler/compilation/Asm.cpp b/goalc/compiler/compilation/Asm.cpp
 index afc959481..a044b12f2 100644
 --- a/goalc/compiler/compilation/Asm.cpp
@@ -2802,7 +2965,7 @@ index 27cbcc8c1..3b0bdf082 100644
   * Divide (idiv, 32 bit)
   */
 diff --git a/goalc/emitter/IGenARM64.cpp b/goalc/emitter/IGenARM64.cpp
-index 1180f722d..954c6d558 100644
+index 1180f722d..c7c2f34bc 100644
 --- a/goalc/emitter/IGenARM64.cpp
 +++ b/goalc/emitter/IGenARM64.cpp
 @@ -418,7 +418,9 @@ InstructionARM64 store16_gpr64_gpr64_plus_gpr64(Register addr1, Register addr2,
@@ -2953,6 +3116,24 @@ index 1180f722d..954c6d558 100644
  }
  
  InstructionARM64 load32_xmm32_gpr64_plus_gpr64(Register simd_dest, Register addr1, Register addr2) {
+@@ -1597,7 +1642,7 @@ InstructionARM64 store128_gpr64_simd128_s32(Register gpr_addr, Register xmm_valu
+   // 128-bit variant, unsigned offset
+   // STR <Qt>, [<Xn|SP>{, #<pimm>}]
+   instrs.emplace_back(
+-      InstructionARM64(Base(0b0011110110, 22), Imm12(0), Rt(xmm_value.id()), Rn(X16)));
++      InstructionARM64(Base(0b0011110110, 10), Imm12(0), Rt(xmm_value.id()), Rn(X16)));
+   return InstructionARM64(instrs);
+ }
+ 
+@@ -1626,7 +1671,7 @@ InstructionARM64 store128_gpr64_simd128_s8(Register gpr_addr, Register xmm_value
+   // 128-bit variant, unsigned offset
+   // STR <Qt>, [<Xn|SP>{, #<pimm>}]
+   instrs.emplace_back(
+-      InstructionARM64(Base(0b0011110110, 22), Imm12(0), Rt(xmm_value.id()), Rn(X16)));
++      InstructionARM64(Base(0b0011110110, 10), Imm12(0), Rt(xmm_value.id()), Rn(X16)));
+   return InstructionARM64(instrs);
+ }
+ 
 @@ -1741,8 +1786,6 @@ InstructionARM64 store128_xmm128_reg_offset(Register base, Register xmm_val, s64
  
  InstructionARM64 load64_pcRel_s32(Register dest, s64 offset) {
@@ -3198,6 +3379,33 @@ index 1180f722d..954c6d558 100644
  }
  
  //;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+@@ -2210,7 +2271,7 @@ InstructionARM64 sar_gpr64_reg(Register reg, Register shift_reg) {
+ InstructionARM64 shl_gpr64_u8(Register reg, uint8_t sa) {
+   // https://www.scs.stanford.edu/~zyedidia/arm64/lsl_ubfm.html
+   // LSL <Xd>, <Xn>, #<shift>
+-  ASSERT(sa < 63);
++  ASSERT(sa < 64);
+   ASSERT(reg.is_gpr(instr_set));
+   return InstructionARM64(Base(0b1101001101, 10), Rd(reg.id()), Rn(reg.id()), Immr((64 - sa) & 63),
+                           Imms(63 - sa));
+@@ -2220,7 +2281,7 @@ InstructionARM64 shr_gpr64_u8(Register reg, uint8_t sa) {
+   // https://www.scs.stanford.edu/~zyedidia/arm64/lsr_ubfm.html
+   // LSR <Xd>, <Xn>, #<shift>
+   // sf	1	0	1	0	0	1	1	0	N
+-  ASSERT(sa < 63);
++  ASSERT(sa < 64);
+   ASSERT(reg.is_gpr(instr_set));
+   return InstructionARM64(Base(0b1101001101000000111111, 22), Rd(reg.id()), Rn(reg.id()), Immr(sa));
+ }
+@@ -2228,7 +2289,7 @@ InstructionARM64 shr_gpr64_u8(Register reg, uint8_t sa) {
+ InstructionARM64 sar_gpr64_u8(Register reg, uint8_t sa) {
+   // https://www.scs.stanford.edu/~zyedidia/arm64/asr_sbfm.html
+   // ASR <Xd>, <Xn>, #<shift>
+-  ASSERT(sa < 63);
++  ASSERT(sa < 64);
+   ASSERT(reg.is_gpr(instr_set));
+   return InstructionARM64(Base(0b1001001101000000111111, 22), Rd(reg.id()), Rn(reg.id()), Immr(sa));
+ }
 @@ -2253,7 +2314,11 @@ InstructionARM64 sar_gpr64_u8(Register reg, uint8_t sa) {
  InstructionARM64 jmp_imm() {
    // https://www.scs.stanford.edu/~zyedidia/arm64/b_uncond.html
@@ -3367,8 +3575,148 @@ index 1180f722d..954c6d558 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
+@@ -2635,19 +2733,80 @@ InstructionARM64 shuffle_vf(Register dst, Register src, u8 dx, u8 dy, u8 dz, u8
+   return InstructionARM64(0b0);
+ }
+ 
++InstructionARM64 dup_vf_element(Register dst, Register src, u32 index) {
++  // https://www.scs.stanford.edu/~zyedidia/arm64/dup_advsimd_elt.html
++  // DUP <Vd>.4S, <Vn>.S[<index>]
++  // 32-bit elements: imm5 = (index << 3) | 0b100
++  ASSERT(dst.is_128bit_simd(instr_set));
++  ASSERT(src.is_128bit_simd(instr_set));
++  ASSERT(index < 4);
++  u32 imm5 = (index << 3) | 0b100;
++  // bits 15-10 = 000001 (Imm6 asserts on this value, use a raw field)
++  return InstructionARM64(Base(0b01001110000, 11), Rm(imm5), Field{0b000001 << 10}, Rn(src.id()),
++                          Rd(dst.id()));
++}
++
++InstructionARM64 umov_gpr32_vf_element(Register dst, Register src, u32 index) {
++  // https://www.scs.stanford.edu/~zyedidia/arm64/umov_advsimd_elt.html
++  // UMOV <Wd>, <Vn>.S[<index>]
++  // 32-bit elements: imm5 = (index << 3) | 0b100
++  ASSERT(dst.is_gpr(instr_set));
++  ASSERT(src.is_128bit_simd(instr_set));
++  ASSERT(index < 4);
++  u32 imm5 = (index << 3) | 0b100;
++  // bits 15-10 = 001111 (Imm6 asserts on this value, use a raw field)
++  return InstructionARM64(Base(0b00001110000, 11), Rm(imm5), Field{0b001111 << 10}, Rn(src.id()),
++                          Rd(dst.id()));
++}
++
++InstructionARM64 ins_vf_element_gpr32(Register dst, u32 index, Register src) {
++  // https://www.scs.stanford.edu/~zyedidia/arm64/ins_advsimd_elt.html
++  // INS <Vd>.S[<index>], <Wn>
++  // 32-bit elements: imm5 = (index << 3) | 0b100
++  ASSERT(dst.is_128bit_simd(instr_set));
++  ASSERT(src.is_gpr(instr_set));
++  ASSERT(index < 4);
++  u32 imm5 = (index << 3) | 0b100;
++  // bits 15-10 = 000111 (Imm6 asserts on this value, use a raw field)
++  return InstructionARM64(Base(0b01001110000, 11), Rm(imm5), Field{0b000111 << 10}, Rn(src.id()),
++                          Rd(dst.id()));
++}
++
++InstructionARM64 umov_gpr32_vf_h_element(Register dst, Register src, u32 index) {
++  // UMOV <Wd>, <Vn>.H[<index>]
++  // 16-bit elements: imm5 = (index << 2) | 0b010
++  ASSERT(dst.is_gpr(instr_set));
++  ASSERT(src.is_128bit_simd(instr_set));
++  ASSERT(index < 8);
++  u32 imm5 = (index << 2) | 0b010;
++  return InstructionARM64(Base(0b00001110000, 11), Rm(imm5), Field{0b001111 << 10}, Rn(src.id()),
++                          Rd(dst.id()));
++}
++
++InstructionARM64 ins_vf_h_element_gpr32(Register dst, u32 index, Register src) {
++  // INS <Vd>.H[<index>], <Wn>
++  // 16-bit elements: imm5 = (index << 2) | 0b010
++  ASSERT(dst.is_128bit_simd(instr_set));
++  ASSERT(src.is_gpr(instr_set));
++  ASSERT(index < 8);
++  u32 imm5 = (index << 2) | 0b010;
++  return InstructionARM64(Base(0b01001110000, 11), Rm(imm5), Field{0b000111 << 10}, Rn(src.id()),
++                          Rd(dst.id()));
++}
++
+ InstructionARM64 splat_vf(Register dst, Register src, Register::VF_ELEMENT element) {
+   switch (element) {
+     case Register::VF_ELEMENT::X:
+-      return swizzle_vf(dst, src, 0b00000000);
++      return dup_vf_element(dst, src, 0);
+       break;
+     case Register::VF_ELEMENT::Y:
+-      return swizzle_vf(dst, src, 0b01010101);
++      return dup_vf_element(dst, src, 1);
+       break;
+     case Register::VF_ELEMENT::Z:
+-      return swizzle_vf(dst, src, 0b10101010);
++      return dup_vf_element(dst, src, 2);
+       break;
+     case Register::VF_ELEMENT::W:
+-      return swizzle_vf(dst, src, 0b11111111);
++      return dup_vf_element(dst, src, 3);
+       break;
+     default:
+       ASSERT(false);
+@@ -2739,8 +2898,9 @@ InstructionARM64 pw_sra(Register dst, Register src, u8 imm) {
+   // https://www.scs.stanford.edu/~zyedidia/arm64/sshr_advsimd.html
+   // - vector, 4S
+   // SSHR <Vd>.<T>, <Vn>.<T>, #<shift>
++  ASSERT(imm <= 32);
+   return InstructionARM64(Base(0b0100111100100000000001, 22), Rn(src.id()), Rd(dst.id()),
+-                          Immb(imm));
++                          Field{static_cast<u32>(32 - imm) << 16});
+ }
+ 
+ // - logical_shift_right_32bit_vf
+@@ -2748,8 +2908,9 @@ InstructionARM64 pw_srl(Register dst, Register src, u8 imm) {
+   // https://www.scs.stanford.edu/~zyedidia/arm64/ushr_advsimd.html
+   // - vector, 4S
+   // USHR <Vd>.<T>, <Vn>.<T>, #<shift>
++  ASSERT(imm <= 32);
+   return InstructionARM64(Base(0b0110111100100000000001, 22), Rn(src.id()), Rd(dst.id()),
+-                          Immb(imm));
++                          Field{static_cast<u32>(32 - imm) << 16});
+ }
+ 
+ // - logical_shift_left_32bit_vf
+@@ -2757,8 +2918,9 @@ InstructionARM64 pw_sll(Register dst, Register src, u8 imm) {
+   // https://www.scs.stanford.edu/~zyedidia/arm64/shl_advsimd.html
+   // - vector, 4S
+   // SHL <Vd>.<T>, <Vn>.<T>, #<shift>
++  ASSERT(imm <= 31);
+   return InstructionARM64(Base(0b0100111100100000010101, 22), Rn(src.id()), Rd(dst.id()),
+-                          Immb(imm));
++                          Field{static_cast<u32>(imm) << 16});
+ }
+ 
+ // - logical_shift_right_16bit_vf
+@@ -2766,8 +2928,9 @@ InstructionARM64 ph_srl(Register dst, Register src, u8 imm) {
+   // https://www.scs.stanford.edu/~zyedidia/arm64/ushr_advsimd.html
+   // - vector, 8H
+   // USHR <Vd>.<T>, <Vn>.<T>, #<shift>
++  ASSERT(imm <= 16);
+   return InstructionARM64(Base(0b0110111100010000000001, 22), Rn(src.id()), Rd(dst.id()),
+-                          Immb(imm));
++                          Field{static_cast<u32>(16 - imm) << 16});
+ }
+ 
+ // - logical_shift_left_16bit_vf
+@@ -2775,8 +2938,9 @@ InstructionARM64 ph_sll(Register dst, Register src, u8 imm) {
+   // https://www.scs.stanford.edu/~zyedidia/arm64/shl_advsimd.html
+   // - vector, 8H
+   // SHL <Vd>.<T>, <Vn>.<T>, #<shift>
++  ASSERT(imm <= 15);
+   return InstructionARM64(Base(0b0100111100010000010101, 22), Rn(src.id()), Rd(dst.id()),
+-                          Immb(imm));
++                          Field{static_cast<u32>(imm) << 16});
+ }
+ 
+ InstructionARM64 parallel_add_byte(Register dst, Register src0, Register src1) {
 diff --git a/goalc/emitter/IGenARM64.h b/goalc/emitter/IGenARM64.h
-index 1bd210c7a..99e4a5332 100644
+index 1bd210c7a..7e990c305 100644
 --- a/goalc/emitter/IGenARM64.h
 +++ b/goalc/emitter/IGenARM64.h
 @@ -360,6 +360,13 @@ InstructionARM64 static_store_f32(Register xmm_value, s64 offset);
@@ -3408,6 +3756,33 @@ index 1bd210c7a..99e4a5332 100644
  /*!
   * Divide (idiv, 32 bit)
   */
+@@ -705,6 +728,26 @@ InstructionARM64 swizzle_vf(Register dst, Register src, u8 controlBytes);
+   */
+ InstructionARM64 splat_vf(Register dst, Register src, Register::VF_ELEMENT element);
+ 
++// Broadcast one 32-bit lane of `src` to all lanes of `dst`.
++// DUP <Vd>.4S, <Vn>.S[<index>]
++InstructionARM64 dup_vf_element(Register dst, Register src, u32 index);
++
++// Copy one 32-bit lane of `src` (a vector) into `dst` (a GPR).
++// UMOV <Wd>, <Vn>.S[<index>]
++InstructionARM64 umov_gpr32_vf_element(Register dst, Register src, u32 index);
++
++// Copy `src` (a GPR) into one 32-bit lane of `dst` (a vector).
++// INS <Vd>.S[<index>], <Wn>
++InstructionARM64 ins_vf_element_gpr32(Register dst, u32 index, Register src);
++
++// Copy one 16-bit lane of `src` (a vector) into `dst` (a GPR).
++// UMOV <Wd>, <Vn>.H[<index>]
++InstructionARM64 umov_gpr32_vf_h_element(Register dst, Register src, u32 index);
++
++// Copy `src` (a GPR) into one 16-bit lane of `dst` (a vector).
++// INS <Vd>.H[<index>], <Wn>
++InstructionARM64 ins_vf_h_element_gpr32(Register dst, u32 index, Register src);
++
+ InstructionARM64 xor_vf(Register dst, Register src1, Register src2);
+ 
+ InstructionARM64 sub_vf(Register dst, Register src1, Register src2);
 diff --git a/goalc/emitter/IGenX86.cpp b/goalc/emitter/IGenX86.cpp
 index 3b3f6ac53..26ca0a6eb 100644
 --- a/goalc/emitter/IGenX86.cpp
@@ -3627,7 +4002,7 @@ index bc998f09f..30070cb34 100644
  
  /*!
 diff --git a/goalc/emitter/ObjectGenerator.cpp b/goalc/emitter/ObjectGenerator.cpp
-index 9f1ffc514..54d4bdc4b 100644
+index 9f1ffc514..64d61343f 100644
 --- a/goalc/emitter/ObjectGenerator.cpp
 +++ b/goalc/emitter/ObjectGenerator.cpp
 @@ -13,6 +13,7 @@
@@ -3719,7 +4094,7 @@ index 9f1ffc514..54d4bdc4b 100644
    }
  }
  
-@@ -440,6 +489,63 @@ void ObjectGenerator::handle_temp_instr_sym_links(int seg) {
+@@ -440,6 +489,67 @@ void ObjectGenerator::handle_temp_instr_sym_links(int seg) {
    }
  }
  
@@ -3775,7 +4150,11 @@ index 9f1ffc514..54d4bdc4b 100644
 +    ASSERT(imm >= -(1 << 18) && imm < (1 << 18));
 +    word = (word & 0xFF00001F) | ((u32(imm) & 0x7FFFF) << 5);
 +  } else {
-+    ASSERT_MSG(false, "patch_arm64_static_ref: unsupported instruction encoding");
++    ASSERT_MSG(false,
++               fmt::format("patch_arm64_static_ref: unsupported instruction encoding word=0x{:08x} "
++                           "func={} seg={} instr_id={}",
++                           word, function.debug ? function.debug->name : "?", instr.seg,
++                           instr.instr_id));
 +  }
 +  std::memcpy(data.data() + patch_location, &word, 4);
 +}
@@ -3783,7 +4162,7 @@ index 9f1ffc514..54d4bdc4b 100644
  void ObjectGenerator::handle_temp_rip_func_links(int seg) {
    for (const auto& link : m_rip_func_temp_links_by_seg.at(seg)) {
      RipLink result;
-@@ -447,6 +553,11 @@ void ObjectGenerator::handle_temp_rip_func_links(int seg) {
+@@ -447,6 +557,11 @@ void ObjectGenerator::handle_temp_rip_func_links(int seg) {
      result.target_segment = link.target.seg;
      const auto& target_func = m_function_data_by_seg.at(link.target.seg).at(link.target.func_id);
      result.offset_in_segment = target_func.instruction_to_byte_in_data.at(0);
@@ -3795,7 +4174,7 @@ index 9f1ffc514..54d4bdc4b 100644
      m_rip_links_by_seg.at(seg).push_back(result);
    }
  }
-@@ -458,6 +569,9 @@ void ObjectGenerator::handle_temp_rip_data_links(int seg) {
+@@ -458,6 +573,9 @@ void ObjectGenerator::handle_temp_rip_data_links(int seg) {
      result.target_segment = link.data.seg;
      const auto& target = m_static_data_by_seg.at(link.data.seg).at(link.data.static_id);
      result.offset_in_segment = target.location + link.offset;
@@ -3805,7 +4184,7 @@ index 9f1ffc514..54d4bdc4b 100644
      m_rip_links_by_seg.at(seg).push_back(result);
    }
  }
-@@ -543,6 +657,11 @@ void ObjectGenerator::emit_link_ptr(int seg) {
+@@ -543,6 +661,11 @@ void ObjectGenerator::emit_link_ptr(int seg) {
  }
  
  void ObjectGenerator::emit_link_rip(int seg) {
@@ -3817,7 +4196,7 @@ index 9f1ffc514..54d4bdc4b 100644
    auto& out = m_link_by_seg.at(seg);
    for (auto& rec : m_rip_links_by_seg.at(seg)) {
      // kind (u8)
-@@ -557,16 +676,27 @@ void ObjectGenerator::emit_link_rip(int seg) {
+@@ -557,16 +680,27 @@ void ObjectGenerator::emit_link_rip(int seg) {
      out.push_back(rec.target_segment);
      // offset into current
      const auto& src_func = m_function_data_by_seg.at(rec.instr.seg).at(rec.instr.func_id);
@@ -3850,7 +4229,7 @@ index 9f1ffc514..54d4bdc4b 100644
    }
  }
  
-@@ -601,6 +731,7 @@ std::vector<u8> ObjectGenerator::generate_header_v3() {
+@@ -601,6 +735,7 @@ std::vector<u8> ObjectGenerator::generate_header_v3() {
    offset += push_data<u32>(N_SEG, result);
  
    offset += sizeof(u32) * N_SEG * 4;  // 4 u32's per segment
@@ -3858,7 +4237,7 @@ index 9f1ffc514..54d4bdc4b 100644
    offset += 4;
    struct SizeOffset {
      uint32_t offset, size;
-@@ -629,7 +760,12 @@ std::vector<u8> ObjectGenerator::generate_header_v3() {
+@@ -629,7 +764,12 @@ std::vector<u8> ObjectGenerator::generate_header_v3() {
    }
  
    push_data<SizeOffsetTable>(table, result);
@@ -3872,7 +4251,7 @@ index 9f1ffc514..54d4bdc4b 100644
    return result;
  }
  
-@@ -640,4 +776,59 @@ ObjectGeneratorStats ObjectGenerator::get_stats() const {
+@@ -640,4 +780,59 @@ ObjectGeneratorStats ObjectGenerator::get_stats() const {
  void ObjectGenerator::count_eliminated_move() {
    m_stats.moves_eliminated++;
  }

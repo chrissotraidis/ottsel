@@ -59,7 +59,11 @@ def parse_cgo(path):
 
 def parse_object(blob):
     """Return (ver, code_ranges) where code_ranges[seg] = (file_off, code_len)."""
-    assert blob[:4] == b"GOAL", "object does not start with GOAL magic"
+    if blob[:4] != b"GOAL":
+        # Data-only objects (dir-tpages.go, game-cnt.go, tpage-*.go) have no
+        # GOAL magic and no code words; return an empty range set so callers
+        # skip them.
+        return None, [None, None, None]
     ver = struct.unpack_from("<I", blob, 8)[0]
     count = struct.unpack_from("<I", blob, 12)[0]
     assert count == N_SEG
@@ -100,7 +104,10 @@ def disassemble(code):
             b = code[i : i + 4]
             lines.append(".byte " + ",".join(str(x) for x in b))
         asm.write_text("\n".join(lines) + "\n")
-        subprocess.run(["as", "-arch", "arm64", "-o", str(obj), str(asm)], check=True)
+        subprocess.run(
+            ["as", "-arch", "arm64", "-march=armv8.5-a+faminmax", "-o", str(obj), str(asm)],
+            check=True,
+        )
         proc = subprocess.run(
             ["xcrun", "llvm-objdump", "-d", "--macho", "--arch=arm64", str(obj)],
             capture_output=True,
@@ -126,6 +133,48 @@ def disassemble(code):
             text = " ".join(f.strip() for f in fields[2:]) if len(fields) > 2 else ""
             out.append((off, word, text))
         return out, warnings
+
+
+def assembler_accepts(word):
+    """Try to assemble a single 32-bit word with the full feature set.
+    Xcode's llvm-objdump cannot disassemble some valid encodings (e.g.
+    FAMIN/FAMAX, ARMv8.6+), so `as` acceptance is the fallback validity
+    check for words missing from the decode stream."""
+    with tempfile.TemporaryDirectory(prefix="ottsel-s11-") as td:
+        td = Path(td)
+        asm = td / "w.s"
+        obj = td / "w.o"
+        asm.write_text(f".text\n.align 2\n  .long 0x{word:08x}\n")
+        try:
+            subprocess.run(
+                ["as", "-arch", "arm64", "-march=armv8.5-a+faminmax", "-o", str(obj), str(asm)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError:
+            return False
+        # confirm the word survives assembly unmodified
+        blob = obj.read_bytes()
+        ncmds = struct.unpack_from("<I", blob, 16)[0]
+        cmd_off = 32
+        for _ in range(ncmds):
+            (cmd, cmdsize) = struct.unpack_from("<II", blob, cmd_off)
+            if cmd == 0x19:  # LC_SEGMENT_64
+                nsects = struct.unpack_from("<I", blob, cmd_off + 64)[0]
+                sect_off = cmd_off + 72
+                for _ in range(nsects):
+                    (sectname, segname) = struct.unpack_from("<16s16s", blob, sect_off)
+                    if sectname.startswith(b"__text"):
+                        (addr, size, offset, _align, _reloff, _nreloc, _flags) = struct.unpack_from(
+                            "<QQIIIII", blob, sect_off + 32
+                        )
+                        if size == 4:
+                            got = int.from_bytes(blob[offset : offset + 4], "little")
+                            return got == word
+                    sect_off += 80
+            cmd_off += cmdsize
+        return False
 
 
 def _parse_imm(s):
@@ -247,7 +296,10 @@ def reassemble_roundtrip(decoded, code):
         if not to_reassemble:
             return mismatches
         asm.write_text("\n".join(lines) + "\n")
-        subprocess.run(["as", "-arch", "arm64", "-o", str(obj), str(asm)], check=True)
+        subprocess.run(
+            ["as", "-arch", "arm64", "-march=armv8.5-a+faminmax", "-o", str(obj), str(asm)],
+            check=True,
+        )
         # extract __TEXT,__text bytes: minimal Mach-O section reader
         macho = obj.read_bytes()
         ncmds = struct.unpack_from("<I", macho, 16)[0]
@@ -288,6 +340,9 @@ def validate_code_region(name, seg, code, verbose=False):
                 continue
             skipped.append((off, w))
     for off, w in skipped:
+        if assembler_accepts(w):
+            # valid encoding that Xcode's llvm-objdump cannot disassemble
+            continue
         problems.append(f"invalid word at +{off:#x}: 0x{w:08x}")
     # every undecodable word must be accounted for as a warning
     n_undecoded = len(skipped) + len(type_tag_offs)

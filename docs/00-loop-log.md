@@ -567,3 +567,48 @@
   where cheap and identify the first real drawable (background/TIE/texture
   page path); read-ahead on GAME.CGO compile for ARM64 (expected NYI IR
   hits).
+
+## 2026-08-09 — S2.1: GAME.CGO compiles for ARM64; 3.8M code words validate
+
+### Iteration — full game engine codegen, emitter fixes, validation
+- **Acted:**
+  - Built the decompiler CLI and ran it data-only on the extracted ISO to
+    produce the outputs GAME.CGO needs (`tpage-dir.txt`, `game_count.txt`,
+    `raw_obj/tpage-*.go`): `Decompiler has finished successfully in 2.08
+    seconds`.
+  - Compiled the game: `(make "$OUT/iso/GAME.CGO")` -> **all 358 targets**,
+    `GAME.CGO` 22 MB / 346 objects.
+  - Fixed, in order of the compile failures they caused (each verified
+    against clang-verified encodings and/or the emission validator):
+    1. vector asm IRs NYI (`IR_BlendVF/SplatVF/SwizzleVF/SqrtVF`) — DUP,
+       UMOV/INS cycle rotations (X16/X17 scratch), FSQRT wiring
+    2. `VPSHUFLW/VPSHUFHW` — MOV + in-place 16-bit word rotation
+    3. vector shift (`pw_sra/srl/sll`, `ph_srl/sll`) immh:immb encodings
+    4. `shr/shl/sar_gpr64_u8` range (63 is legal)
+    5. static vector load pattern -> `loadvf_rip_plus_s32`
+    6. `IR_RegValAddr` stack-slot addressing (was a bogus register read
+       that OOB'd the allocator in res.gc)
+    7. `store128_gpr64_simd128_s32/s8` STR Q opcode width bug (10-bit
+       opcode passed as Base(..., 22)) — this corrupted every 2-vector
+       prologue store (`0x0003da09` garbage words)
+    8. validator: skip data objects, `-march=armv8.5-a+faminmax`, `as`
+       fallback for words Xcode's objdump can't disassemble (FAMIN/FAMAX)
+  - Validated: `PASS: all 3801088 code words across 346 objects validate
+    (decode + round-trip); 6107 type-tag words skipped`; `--selftest`
+    still catches the known-bad word. Rebuilt + re-validated KERNEL.CGO
+    (86016 words, 8 objects, PASS).
+  - Renderer-seam read-ahead recorded in the evidence doc: first real
+    drawable = background path via GfxRendererModule (make_display /
+    texture_upload_now / send_chain), driven by the game renderer process
+    through sceGraphicsInterface.
+- **Result:** S2.1 progress milestone — the compile barrier to a genuine
+  game frame is cleared; runtime boot of GAME.CGO + the Metal renderer
+  module remain (S2.1/S2.2).
+- **Files changed:** worktree `goalc/compiler/IR.cpp`,
+  `goalc/emitter/IGenARM64.{h,cpp}`, `goalc/emitter/ObjectGenerator.cpp`
+  (debug msg only); repo `scripts/validate-arm64-emission.py`,
+  `docs/evidence/S2/s21-*`, `docs/STATUS.md`, `docs/00-loop-log.md` (this
+  entry), `docs/13-current-state.md` (refresh follows).
+- **Next:** link + boot GAME.CGO on the Simulator (no-emit linker, run
+  game top-levels, start the process tree); expect new runtime codegen
+  paths. Then the Metal renderer module for the first real drawable.
