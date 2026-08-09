@@ -1,7 +1,8 @@
 # 13 — Current state (handoff snapshot)
 
-Date: 2026-08-08. Author: Bot 3 (build agent), end of work session.
+Date: 2026-08-09. Updated by the operator-requested repository audit.
 This is the authoritative state document. Read it before doing anything.
+Read `docs/15-progress-audit.md` first for the corrected execution order.
 
 ## Bottom line
 
@@ -14,15 +15,18 @@ This is the authoritative state document. Read it before doing anything.
 - Gate S2 (first frame, Metal): **S2.0 PASS (2026-08-09)** — the shell now
   presents its log surface through a real Metal (CAMetalLayer) pipeline on
   the iPad Pro 11-inch (M4) Simulator. Declared sub-gate: not yet a frame
-  from game systems. S2.1 (renderer seam + first real drawable) is next.
-- The game does **not** load levels yet. The no-emit boot links all 8
-  KERNEL.CGO objects, runs every top-level under RX, prints
-  `Got correct kernel version 2.0`, starts the machine, and then the GOAL
-  `kernel-dispatcher` runs in the C++ dispatch loop, returning cleanly each
-  iteration. The process pool is idle (no listener/GAME.CGO in no-emit boot),
-  so no game processes are created yet — that is S1+ scope.
-- All prior work is captured in `patches/*.patch` (each applies clean to the
-  pinned commit) and in `docs/evidence/`.
+  from game systems.
+- S2.1 is a research checkpoint: GAME.CGO compiles completely, and the
+  Simulator RX-blob linker advances to object 204 before a deterministic
+  ret/jump-to-EE-base fault. An active dirty debugger experiment is present.
+- **Gate A1 is now active before further S2 expansion.** The current app's
+  CGO RW→RX path is a Simulator research vehicle. It does not prove H2.5's
+  selected product path: real generated GOAL code inside signed Mach-O text
+  with no runtime-created executable code.
+- Committed OpenGOAL work is captured by the canonical
+  `patches/h3-jak1-host-boot.patch`, which clean-applies to the pinned commit,
+  and by `docs/evidence/`. The active dirty object-204 trace experiment is
+  newer and intentionally not yet captured in that patch.
 - **Operator constraints (binding):** (1) test apps must never go fullscreen
   — game window must stay Windowed (fixed: `display-settings.json`
   `display_mode: 0`, and source default in `game/settings/settings.h` is now
@@ -50,9 +54,12 @@ This is the authoritative state document. Read it before doing anything.
 | H2.5 packaging decision | **PASS** | `docs/evidence/H2.5/` + `docs/10-code-packaging-and-signing.md` |
 | H3 Jak 1 host AOT boot | **PASS (2026-08-08, host)** | `docs/evidence/H3/dispatcher-loop-2026-08-08.md`, `docs/evidence/H3/boot-dispatcher-loop-2026-08-08.log` |
 | S1 Simulator shell boot | **PASS (2026-08-08)** | `docs/evidence/S1/` (s13-dispatcher-loop.*, s11-*, s12-*) |
-| S2 First frame (Metal) | **S2.0 PASS (2026-08-09)** — Metal spike; game frame pending (S2.1/S2.2) | `docs/evidence/S2/s20-metal-spike.md` |
-| S3 Touch MVP + lifecycle | not started | — |
-| R1 Handoff package | not started | — |
+| S2.0 Metal shell spike | **PASS (2026-08-09)** — game frame still pending | `docs/evidence/S2/s20-metal-spike.md` |
+| S2.1 GAME.CGO integration | **RESEARCH CHECKPOINT** — compile pass; RX-blob link reaches object 204 | `docs/evidence/S2/s21-*` |
+| **A1 signed-native execution** | **ACTIVE — precedes more S2** | `docs/15-progress-audit.md`; create `docs/evidence/A1/` |
+| S2.2 First game frame | blocked on A1/S2.1 | — |
+| S3 Touch MVP + lifecycle | blocked on S2 | — |
+| R1 Handoff package | blocked on S3 | — |
 
 ## What works (verified)
 
@@ -175,21 +182,20 @@ returned 1375532`) go to stderr (PTY), verified in both runs.
 
 - Physical device proof is not claimed from Simulator/host evidence.
 - No game assets in git; ISO stays at `~/ottsel-user/iso/`.
-- 15 IR lowerings remain NYI (Asm push/pop/add/sub/ret/fnop/fwait/regset-asym,
-  get-sym-asym, JumpReg, BlendVF, SplatVF, SwizzleVF, SqrtVF, partial FloatMath).
-  These matter for engine code, not the kernel headers; H3 boot may hit them
-  only after kernel link completes.
+- The old 15-IR compile blocker is closed: GAME.CGO compiles completely.
+  Semantic correctness remains open; legal-but-wrong ARM64 instructions and
+  ABI behavior now require focused regression tests under A1.0.
 - The `make` system and `gk` were modified directly in the worktree; all
   changes are captured in `patches/h3-jak1-host-boot.patch` (and the earlier
   H1/H2 patches are supersets; apply the newest one).
 
 ## Repo layout (current)
 
-- `docs/` — plans/status (00–13) and `docs/evidence/{H1,H2,H2.5,H3}/`
-- `patches/` — h1/h2/h3 patch files (each applies clean to the pin)
+- `docs/` — plans/status/audits (00–15) and gate evidence
+- `patches/` — h1/h2/h3 patches; `h3-jak1-host-boot.patch` is canonical
 - `ref/` — research corpus (unchanged from Phase 1)
 - `out/` — gitignored build tree + worktree
-- `src/`, `scripts/` — not yet created (H3 is host-only; S1+ will need them)
+- `src/`, `scripts/` — iOS shell/Metal sources and build/validation tools
 
 ## How to reproduce the boot
 
@@ -246,5 +252,40 @@ to snapshot the EE thread PC inside the RX kernel code.
   ret-to-x22 site needs a live call tracer or a debugger that can breakpoint
   RX-flipped GOAL pages (lldb cannot).  Gated handler now prints pc/regs and a
   GOAL-stack LR walk via raw stderr.
-- **Next:** identify the ret-to-x22 inside the make-village1-light-kit chain,
-  then continue linking objects 205-346 (S2.1 -> S2.2 renderer seam).
+- **Audit sequencing correction:** preserve the current dirty ret-to-x22 probe
+  and its result, but do not continue broad GAME.CGO/renderer work from this
+  checkpoint. Execute A1.0 semantic regressions and A1.1/A1.2 signed-native
+  integration first. After A1 passes, return here, identify the ret-to-x22,
+  and continue objects 205-346.
+
+## Product-path boundary (2026-08-09 audit)
+
+- `scripts/build-ios.sh` currently bundles KERNEL.CGO and GAME.CGO; the linker
+  copies and patches their code in the EE mapping and flips code pages RX. This
+  is **Simulator research infrastructure only**.
+- H2.5 selected generated native code compiled by clang into the signed app.
+  A1 must demonstrate that with a real OpenGOAL artifact in Mach-O `__TEXT`,
+  offline instruction relocations, and no runtime `mprotect(PROT_EXEC)` GOAL
+  path before the project invests further in the renderer or touch UI.
+- The encoding validator proves A64 legality, not semantics. Recent legal but
+  incorrect instructions make focused semantic regression tests mandatory.
+- Current continuation prompt: `docs/BOT6_PROMPT.md`.
+
+## 2026-08-09 — realignment to Gate A1 (signed-native execution)
+
+The active gate is now **A1** per docs/15-progress-audit.md and BOT6_PROMPT.md:
+prove real OpenGOAL code executes from signed Mach-O __TEXT on the iPad
+Simulator before any further renderer/touch work. The RX-blob RW->RX loader is
+Simulator-only diagnostic infrastructure (oracle), not the product execution
+model.
+
+- **R0 done:** the object-204 call-trace probe experiment was captured
+  (`docs/evidence/A1/r0-call-trace-probe-{shell,goalc}.patch`: goalc
+  IR_FunctionCall recorder shim, kscheme ring buffer, handler dumps), then
+  stripped from product sources. The shell gated handler retains the
+  stderr-based pc/regs/GOAL-stack-LR-walk diagnostics. Scratch .o/.s probes
+  removed. The app builds clean.
+- **A1.0 next:** extend the smallest H1/H2 harness with semantic regression
+  tests for the known legal-but-wrong defect classes (SP->xzr, load-as-store,
+  wrong widths, scaled offsets, ABI arg-pair swap, LR/call/return), and reduce
+  the object-204 value-0 call/return fault below the full boot loop.

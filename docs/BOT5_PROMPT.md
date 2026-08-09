@@ -1,5 +1,9 @@
 # BOT5_PROMPT — Ottsel Continuous Goal Loop (S2 → S3 → R1)
 
+> **Superseded 2026-08-09:** use `docs/BOT6_PROMPT.md`. The audit in
+> `docs/15-progress-audit.md` inserts signed-native Gate A1 before further S2
+> expansion. This file remains the historical S2 loop.
+
 Paste this as the next bot's goal. It replaces the stop-after-one-gate
 pattern with a **continuous loop with checkpoint-continue semantics**: the
 bot works the remaining roadmap in order, checkpoints at each gate, and

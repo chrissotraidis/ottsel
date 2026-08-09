@@ -16,6 +16,8 @@ P3 Jak 1 host AOT artifacts
   └─ Gate H3
 P4 iOS/iPadOS shell + load path (Simulator)
   └─ Gate S1
+P4.5 Signed-native product execution
+  └─ Gate A1
 P5 First frame / first room proofs
   └─ Gate S2
 P6 Touch MVP + lifecycle
@@ -81,6 +83,22 @@ Work:
 
 **Gate S1:** iPad Simulator launches app, runtime init succeeds or fails with explicit gated error (no crash loop), logs captured.
 
+## P4.5 — Signed-native product execution
+**Goal:** prove the H2.5 product decision with a real OpenGOAL artifact before
+renderer and touch investment expands.
+
+Work:
+- add semantic ARM64/ABI regression tests for legal-but-wrong encodings
+- emit a non-trivial real KERNEL.CGO dispatcher slice as assembly/native objects
+- link generated code into the app's signed Mach-O `__TEXT`
+- resolve instruction relocations offline; retain runtime data relocations only
+- keep the existing CGO RW→RX loader as Simulator-only diagnostic infrastructure
+
+**Gate A1:** the signed-AOT app executes the real artifact on the iPad
+Simulator; `otool`/link-map and `codesign` evidence show generated GOAL code in
+signed executable text; the product target does not copy/patch instructions
+into anonymous memory or call `mprotect(PROT_EXEC)` for GOAL code.
+
 ## P5 — First frame / first playable proof
 **Goal:** render something real from Jak 1 systems on Simulator.
 
@@ -121,4 +139,5 @@ Work:
 - App Store submission
 
 ## Ordering rule
-If a later phase looks fun but H1–H2.5–H3 are red, stop and return to those gates.
+If a later phase looks fun but H1–H2.5–H3, S1, or A1 are red, stop and return
+to those gates. The Simulator RX-blob transport cannot satisfy A1.

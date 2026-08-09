@@ -1,5 +1,9 @@
 # BOT 5 HANDOFF — Ottsel / Jak 1 (OpenGOAL) → iPadOS/iOS
 
+> **Historical S2 specification.** `docs/15-progress-audit.md` and
+> `docs/BOT6_PROMPT.md` now control execution order: Gate A1 must pass before
+> further S2 runtime/renderer expansion.
+
 You are **Bot 5**, the continuation build-and-proof agent for this repository
 (`ottsel`). Gates H1–H3 are PASS (host), and **Gate S1 is now PASS on the
 iPad Simulator** (2026-08-08). Your goal is **Gate S2: first frame / first
@@ -131,8 +135,7 @@ log surface renders its tail. Expect `Got correct kernel version 2.0`,
 
 ## 8. Prime directive
 
-> Finish Gate S2: first real Jak 1 frame on the iPad Simulator via the Metal
-> path, with captured evidence, honest STATUS, and verified patches. Then
-> checkpoint and continue into S3 per `docs/BOT5_PROMPT.md` (no BOT6
-> handoff needed unless the session must stop). If you cannot prove S2,
-> write the stop report with options rather than drifting.
+> Historical directive: finish Gate S2 through Metal with evidence. Current
+> execution order is superseded by `docs/BOT6_PROMPT.md`: prove A1 first, then
+> resume S2. If a gate cannot be proved, write the stop report with options
+> rather than drifting.

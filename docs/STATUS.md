@@ -1,8 +1,11 @@
 # STATUS — Ottsel
 
-Date: 2026-08-07  
-Repo: `ottsel`  
-Mode: Phase 2 build loop (Bot 2) — Gate H1 active
+Date: 2026-08-09
+Repo: `ottsel`
+Mode: Phase 2 build loop — **Gate A1 active (signed-native execution proof)**
+
+Read `docs/15-progress-audit.md` before resuming. The Simulator RX-blob path is
+a research transport, not the H2.5 product execution model.
 
 ## Gate board
 
@@ -14,11 +17,12 @@ Mode: Phase 2 build loop (Bot 2) — Gate H1 active
 | **H2.5** | **Packaging form decision** | **PASS (2026-08-07)** | `docs/evidence/H2.5/`, `docs/10-code-packaging-and-signing.md` |
 | H3 | Jak 1 host AOT boot proof | **PASS (2026-08-08, host)** — GOAL kernel dispatcher executes and loops under RX, no faults; evidence captured | `docs/evidence/H3/dispatcher-loop-2026-08-08.md`, `docs/evidence/H3/boot-dispatcher-loop-2026-08-08.log`, `docs/13-current-state.md`, `docs/BOT4_HANDOFF.md` |
 | S1 | Simulator shell loads runtime | **PASS (2026-08-08)** — iPad Pro 11-inch (M4) Simulator launches the shell; the no-emit ARM64 runtime maps EE RW, links all 8 KERNEL.CGO objects with RW->RX flips, boots to the GOAL kernel dispatcher loop (48,200+ iterations, zero faults). Fix: register pc-prof/PC-port exports on iOS + full-table intern fallback scan; gated-error no-crash-loop safety net retained. | `docs/evidence/S1/s13-dispatcher-loop.md`, `docs/evidence/S1/s13-dispatcher-loop.log|png`, `docs/evidence/S1/s11-*`, `docs/evidence/S1/s12-*` |
-| S2 | First frame proof | **S2.0 PASS (2026-08-09)** — Metal spike: the shell presents its log surface through a real CAMetalLayer pipeline on the iPad Pro 11-inch (M4) Simulator; pixel-verified 100% against the font table; runtime still boots to the dispatcher loop (56,800+ iterations, zero faults). Declared sub-gate — not yet a frame from game systems. | `docs/evidence/S2/s20-metal-spike.md`, `s20-metal-frame.png`, `s20-metal-surface.ppm|png|-4x.png`, `s20-runtime.log` |
-| S2 | First frame proof | **S2.1 progress (2026-08-09)** — GAME.CGO (the full Jak 1 game engine, 346 objects / 22 MB) compiles for ARM64 with the no-emit goalc, and all 3,801,088 emitted code words validate (decode + round-trip + assembler fallback). 8 emitter/IR bugs fixed (vector asm IRs, VPSHUFLW/VPSHUFHW, vector shift encodings, static vector loads, stack-slot addressing, STR Q opcode width). Not yet booted — linking the game objects and starting the game process tree is next. | `docs/evidence/S2/s21-game-cgo-arm64.md`, `s21-game-cgo-build.log` |
-| S2 | First frame proof | **S2.1 runtime linking (2026-08-09)** — the shell now bundles GAME.CGO and links it on the Simulator: 36 of 346 objects link before the first gated runtime fault (a symbol-value call in `pad`'s top-level resolves to a heap address; site identified, debug logging retained). Cross-segment LDR-literal overflow fixed (ADRP-based static loads); GAME.CGO revalidates 3,825,664 words. | `docs/evidence/S2/s21-game-cgo-simboot.md`, `s21-simboot.log` |
-| S3 | Touch MVP + lifecycle | — | — |
-| R1 | Handoff package | — | — |
+| S2.0 | Metal shell spike | **PASS (2026-08-09)** — real CAMetalLayer pipeline presents the shell log surface; explicitly not a game frame | `docs/evidence/S2/s20-metal-spike.md`, `s20-*` |
+| S2.1 | GAME.CGO engine integration | **RESEARCH CHECKPOINT (2026-08-09)** — all 346 objects compile; encoding validator passes; Simulator RX-blob linker reaches object 204, then deterministically ret/jumps to EE base in the `make-village1-light-kit` chain. Pause after preserving the active dirty probe; A1 is next. | `docs/evidence/S2/s21-game-cgo-arm64.md`, `docs/evidence/S2/s21-game-cgo-simboot.md`, `s21-*` |
+| **A1** | **Signed-native OpenGOAL execution** | **ACTIVE — REQUIRED BEFORE MORE S2**. Add semantic ARM64 regressions, compile a non-trivial real OpenGOAL artifact into signed Mach-O `__TEXT`, and execute without CGO code copied/patched into anonymous executable memory or `mprotect(PROT_EXEC)`. | `docs/15-progress-audit.md`, `docs/BOT6_PROMPT.md`; create `docs/evidence/A1/` |
+| S2.2 | First real Jak 1 frame via Metal | BLOCKED ON A1, then S2.1 | — |
+| S3 | Touch MVP + lifecycle | BLOCKED ON S2 | — |
+| R1 | ROM-safe handoff package | BLOCKED ON S3 | — |
 
 ## H1 result (2026-08-07)
 
@@ -74,9 +78,10 @@ Mode: Phase 2 build loop (Bot 2) — Gate H1 active
   (CGO/DGO/MUS/STR; SCUS-97124); gitignored.
 - **Host runtime boots on arm64:** `gk` builds with `OTTSEL_NO_EMIT`, launches
   SDL/OpenGL (M1), stops only for missing compiled level data (fr3).
-- **Boot slice NOT done:** no-emit object loader in `gk` (data-only relocs,
+- **Historical checkpoint:** no-emit object loader in `gk` (data-only relocs,
   RX-after-load), linking full kernel GOAL against C-kernel externs, and first
-  real GOAL entry. 15 IRs still NYI (Asm family, vector swizzle/blend/sqrt).
+  real GOAL entry were not yet done at this point. The later H3/S2 sections
+  supersede this status.
 
 ## H3 status (2026-08-08, second iteration)
 
@@ -146,3 +151,26 @@ Mode: Phase 2 build loop (Bot 2) — Gate H1 active
   mechanism needs a live debugger that can breakpoint RX-flipped GOAL pages
   (lldb cannot write software breakpoints there).  Evidence:
   `docs/evidence/S2/s21-game-cgo-simboot.md` (updated 2026-08-09).
+
+## Gate realignment (2026-08-09) — A1 active, per docs/15-progress-audit.md
+
+The S2-first loop was stale. The signed-native execution model selected at
+H2.5 must be proven before more renderer/touch work. The RX-blob Simulator
+transport is diagnostic-only; it is not the product execution path.
+
+| Gate | Title | Status | Evidence |
+|---|---|---|---|
+| R0 | Recover and normalize the active checkpoint | **DONE (2026-08-09)** — probes preserved as patch artifacts under `docs/evidence/A1/r0-call-trace-probe-*.patch`, stripped from product sources; docs agree on A1 | `docs/evidence/A1/r0-call-trace-probe-*.patch`, loop log |
+| **A1.0** | Semantic ARM64 regression layer | **ACTIVE** — extend the H1/H2 harness with focused tests for the known legal-but-wrong defect classes; reduce the object-204 failure below the full boot loop | — |
+| A1.1 | Real OpenGOAL code in signed Mach-O text | not started | — |
+| A1.2 | Product execution-permission proof | not started | — |
+| S2.1 | Complete engine integration (after A1) | paused at object 204 (RX-blob diagnostic) | `docs/evidence/S2/s21-game-cgo-simboot.md` |
+| S2.2 | First real Jak 1 frame through Metal | not started (after A1 + S2.1) | — |
+| S3 | Touch MVP + lifecycle | not started | — |
+| R1 | ROM-safe handoff | not started | — |
+
+Known semantic defect classes needing A1.0 regression tests: SP->xzr moves
+(IR_GetStackAddr), loads emitted as stores (static_load_f32 STR/Q), wrong
+load/store widths (LDRH imm12 scaling), scaled vs unscaled offsets, swapped
+ABI argument pairs (_stack_call_arm64), LR/call/return corruption (object-204
+value-0 call/return fault).

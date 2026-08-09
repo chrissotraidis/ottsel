@@ -786,3 +786,61 @@
 - **Next:** instrument a live call/ret tracer (or a debugger that can
   breakpoint RX pages) to find the ret-to-x22 inside the
   make-village1-light-kit call chain; continue linking objects 205-346.
+
+## 2026-08-09 — Whole-repo audit and signed-AOT realignment
+
+- **Reviewed:** all repo-owned planning/handoff docs, commit progression,
+  shell/build sources, canonical patch state, evidence summaries/logs, asset
+  hygiene, live process/Simulator state, and the active dirty object-204 probe.
+- **Verdict:** the ARM64/S1/S2 technical work is valuable and should be kept,
+  but the execution order drifted. H2.5 selected generated code in signed
+  Mach-O text while S1/S2 expanded the Simulator-only CGO RW→RX transport.
+  Renderer/touch work must wait for a real signed-native OpenGOAL proof.
+- **Found:** the encoding validator correctly catches illegal words, but the
+  latest defects were legal instructions with wrong semantics (STR/LDR,
+  SP/xzr, scaled offsets, ABI pair ordering, call/return behavior). Future
+  emitter/ABI fixes require focused semantic regression tests.
+- **Updated:** `README.md`, `docs/INDEX.md`, `docs/STATUS.md`,
+  `docs/05-roadmap.md`, `docs/13-current-state.md`, and historical Bot 5
+  prompts. Added `docs/15-progress-audit.md` and the paste-ready
+  `docs/BOT6_PROMPT.md`.
+- **New order:** preserve the active dirty probe; A1.0 semantic regression
+  layer; A1.1 real OpenGOAL artifact in signed Mach-O `__TEXT`; A1.2 no
+  runtime-created executable-code proof; only then resume S2.1 -> S2.2 -> S3
+  -> R1.
+- **Validation during audit:** root/worktree `git diff --check`, build-script
+  `bash -n`, validator Python compile, and validator known-bad selftest pass;
+  tracked-asset scan found no ISO/CGO/DGO/VAG/STR/MUS/bin/img files. Full iOS
+  rebuild was not started because an existing object-204 test process was
+  already active.
+
+## 2026-08-09 — R0: recover and normalize the active checkpoint (A1 realignment)
+
+- **Goal realignment:** the user replaced the S2-first loop with the A1-first
+  roadmap (BOT6_PROMPT.md). The signed-native execution model selected at H2.5
+  must be proven before renderer/touch work; the RX-blob loader is
+  diagnostic-only. Gate order: R0 -> A1.0 -> A1.1 -> A1.2 -> S2.1 -> S2.2 ->
+  S3 -> R1.
+- **Active experiment captured:** the object-204 call-trace probe (goalc
+  IR_FunctionCall recorder shim emitting a nested blr to a C ring buffer,
+  kscheme recorder + `g_ottsel_call_trace`, kmachine registration, handler
+  dumps) was mid-flight with an iOS link failure (undefined symbols from the
+  anonymous-namespace extern decl). Its value: the trap/recorder approach and
+  the verified object-204 call-chain evidence (make-village1-light-kit ->
+  make-light-kit -> matrix-rotate-y! -> sin/cos, all symbols/slots valid) are
+  preserved for A1.0's bounded-trace requirement as
+  `docs/evidence/A1/r0-call-trace-probe-{shell,goalc}.patch`.
+- **Probes stripped:** goalc IR.cpp / kscheme.cpp / kmachine.cpp recorder
+  shims removed; ios_boot.cpp restored to the committed gated-handler (rawlog
+  pc/regs/GOAL-stack-LR walk, no hard-coded addresses); scratch mlkf/trap .o/.s
+  removed; SIGTRAP handler reverted.
+- **Docs restored:** docs/15-progress-audit.md and docs/BOT6_PROMPT.md
+  (user-owned, untracked) were accidentally removed by a git clean exclusion
+  mistake and restored verbatim from captured content.
+- **Verified:** `grep` shows no probe remnants in goalc/game sources; the app
+  builds clean (OttselShell 4007536 bytes); no runtime processes; Simulator
+  shutdown pending; 16 GiB free.
+- **Next:** A1.0 — extend the H1/H2 harness (tools/ottsel_h1) with semantic
+  regression tests for SP->xzr, load-as-store, wrong widths, scaled offsets,
+  ABI arg-pair swap, and LR/call/return preservation; reduce the object-204
+  fault below the full boot loop.
