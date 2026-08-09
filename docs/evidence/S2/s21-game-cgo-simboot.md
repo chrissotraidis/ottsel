@@ -68,11 +68,18 @@ value field is a data object while the call expects a function.
 - Identify the symbol at `st + 0x20c0` (dump the interned symbol table or
   the call's argument register at fault) and fix the value-field resolution.
   Refined diagnosis (2026-08-09): the dispatch slot (pad main data +0x404c)
-  is **0 at fault** — the runtime linker did not write `(sym - s7)` into
-  it, so the call resolved through st+0 into a non-executable data page.
-  The object's v3 link-table format (LINK_SYMBOL_OFFSET records vs the
-  offset/fixup prefix) must be parsed correctly to check whether the
-  slot's symbol record exists and points at 0x404c; then fix either the
-  goalc emission or the runtime symlink_v3 write.
+  is **0 at fault** even though the runtime linker DID write `(sym - s7) =
+  0x38` into it (confirmed by a post-write re-read: `symlink 'object' wrote
+  0x38 at data+0x404c (data=0x6b4000)`). The fault-time dump shows the
+  neighbors 0x4040..0x4048 holding runtime-initialized values (1, 0, 0)
+  while the sibling `object` slot at 0x4058 is intact (0x38) — so a static
+  structure whose data spans 0x4040..0x404c is initialized by the GOAL
+  top-level between linking and the dispatch, clobbering the slot. This
+  points at a **goalc static-data layout overlap** (the symbol slot at
+  0x404c overlaps another static object's space), not the runtime linker.
+  Next: inspect pad's static allocation order in the goalc
+  (`add_static_to_seg` / finalize layout) to find the overlapping static;
+  then fix the layout so symbol slots never share space with initialized
+  static objects.
 - Continue linking the remaining 310 objects; then the game process tree and
   the Metal renderer module.

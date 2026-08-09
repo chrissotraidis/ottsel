@@ -420,7 +420,7 @@ index 859b7e13a..95166e39c 100644
        // use a hack to just run the listener function if there's no GOAL kernel.
        if (ListenerFunction->value != s7.offset) {
 diff --git a/game/kernel/jak1/klink.cpp b/game/kernel/jak1/klink.cpp
-index fd7199959..cd36a3477 100644
+index fd7199959..3321bf955 100644
 --- a/game/kernel/jak1/klink.cpp
 +++ b/game/kernel/jak1/klink.cpp
 @@ -14,6 +14,9 @@
@@ -488,7 +488,25 @@ index fd7199959..cd36a3477 100644
    } else if (size == 8) {
      *Ptr<int64_t>(offset_of_patch).c() = diff;
    } else {
-@@ -217,7 +267,33 @@ uint32_t link_control::jak1_work_v3() {
+@@ -160,6 +210,8 @@ uint32_t symlink_v3(Ptr<uint8_t> link, Ptr<uint8_t> data) {
+     uint32_t offset = offsets.c()[i];
+     seek += 4;
+     auto data_ptr = (data + offset).cast<int32_t>();
++    printf("OTTSEL symlink '%s' at 0x%x -> %s\n", sym_name, offset,
++           (*data_ptr == -1) ? "ADDR" : "OFFSET");
+ 
+     if (*data_ptr == -1) {
+       // a "-1" indicates that we should store the address.
+@@ -168,6 +220,8 @@ uint32_t symlink_v3(Ptr<uint8_t> link, Ptr<uint8_t> data) {
+       // otherwise store the offset to st.  Eventually this should become an s16 instead.
+       *(data + offset).cast<int32_t>() = sym_offset;
+     }
++    printf("OTTSEL symlink '%s' wrote 0x%x at data+0x%x (data=0x%x)\n", sym_name,
++           *(data + offset).cast<int32_t>(), offset, data.offset);
+   }
+ 
+   return seek;
+@@ -217,7 +271,33 @@ uint32_t link_control::jak1_work_v3() {
          if (ofh->code_infos[seg_id].size == 0) {
            ofh->code_infos[seg_id].offset = 0;
          } else {
@@ -522,7 +540,7 @@ index fd7199959..cd36a3477 100644
            ofh->code_infos[seg_id].offset =
                kmalloc(m_heap, ofh->code_infos[seg_id].size, 0, "main-segment").offset;
            if (ofh->code_infos[seg_id].offset == 0) {
-@@ -225,6 +301,7 @@ uint32_t link_control::jak1_work_v3() {
+@@ -225,6 +305,7 @@ uint32_t link_control::jak1_work_v3() {
                     ofh->code_infos[seg_id].size);
              return 1;
            }
@@ -530,7 +548,7 @@ index fd7199959..cd36a3477 100644
            jak1::ultimate_memcpy(Ptr<u8>(ofh->code_infos[seg_id].offset).c(), src.c(),
                                  ofh->code_infos[seg_id].size);
          }
-@@ -233,6 +310,26 @@ uint32_t link_control::jak1_work_v3() {
+@@ -233,6 +314,26 @@ uint32_t link_control::jak1_work_v3() {
            ofh->code_infos[seg_id].offset = 0;
          } else {
            Ptr<u8> src(ofh->code_infos[seg_id].offset);
@@ -557,7 +575,7 @@ index fd7199959..cd36a3477 100644
            ofh->code_infos[seg_id].offset =
                kmalloc(m_heap, ofh->code_infos[seg_id].size, KMALLOC_TOP, "top-level-segment")
                    .offset;
-@@ -241,6 +338,7 @@ uint32_t link_control::jak1_work_v3() {
+@@ -241,6 +342,7 @@ uint32_t link_control::jak1_work_v3() {
                     ofh->code_infos[seg_id].size);
              return 1;
            }
@@ -565,7 +583,7 @@ index fd7199959..cd36a3477 100644
            jak1::ultimate_memcpy(Ptr<u8>(ofh->code_infos[seg_id].offset).c(), src.c(),
                                  ofh->code_infos[seg_id].size);
          }
-@@ -514,6 +612,17 @@ uint32_t link_control::jak1_work_v2() {
+@@ -514,6 +616,17 @@ uint32_t link_control::jak1_work_v2() {
   * Complete linking. This will execute the top-level code for v3 object files, if requested.
   */
  void link_control::jak1_finish(bool jump_from_c_to_goal) {
@@ -583,7 +601,7 @@ index fd7199959..cd36a3477 100644
    CacheFlush(m_code_start.c(), m_code_size);
    auto old_debug_segment = DebugSegment;
    if (m_keep_debug) {
-@@ -540,12 +649,91 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
+@@ -540,12 +653,91 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
  
      // execute top level!
      if (m_entry.offset && (m_flags & LINK_FLAG_EXECUTE)) {

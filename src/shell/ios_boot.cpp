@@ -146,6 +146,40 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
     u32 pc_ee = (u32)(pc - 0x7000000000ull);
     // the symbol slot used by the dispatch (pad main + 0x404c)
     lg::error("OTTSEL_IOS: slot[0x404c] = 0x{:08x}", *(volatile u32*)(g_ee_main_mem + 0x6b804c));
+    for (u32 o = 0x4000; o <= 0x4140; o += 0x10) {
+      lg::error("OTTSEL_IOS: slot[0x{:04x}] = 0x{:08x}", o,
+                *(volatile u32*)(g_ee_main_mem + 0x6b4000 + o));
+    }
+    lg::error("OTTSEL_IOS: slot row 0x4040: 0x{:08x} 0x{:08x} 0x{:08x} 0x{:08x} 0x{:08x} "
+              "0x{:08x} 0x{:08x} 0x{:08x}",
+              *(volatile u32*)(g_ee_main_mem + 0x6b8040),
+              *(volatile u32*)(g_ee_main_mem + 0x6b8044),
+              *(volatile u32*)(g_ee_main_mem + 0x6b8048),
+              *(volatile u32*)(g_ee_main_mem + 0x6b804c),
+              *(volatile u32*)(g_ee_main_mem + 0x6b8050),
+              *(volatile u32*)(g_ee_main_mem + 0x6b8054),
+              *(volatile u32*)(g_ee_main_mem + 0x6b8058),
+              *(volatile u32*)(g_ee_main_mem + 0x6b805c));
+    lg::error("OTTSEL_IOS: full static 0x4000: 0x{:08x} 0x{:08x} 0x{:08x} 0x{:08x} "
+              "0x{:08x} 0x{:08x} 0x{:08x} 0x{:08x}",
+              *(volatile u32*)(g_ee_main_mem + 0x6b4000),
+              *(volatile u32*)(g_ee_main_mem + 0x6b4004),
+              *(volatile u32*)(g_ee_main_mem + 0x6b4008),
+              *(volatile u32*)(g_ee_main_mem + 0x6b400c),
+              *(volatile u32*)(g_ee_main_mem + 0x6b4010),
+              *(volatile u32*)(g_ee_main_mem + 0x6b4014),
+              *(volatile u32*)(g_ee_main_mem + 0x6b4018),
+              *(volatile u32*)(g_ee_main_mem + 0x6b401c));
+    lg::error("OTTSEL_IOS: full static 0x4020: 0x{:08x} 0x{:08x} 0x{:08x} 0x{:08x} "
+              "0x{:08x} 0x{:08x} 0x{:08x} 0x{:08x}",
+              *(volatile u32*)(g_ee_main_mem + 0x6b4020),
+              *(volatile u32*)(g_ee_main_mem + 0x6b4024),
+              *(volatile u32*)(g_ee_main_mem + 0x6b4028),
+              *(volatile u32*)(g_ee_main_mem + 0x6b402c),
+              *(volatile u32*)(g_ee_main_mem + 0x6b4030),
+              *(volatile u32*)(g_ee_main_mem + 0x6b4034),
+              *(volatile u32*)(g_ee_main_mem + 0x6b4038),
+              *(volatile u32*)(g_ee_main_mem + 0x6b403c));
     lg::error("OTTSEL_IOS: [pc+0x10] = 0x{:08x} [pc+0x14] = 0x{:08x} [pc+0x18] = 0x{:08x}",
               *(volatile u32*)(g_ee_main_mem + pc_ee + 0x10),
               *(volatile u32*)(g_ee_main_mem + pc_ee + 0x14),

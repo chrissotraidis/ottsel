@@ -675,3 +675,33 @@
 - **Next:** parse pad's main-seg link table correctly and check the
   LINK_SYMBOL_OFFSET record for the slot at 0x404c; fix the slot-fill
   (emitter emission or runtime write); then continue linking.
+
+## 2026-08-09 — S2.1: slot clobber root-caused (goalc static-layout overlap)
+
+### Iteration — link-table + runtime-write forensics
+- **Acted:** parsed pad's main-seg link table (records at the absolute
+  object offset; 17 symbol records). Confirmed the `object` record targets
+  the dispatch slot at 0x404c. Instrumented symlink_v3 to log every write
+  (name, offset, data base, value after write) and dumped the static-data
+  neighborhood at fault.
+- **Findings:**
+  - The runtime linker DID write `(object - s7) = 0x38` into
+    data+0x404c (data = pad main 0x6b4000) — verified by post-write
+    re-read.
+  - At fault, the slot reads 0, while the sibling `object` slot at 0x4058
+    is intact (0x38). The neighbors 0x4040..0x4048 hold runtime-written
+    values (1, 0, 0) — a static structure spans 0x4040..0x404c and its
+    GOAL-side initialization (during the top-level, between linking and the
+    dispatch) zeroes the slot.
+  - Conclusion: **goalc static-data layout overlap** — the symbol slot at
+    0x404c shares space with another static object; the runtime linker is
+    behaving correctly.
+- **Result:** the next fix is in the goalc static layout
+  (`add_static_to_seg` / finalize), not the runtime linker.
+- **Files changed:** worktree `game/kernel/jak1/klink.cpp` (symlink write
+  logging, retained), `src/shell/ios_boot.cpp` (static-data dumps, kept),
+  `docs/evidence/S2/s21-game-cgo-simboot.md` (refined), `docs/00-loop-log.md`
+  (this entry).
+- **Next:** find the overlapping static in pad's allocation order (goalc
+  side) and fix the layout so symbol slots never overlap initialized
+  static objects; then continue linking the remaining 310 objects.
