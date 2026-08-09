@@ -644,3 +644,34 @@
 - **Next:** identify the symbol at `st+0x20c0` (or the call's argument) and
   fix the value-field resolution; continue linking the remaining 310
   objects; then the game process tree + Metal renderer module.
+
+## 2026-08-09 — S2.1: first runtime fault localized (symbol-slot dispatch)
+
+### Iteration — fault-site forensics on the Simulator
+- **Acted:** instrumented the gated handler to dump GPRs, faulting words,
+  the linked instructions at the call site (lr-0x40..), and named objects
+  at the key pointers. Ran the boot to fault (pad object 36).
+- **Findings (evidence-backed):**
+  - Call site: pad main + 0x294 (`blr x3`), preceded by a symbol-slot
+    dispatch: `ldrsw x2,[slot]; add x2,x2,x21(st); add x2,x2,x22(offset);
+    ldr w2,[x2]; add x16,x2,x22; ldur w3,[x16,#0x10]; add x3,x3,x22;
+    blr x3`.
+  - The slot (pad main static data + 0x404c) is **0 at fault** — the
+    runtime linker did not write (sym - s7) into it, so the dispatch
+    resolved through st+0 into heap data and the `blr` hit a non-executable
+    data page (SIGBUS, W^X).
+  - The call target object (0x1bfec4) has a `function` type tag and a
+    +0x10 field of 0x04f00484 (a plausible function region), so the
+    correct function value exists — the slot-fill is the missing link.
+  - This is the first GOAL method/global-function call the game code
+    executes (kernel top-levels never ran this pattern).
+- **Result:** root cause narrowed to the symbol-slot fill (the goalc-emitted
+  LINK_SYMBOL_OFFSET record vs the runtime symlink_v3 write); the object's
+  link-table parsing is the next diagnostic step (v3 per-segment table
+  format confusion to resolve first).
+- **Files changed:** `src/shell/ios_boot.cpp` (fault instrumentation,
+  retained), `docs/evidence/S2/s21-game-cgo-simboot.md` (analysis
+  updated), `docs/00-loop-log.md` (this entry).
+- **Next:** parse pad's main-seg link table correctly and check the
+  LINK_SYMBOL_OFFSET record for the slot at 0x404c; fix the slot-fill
+  (emitter emission or runtime write); then continue linking.

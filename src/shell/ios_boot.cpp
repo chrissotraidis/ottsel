@@ -62,9 +62,28 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
 #ifdef __aarch64__
   pc = uc->uc_mcontext->__ss.__pc;
   uintptr_t lr = uc->uc_mcontext->__ss.__lr;
+  lg::error("OTTSEL_IOS: regs x0=0x{:x} x1=0x{:x} x2=0x{:x} x3=0x{:x} x4=0x{:x} x5=0x{:x}",
+            uc->uc_mcontext->__ss.__x[0], uc->uc_mcontext->__ss.__x[1],
+            uc->uc_mcontext->__ss.__x[2], uc->uc_mcontext->__ss.__x[3],
+            uc->uc_mcontext->__ss.__x[4], uc->uc_mcontext->__ss.__x[5]);
+  lg::error("OTTSEL_IOS: regs x8=0x{:x} x9=0x{:x} x10=0x{:x} x11=0x{:x} x12=0x{:x} x13=0x{:x}",
+            uc->uc_mcontext->__ss.__x[8], uc->uc_mcontext->__ss.__x[9],
+            uc->uc_mcontext->__ss.__x[10], uc->uc_mcontext->__ss.__x[11],
+            uc->uc_mcontext->__ss.__x[12], uc->uc_mcontext->__ss.__x[13]);
+  lg::error("OTTSEL_IOS: regs x14=0x{:x} x15=0x{:x} x17=0x{:x} x19=0x{:x} x20=0x{:x} x23=0x{:x}",
+            uc->uc_mcontext->__ss.__x[14], uc->uc_mcontext->__ss.__x[15],
+            uc->uc_mcontext->__ss.__x[17], uc->uc_mcontext->__ss.__x[19],
+            uc->uc_mcontext->__ss.__x[20], uc->uc_mcontext->__ss.__x[23]);
   lg::error("OTTSEL_IOS: fault lr=0x{:x} x21(st)=0x{:x} x22(offset)=0x{:x} x16=0x{:x}",
             lr, uc->uc_mcontext->__ss.__x[21], uc->uc_mcontext->__ss.__x[22],
             uc->uc_mcontext->__ss.__x[16]);
+  // dump the linked instruction words around the call site (lr - 0x40)
+  if (lr >= 0x7000000000ull && lr < 0x7000000000ull + EE_MAIN_MEM_SIZE) {
+    volatile u32* insn = (volatile u32*)(lr - 0x40);
+    for (int i = 0; i < 20; i++) {
+      lg::error("OTTSEL_IOS: lr-{:#x} word: 0x{:08x}", 0x40 - i * 4, insn[i]);
+    }
+  }
 #endif
   lg::error("OTTSEL_IOS BOOT FAILED (gated): signal {} at pc=0x{:x} fault addr=0x{:x}",
             sig, pc, (uintptr_t)info->si_addr);
@@ -73,6 +92,89 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
     volatile u32* w = (volatile u32*)pc;
     lg::error("OTTSEL_IOS: faulting words: 0x{:08x} 0x{:08x} 0x{:08x} 0x{:08x}",
               w[0], w[1], w[2], w[3]);
+    // Treat the fault target as a GOAL object; print the type symbol name if
+    // it looks like a type (type layout: +0x8 symbol, +0x10 parent, +0x20
+    // method table).
+    for (int off = 0; off <= 0x20; off += 8) {
+      u32 p = w[off / 4];
+      if (p && p < EE_MAIN_MEM_SIZE) {
+        volatile u32* obj = (volatile u32*)(g_ee_main_mem + p);
+        u32 name_ptr = obj[2];
+        if (name_ptr && name_ptr < EE_MAIN_MEM_SIZE) {
+          const char* name = (const char*)(g_ee_main_mem + name_ptr);
+          char buf[96];
+          size_t n = 0;
+          while (n < sizeof(buf) - 1 && name[n] >= 32 && name[n] < 127) {
+            buf[n] = name[n];
+            n++;
+          }
+          buf[n] = 0;
+          if (n > 0) {
+            lg::error("OTTSEL_IOS: pc+{:#x} -> object with name '{}'", off, buf);
+          }
+        }
+      }
+    }
+    volatile u32* type_obj = (volatile u32*)pc;
+    for (int i = 0; i < 12; i++) {
+      lg::error("OTTSEL_IOS: type-like +{:#04x} = 0x{:08x}", i * 4, type_obj[i]);
+    }
+    // name helper: given an EE-relative pointer to an object, print the
+    // string at its +0x8 (name field of symbol/type-like objects).
+    auto name_of = [](u32 ee_ptr, const char* label) {
+      if (!ee_ptr || ee_ptr >= EE_MAIN_MEM_SIZE) {
+        return;
+      }
+      volatile u32* obj = (volatile u32*)(g_ee_main_mem + ee_ptr);
+      u32 name_ptr = obj[2];
+      if (name_ptr && name_ptr < EE_MAIN_MEM_SIZE) {
+        const char* name = (const char*)(g_ee_main_mem + name_ptr);
+        char buf[96];
+        size_t n = 0;
+        while (n < sizeof(buf) - 1 && name[n] >= 32 && name[n] < 127) {
+          buf[n] = name[n];
+          n++;
+        }
+        buf[n] = 0;
+        if (n > 0) {
+          lg::error("OTTSEL_IOS: {} (0x{:x}) name: '{}'", label, ee_ptr, buf);
+        }
+      }
+      lg::error("OTTSEL_IOS: {} (0x{:x}) words: 0x{:08x} 0x{:08x} 0x{:08x} 0x{:08x}",
+                label, ee_ptr, obj[0], obj[1], obj[2], obj[3]);
+    };
+    u32 pc_ee = (u32)(pc - 0x7000000000ull);
+    // the symbol slot used by the dispatch (pad main + 0x404c)
+    lg::error("OTTSEL_IOS: slot[0x404c] = 0x{:08x}", *(volatile u32*)(g_ee_main_mem + 0x6b804c));
+    lg::error("OTTSEL_IOS: [pc+0x10] = 0x{:08x} [pc+0x14] = 0x{:08x} [pc+0x18] = 0x{:08x}",
+              *(volatile u32*)(g_ee_main_mem + pc_ee + 0x10),
+              *(volatile u32*)(g_ee_main_mem + pc_ee + 0x14),
+              *(volatile u32*)(g_ee_main_mem + pc_ee + 0x18));
+    name_of(pc_ee, "call-target");
+    name_of((u32)(uc->uc_mcontext->__ss.__x[0] & 0xffffffffu), "arg x0");
+    name_of((u32)(uc->uc_mcontext->__ss.__x[1] & 0xffffffffu), "arg x1");
+    name_of((u32)(uc->uc_mcontext->__ss.__x[21] + 0x10), "st+0x10");
+    name_of((u32)(uc->uc_mcontext->__ss.__x[21] + 0x20c0), "st+0x20c0");
+    name_of(*(volatile u32*)pc + 0x10, "target+0x10 value");
+    // If the fault target looks like a GOAL symbol, print its name.
+    // If the fault target looks like a GOAL symbol, print its name.
+    // GOAL symbol layout: basic header, type tag, name ptr (+0x8), value
+    // (+0x10).
+    u32 name_ptr = w[2];
+    if (name_ptr && name_ptr < EE_MAIN_MEM_SIZE) {
+      const char* name = (const char*)(g_ee_main_mem + name_ptr);
+      char buf[128];
+      size_t n = 0;
+      while (n < sizeof(buf) - 1 && name[n] >= 32 && name[n] < 127) {
+        buf[n] = name[n];
+        n++;
+      }
+      buf[n] = 0;
+      if (n > 0) {
+        lg::error("OTTSEL_IOS: fault target symbol name: '{}' (name ptr 0x{:x})", buf,
+                  name_ptr);
+      }
+    }
   }
   lg::error("OTTSEL_IOS: stopping with a gated error (no crash loop); the no-emit "
             "symbol-slot resolution is the suspected root cause (see docs/reports/).");

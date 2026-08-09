@@ -56,7 +56,9 @@ value field is a data object while the call expects a function.
 ## State kept for the next iteration
 
 - The gated handler now logs pc/lr/st/offset/x16 and the faulting words
-  (`src/shell/ios_boot.cpp`) — kept for the next boot fault.
+  (`src/shell/ios_boot.cpp`) plus GPR dumps, the linked instructions at
+  the call site, and named objects at the key pointers — kept for the next
+  boot fault.
 - `scripts/build-ios.sh` bundles `GAME.CGO` into the app.
 - `docs/evidence/S2/s21-game-cgo-simboot.md` (this file) + the boot log
   `s21-simboot.log` (captured console tail).
@@ -64,7 +66,13 @@ value field is a data object while the call expects a function.
 ## Next steps
 
 - Identify the symbol at `st + 0x20c0` (dump the interned symbol table or
-  the call's argument register at fault) and fix the value-field resolution
-  (fallback scan / canonical-intern, mirroring the S1 fix).
+  the call's argument register at fault) and fix the value-field resolution.
+  Refined diagnosis (2026-08-09): the dispatch slot (pad main data +0x404c)
+  is **0 at fault** — the runtime linker did not write `(sym - s7)` into
+  it, so the call resolved through st+0 into a non-executable data page.
+  The object's v3 link-table format (LINK_SYMBOL_OFFSET records vs the
+  offset/fixup prefix) must be parsed correctly to check whether the
+  slot's symbol record exists and points at 0x404c; then fix either the
+  goalc emission or the runtime symlink_v3 write.
 - Continue linking the remaining 310 objects; then the game process tree and
   the Metal renderer module.
