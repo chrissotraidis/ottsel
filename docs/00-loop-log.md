@@ -942,3 +942,26 @@
 - **Next: S2.1** — resume GAME.CGO engine integration with the localized
   mood-tables fault (trace chain documented) + every emitter/ABI fix through
   the A1.0 regression harness.
+
+## 2026-08-09 — A1 gate complete; S2.1 resumed (mood-tables fault reproduction)
+
+- **Gate A1 PASS (committed 11885e0/2552c6b/ceca097):** A1.0 semantic
+  regressions + object-204 bounded-trace localization; A1.1 real KERNEL.CGO
+  slice in signed Mach-O __TEXT on the Simulator (all 7 checks, codesign
+  verified); A1.2 execution-permission proof (audit + no-CGO negative
+  proof).
+- **S2.1 resumed:** the A1.0 call-trace probe is re-applied (product sources
+  instrumented; preserved patch docs/evidence/A1/).  The A1.1 slice proof
+  call is temporarily disabled (the offline slice linker doesn't resolve the
+  trace symbol; re-enable after S2.1).
+- **Fault reproduces deterministically:** GAME.CGO links all 346 objects;
+  mood-tables (204) top-level faults at `signal 10 pc=0x7000000000`
+  (ret/br to EE base); trace-count 30422; last calls: mood main 0x23d8004 ->
+  0x5ab0e4 -> 0x5fc574/0x5fd9d4 -> 0x5a9234 (site 0x8408, x2); last-target
+  code at 0x5a9234 = real SIMD matrix transform with `ret` at +0x5c.
+- **Fault state:** x3 = 0x70005a9234 (the called fn host), x8 = x22 =
+  0x7000000000, lr = x22 — a jump through a null/garbage pointer after the
+  0x5a9234 call path.  Evidence: docs/evidence/S2/s21-mood-fault-*.log.
+- **Next (S2.1):** decode the 0x5a9234 call/return path (post-index ldr q
+  clobbers x1/x2; verify the caller's x30 slot) and the loop's next
+  iteration; every fix through the A1.0 regression harness.
