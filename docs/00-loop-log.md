@@ -705,3 +705,31 @@
 - **Next:** find the overlapping static in pad's allocation order (goalc
   side) and fix the layout so symbol slots never overlap initialized
   static objects; then continue linking the remaining 310 objects.
+
+## 2026-08-09 — S2.1: static_load_f32 STR/Q bug fixed; linking 36 -> 48
+
+### Iteration — pad slot-clobber root cause resolved
+- **Root cause:** `static_load_f32` (my earlier ADRP conversion) used the
+  STR base `0b0011110110` (a 16-byte `str q0`) instead of the LDR base
+  `0b1011110101` (`ldr s0`). Every `(set! (-> obj float-field)
+  <static-float>)` compiled to a 16-byte store INTO the static symbol
+  slots; `cpad-invalid!`'s second such store hit 0x4040..0x404c and zeroed
+  the `object` slot that `(method new cpad-info)`'s `(object-new ...)`
+  dispatch reads. The linker writes were all correct (0x38 at 0x404c,
+  verified); the clobber was the compiler's fault.
+- **Fix:** `static_load_f32` -> `Base(0b1011110101, 10)` (verified:
+  `ldr s0, [x16]` = `0xbd400200`).
+- **Result:** linking now passes pad .. display (objects 36-48). Next
+  fault: SIGSEGV at display main+0xa10, fault addr 0x76d664 — a raw
+  EE-relative pointer dereferenced without the host base in a
+  structure-copy sequence (`ldr q0, [x19], #0x7c`); goalc IR needed.
+- **Also:** gated handler made fault-proof (mincore-probed safe reads);
+  goalc debug prints removed; GAME.CGO (3,825,664 words) + KERNEL.CGO
+  (86,016 words) revalidated PASS.
+- **Files changed:** worktree `goalc/emitter/IGenARM64.cpp` (the fix +
+  cleanup), `goalc/emitter/ObjectGenerator.cpp` + `goalc/compiler/CodeGenerator.cpp`
+  (debug prints removed); repo `src/shell/ios_boot.cpp` (safe handler),
+  `docs/evidence/S2/s21-game-cgo-simboot.md` (update),
+  `docs/00-loop-log.md` (this entry).
+- **Next:** dump the goalc IR for the display object's function at
+  main+0xa10 (structure copy) and fix the address model; continue linking.

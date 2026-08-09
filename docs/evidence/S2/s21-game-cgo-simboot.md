@@ -83,3 +83,27 @@ value field is a data object while the call expects a function.
   static objects.
 - Continue linking the remaining 310 objects; then the game process tree and
   the Metal renderer module.
+
+## 2026-08-09 update — static_load_f32 STR/Q bug fixed; linking 36 -> 48
+
+Root cause of the pad fault fully resolved: **`static_load_f32` used the STR
+base (`0b0011110110` = `str q0`) instead of the LDR base (`0b1011110101` =
+`ldr s0`)**, so every `(set! (-> obj float-field) <static-float>)` compiled
+to a 16-byte `str q0` **into** the static-data symbol slots instead of a
+4-byte load. In `cpad-invalid!` the second such store hit slot offsets
+0x4040..0x404c, zeroing the `object` symbol slot the `(object-new ...)`
+dispatch in `(method new cpad-info)` reads — the exact clobber observed.
+The bug was introduced in the S2.1 ADRP-conversion of `static_load_f32`
+(copied the STR base from `static_store_f32`).
+
+- Fix: `goalc/emitter/IGenARM64.cpp` `static_load_f32` -> `Base(0b1011110101,
+  10)` (verified against `as`: `ldr s0, [x16]` = `0xbd400200`).
+- On-device result: linking now passes objects 36 (pad) .. 48 (display)
+  before the next fault. New fault: `signal 11` at `pc=0x700075ca10`
+  (display object main + 0xa10), fault addr `0x76d664` (a raw EE-relative
+  pointer dereferenced without the host base) inside a structure-copy
+  sequence (`ldr q0, [x19], #0x7c` post-index). The display function's
+  address model needs the goalc IR to diagnose; next iteration.
+- The gated handler is now fault-proof (safe `mincore`-probed reads) so it
+  no longer re-crashes while dumping.
+- Revalidated: GAME.CGO 3,825,664 words PASS; KERNEL.CGO 86,016 words PASS.

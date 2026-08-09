@@ -2988,7 +2988,7 @@ index 27cbcc8c1..3b0bdf082 100644
   * Divide (idiv, 32 bit)
   */
 diff --git a/goalc/emitter/IGenARM64.cpp b/goalc/emitter/IGenARM64.cpp
-index 1180f722d..3d193e62d 100644
+index 1180f722d..8226ef231 100644
 --- a/goalc/emitter/IGenARM64.cpp
 +++ b/goalc/emitter/IGenARM64.cpp
 @@ -418,7 +418,9 @@ InstructionARM64 store16_gpr64_gpr64_plus_gpr64(Register addr1, Register addr2,
@@ -3303,7 +3303,7 @@ index 1180f722d..3d193e62d 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -1941,26 +1971,45 @@ InstructionARM64 static_store(Register value, s64 offset, int size) {
+@@ -1941,26 +1971,47 @@ InstructionARM64 static_store(Register value, s64 offset, int size) {
  
  InstructionARM64 static_addr(Register dest, s64 offset) {
    ASSERT(dest.is_gpr(instr_set));
@@ -3351,7 +3351,9 @@ index 1180f722d..3d193e62d 100644
 +  return InstructionARM64(
 +      {// ADRP <Xd>, <label>
 +       InstructionARM64(Base(0b100100000000000000000000000, 27), Rd(X16), Immhi(0), Immlo(0)),
-+       InstructionARM64(Base(0b0011110110, 10), Imm12(offset), Rt(simd_dest.id()), Rn(X16))});
++       // 0b1011110101 = LDR (SIMD&FP) S (32-bit); the 0b0011110110 pattern
++       // is STR Q and clobbers 16 bytes instead of loading 4.
++       InstructionARM64(Base(0b1011110101, 10), Imm12(offset), Rt(simd_dest.id()), Rn(X16))});
  }
  
  InstructionARM64 static_store_f32(Register xmm_value, s64 offset) {
@@ -3361,7 +3363,7 @@ index 1180f722d..3d193e62d 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -2103,28 +2152,49 @@ InstructionARM64 imul_gpr64_gpr64(Register dst, Register src) {
+@@ -2103,28 +2154,49 @@ InstructionARM64 imul_gpr64_gpr64(Register dst, Register src) {
                            Rm(src.id()));
  }
  
@@ -3424,7 +3426,7 @@ index 1180f722d..3d193e62d 100644
  }
  
  InstructionARM64 movsx_r64_r32(Register dst, Register src) {
-@@ -2134,9 +2204,12 @@ InstructionARM64 movsx_r64_r32(Register dst, Register src) {
+@@ -2134,9 +2206,12 @@ InstructionARM64 movsx_r64_r32(Register dst, Register src) {
  }
  
  InstructionARM64 cmp_gpr64_gpr64(Register a, Register b) {
@@ -3440,7 +3442,7 @@ index 1180f722d..3d193e62d 100644
  }
  
  //;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-@@ -2210,7 +2283,7 @@ InstructionARM64 sar_gpr64_reg(Register reg, Register shift_reg) {
+@@ -2210,7 +2285,7 @@ InstructionARM64 sar_gpr64_reg(Register reg, Register shift_reg) {
  InstructionARM64 shl_gpr64_u8(Register reg, uint8_t sa) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/lsl_ubfm.html
    // LSL <Xd>, <Xn>, #<shift>
@@ -3449,7 +3451,7 @@ index 1180f722d..3d193e62d 100644
    ASSERT(reg.is_gpr(instr_set));
    return InstructionARM64(Base(0b1101001101, 10), Rd(reg.id()), Rn(reg.id()), Immr((64 - sa) & 63),
                            Imms(63 - sa));
-@@ -2220,7 +2293,7 @@ InstructionARM64 shr_gpr64_u8(Register reg, uint8_t sa) {
+@@ -2220,7 +2295,7 @@ InstructionARM64 shr_gpr64_u8(Register reg, uint8_t sa) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/lsr_ubfm.html
    // LSR <Xd>, <Xn>, #<shift>
    // sf	1	0	1	0	0	1	1	0	N
@@ -3458,7 +3460,7 @@ index 1180f722d..3d193e62d 100644
    ASSERT(reg.is_gpr(instr_set));
    return InstructionARM64(Base(0b1101001101000000111111, 22), Rd(reg.id()), Rn(reg.id()), Immr(sa));
  }
-@@ -2228,7 +2301,7 @@ InstructionARM64 shr_gpr64_u8(Register reg, uint8_t sa) {
+@@ -2228,7 +2303,7 @@ InstructionARM64 shr_gpr64_u8(Register reg, uint8_t sa) {
  InstructionARM64 sar_gpr64_u8(Register reg, uint8_t sa) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/asr_sbfm.html
    // ASR <Xd>, <Xn>, #<shift>
@@ -3467,7 +3469,7 @@ index 1180f722d..3d193e62d 100644
    ASSERT(reg.is_gpr(instr_set));
    return InstructionARM64(Base(0b1001001101000000111111, 22), Rd(reg.id()), Rn(reg.id()), Immr(sa));
  }
-@@ -2253,7 +2326,11 @@ InstructionARM64 sar_gpr64_u8(Register reg, uint8_t sa) {
+@@ -2253,7 +2328,11 @@ InstructionARM64 sar_gpr64_u8(Register reg, uint8_t sa) {
  InstructionARM64 jmp_imm() {
    // https://www.scs.stanford.edu/~zyedidia/arm64/b_uncond.html
    // B <label>
@@ -3480,7 +3482,7 @@ index 1180f722d..3d193e62d 100644
  }
  
  // Now these instructions in ARM are even more limiting, conditional
-@@ -2274,71 +2351,101 @@ InstructionARM64 jmp_imm() {
+@@ -2274,71 +2353,101 @@ InstructionARM64 jmp_imm() {
  InstructionARM64 je_imm() {
    // https://www.scs.stanford.edu/~zyedidia/arm64/b_cond.html
    // B.<cond> <label>
@@ -3602,7 +3604,7 @@ index 1180f722d..3d193e62d 100644
  }
  
  //;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-@@ -2472,8 +2579,11 @@ InstructionARM64 loadvf_gpr64_plus_gpr64(Register dst, Register addr1, Register
+@@ -2472,8 +2581,11 @@ InstructionARM64 loadvf_gpr64_plus_gpr64(Register dst, Register addr1, Register
    ASSERT(addr1 != addr2);
    ASSERT(addr1 != SP);
    ASSERT(addr2 != SP);
@@ -3616,7 +3618,7 @@ index 1180f722d..3d193e62d 100644
  }
  
  InstructionARM64 loadvf_gpr64_plus_gpr64_plus_s8(Register dst,
-@@ -2537,7 +2647,9 @@ InstructionARM64 storevf_gpr64_plus_gpr64(Register value, Register addr1, Regist
+@@ -2537,7 +2649,9 @@ InstructionARM64 storevf_gpr64_plus_gpr64(Register value, Register addr1, Regist
    ASSERT(addr2 != SP);
    // https://www.scs.stanford.edu/~zyedidia/arm64/str_reg_fpsimd.html
    // STR <Qt>, [<Xn|SP>, (<Wm>|<Xm>){, <extend> {<amount>}}]
@@ -3627,7 +3629,7 @@ index 1180f722d..3d193e62d 100644
                            Rm(addr2.id()));
  }
  
-@@ -2609,8 +2721,6 @@ InstructionARM64 storevf_gpr64_plus_gpr64_plus_s32(Register value,
+@@ -2609,8 +2723,6 @@ InstructionARM64 storevf_gpr64_plus_gpr64_plus_s32(Register value,
  
  InstructionARM64 loadvf_rip_plus_s32(Register dest, s64 offset) {
    ASSERT(dest.is_128bit_simd(instr_set));
@@ -3636,7 +3638,7 @@ index 1180f722d..3d193e62d 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -2635,19 +2745,80 @@ InstructionARM64 shuffle_vf(Register dst, Register src, u8 dx, u8 dy, u8 dz, u8
+@@ -2635,19 +2747,80 @@ InstructionARM64 shuffle_vf(Register dst, Register src, u8 dx, u8 dy, u8 dz, u8
    return InstructionARM64(0b0);
  }
  
@@ -3721,7 +3723,7 @@ index 1180f722d..3d193e62d 100644
        break;
      default:
        ASSERT(false);
-@@ -2739,8 +2910,9 @@ InstructionARM64 pw_sra(Register dst, Register src, u8 imm) {
+@@ -2739,8 +2912,9 @@ InstructionARM64 pw_sra(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/sshr_advsimd.html
    // - vector, 4S
    // SSHR <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -3732,7 +3734,7 @@ index 1180f722d..3d193e62d 100644
  }
  
  // - logical_shift_right_32bit_vf
-@@ -2748,8 +2920,9 @@ InstructionARM64 pw_srl(Register dst, Register src, u8 imm) {
+@@ -2748,8 +2922,9 @@ InstructionARM64 pw_srl(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/ushr_advsimd.html
    // - vector, 4S
    // USHR <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -3743,7 +3745,7 @@ index 1180f722d..3d193e62d 100644
  }
  
  // - logical_shift_left_32bit_vf
-@@ -2757,8 +2930,9 @@ InstructionARM64 pw_sll(Register dst, Register src, u8 imm) {
+@@ -2757,8 +2932,9 @@ InstructionARM64 pw_sll(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/shl_advsimd.html
    // - vector, 4S
    // SHL <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -3754,7 +3756,7 @@ index 1180f722d..3d193e62d 100644
  }
  
  // - logical_shift_right_16bit_vf
-@@ -2766,8 +2940,9 @@ InstructionARM64 ph_srl(Register dst, Register src, u8 imm) {
+@@ -2766,8 +2942,9 @@ InstructionARM64 ph_srl(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/ushr_advsimd.html
    // - vector, 8H
    // USHR <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -3765,7 +3767,7 @@ index 1180f722d..3d193e62d 100644
  }
  
  // - logical_shift_left_16bit_vf
-@@ -2775,8 +2950,9 @@ InstructionARM64 ph_sll(Register dst, Register src, u8 imm) {
+@@ -2775,8 +2952,9 @@ InstructionARM64 ph_sll(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/shl_advsimd.html
    // - vector, 8H
    // SHL <Vd>.<T>, <Vn>.<T>, #<shift>
