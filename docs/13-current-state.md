@@ -57,8 +57,8 @@ Read `docs/15-progress-audit.md` first for the corrected execution order.
 | S2.0 Metal shell spike | **PASS (2026-08-09)** — game frame still pending | `docs/evidence/S2/s20-metal-spike.md` |
 | S2.1 GAME.CGO integration | **RESEARCH CHECKPOINT** — compile pass; RX-blob link reaches object 204 | `docs/evidence/S2/s21-*` |
 | **A1.0 semantic ARM64 regressions** | **PASS (2026-08-09)** — 14/14 assertions; CGOs still validate; object-204 localized by bounded call trace | `docs/evidence/A1/a1-semantic-regressions.md`, `a1-object204-bounded-trace.md` |
-| **A1.1 real GOAL in signed `__TEXT`** | **ACTIVE — NEXT GATE** (H2.5 `.word`->clang route, codesign, Simulator exec) | `docs/10-code-packaging-and-signing.md`, `tools/ottsel_h2/h2_5_macho_packaging_proof.cpp` |
-| A1.2 execution-permission proof | blocked on A1.1 | — |
+| **A1.1 real GOAL in signed `__TEXT`** | **PASS (2026-08-09)** — real KERNEL.CGO slice executes on the Simulator; codesign verifies | `docs/evidence/A1/a11-signed-text-slice.md` |
+| **A1.2 execution-permission proof** | **ACTIVE — NEXT GATE** | — |
 | S2.2 First game frame | blocked on A1/S2.1 | — |
 | S3 Touch MVP + lifecycle | blocked on S2 | — |
 | R1 Handoff package | blocked on S3 | — |

@@ -180,12 +180,21 @@ mv -f "$APP_BUILD/libottsel-runtime.tmp.a" "$APP_BUILD/libottsel-runtime.a"
 echo "runtime lib: $APP_BUILD/libottsel-runtime.a ($((${#OBJS[@]})) objects)"
 
 echo "== [3/4] compile + link app =="
+SLICE_DIR="$APP_BUILD/a11-slice"
+mkdir -p "$SLICE_DIR"
+echo "== [3a/4] generate A1.1 slice (offline linker) =="
+"$WORKTREE/build/h1/goalc/ottsel-a11-slice" "$SLICE_DIR"
+xcrun --sdk "$SDK" clang "${COMMON_FLAGS[@]}" -c "$SLICE_DIR/slice.s" -o "$OBJ/a11_slice.o"
 compile "$REPO_DIR/src/shell/main.cpp" "$OBJ/shell_main.o"
 compile "$REPO_DIR/src/shell/ios_boot.cpp" "$OBJ/ios_boot.o"
 compile_objc "$REPO_DIR/src/shell/metal_shell.mm" "$OBJ/metal_shell.o"
+xcrun --sdk "$SDK" clang++ "${COMMON_FLAGS[@]}" -fobjc-arc \
+  "${INCS[@]}" -I"$SLICE_DIR" -c "$REPO_DIR/src/shell/a11_slice_runner.mm" -o "$OBJ/a11_slice_runner.o"
 
 xcrun --sdk "$SDK" clang++ "${COMMON_FLAGS[@]}" \
   "$OBJ/shell_main.o" "$OBJ/ios_boot.o" "$OBJ/metal_shell.o" \
+  "$OBJ/a11_slice_runner.o" "$OBJ/a11_slice.o" \
+  -I"$SLICE_DIR" \
   "$APP_BUILD/libottsel-runtime.a" "$SDL_BUILD/libSDL3.a" \
   "${FRAMEWORKS[@]}" -lobjc \
   -o "$APP_BUILD/OttselShell"

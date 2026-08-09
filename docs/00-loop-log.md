@@ -899,3 +899,28 @@
   4. Minimum proof: multiple real GOAL functions in signed __TEXT, GOAL ABI
      calls work, static/function refs resolve, writable data works, artifact
      executes with output, no mprotect(PROT_EXEC).
+
+## 2026-08-09 — A1.1 PASS: real KERNEL.CGO slice in signed Mach-O __TEXT on the Simulator
+
+- **Gate A1.1 PASS.** The real Jak 1 kernel functions string=, name=, ref,
+  last, nmember (verbatim from gstring.gc/gcommon.gc) execute from the
+  OttselShell app's signed __TEXT on the iPad Pro 11-inch (M4) Simulator:
+  all 7 checks ok (string=/name= semantics, ref/last on pairs, nmember
+  dispatch through name=); `codesign -v` passes; log
+  `docs/evidence/A1/a11-simulator-slice-pass.log`.
+- **Tool:** `tools/ottsel_a1_1/a11_slice_emitter.cpp` (target
+  `ottsel-a11-slice`) compiles the slice, applies the link tables OFFLINE
+  (symbol/type slots st-relative, ADRP/ADD emitted as `label@PAGE/PAGEOFF`
+  symbolic forms resolved by the Mach-O linker), and emits slice.s +
+  a11_slice_map.h.  Address model: x22 = 0x100000000 (u32 GOAL ptrs =
+  host - 2^32), x21 = data base + 0xa - off; only writable function/type-
+  pointer tables filled at runtime (A1.2-compatible).  The proven
+  `_call_goal_asm_arm64` bridge enters each function.
+- **Host proof:** same slice passes all 7 checks on the host
+  (a11_host_runner.cpp) — independent validation of the offline link model.
+- **Key fixes:** test objects must live in the slice __DATA (Simulator
+  malloc at 0x600000000000+ overflows u32 GOAL pointers); ADRP+ADD needs
+  @PAGEOFF (Mach-O __DATA is not page-aligned); st is GOAL-relative.
+- **Next: A1.2** — signed-AOT execution-permission proof: source audit +
+  negative proof that the product target excludes the RX-blob execution
+  path; runtime mutation limited to writable data/function tables.

@@ -41,6 +41,9 @@
 #include "game/kernel/jak1/kscheme.h"
 #include "game/runtime.h"
 
+// Ottsel A1.1: real KERNEL.CGO slice proof runner (a11_slice_runner.mm).
+extern "C" int ottsel_run_a11_slice_proof();
+
 namespace {
 
 std::string g_bundle_dir;
@@ -223,6 +226,11 @@ extern "C" void ottsel_ios_load_kernel_from_bundle() {
 
 void ottsel_ios_run_boot() {
   install_gated_signal_handlers();
+
+  // Ottsel A1.1: the real KERNEL.CGO slice (string=, name=, ref, last,
+  // nmember) linked into this app's signed __TEXT runs first.  Self-contained:
+  // no EE memory or kernel state required.
+  ottsel_run_a11_slice_proof();
 
   // ---- EE memory map (same as the host runtime, OTTSEL no-emit) ----
   g_ee_main_mem = (u8*)mmap((void*)EE_MAIN_MEM_MAP, EE_MAIN_MEM_SIZE, PROT_READ | PROT_WRITE,
