@@ -64,6 +64,11 @@ milestone approved in STATUS (default target is first frame)". The durable
 product path is **Metal** (iOS has no desktop OpenGL; docs 03/11). Do NOT
 try to make the ~45k-line OpenGL renderer run as-is.
 
+Scope note (2026-08-09): `docs/BOT5_PROMPT.md` supersedes the
+stop-after-S2 behavior of this handoff. S2 remains your first gate and
+this document remains its spec, but after S2 is checkpointed PASS you
+continue directly into S3 and R1 per the prompt's continuation rule.
+
 Suggested decomposition (keep the sub-gate discipline from S1):
 
 - **S2.0** — Metal spike: a minimal Metal/MTKView first frame in the shell
@@ -127,6 +132,7 @@ log surface renders its tail. Expect `Got correct kernel version 2.0`,
 ## 8. Prime directive
 
 > Finish Gate S2: first real Jak 1 frame on the iPad Simulator via the Metal
-> path, with captured evidence, honest STATUS, verified patches, and a
-> BOT6_HANDOFF. If you cannot prove it, write the stop report with options
-> rather than drifting.
+> path, with captured evidence, honest STATUS, and verified patches. Then
+> checkpoint and continue into S3 per `docs/BOT5_PROMPT.md` (no BOT6
+> handoff needed unless the session must stop). If you cannot prove S2,
+> write the stop report with options rather than drifting.

@@ -494,3 +494,33 @@
 - **Files changed:** `docs/00-loop-log.md` (this entry),
   `docs/BOT5_PROMPT.md` (new).
 - **Next:** run the S2 loop from `docs/BOT5_PROMPT.md`.
+
+## 2026-08-09 — Loop expanded: continuous S2 → S3 → R1 (operator-requested)
+
+### Iteration — replaced stop-after-one-gate with checkpoint-continue
+- **Operator question:** why does each bot stop after one gate? Analyze
+  whether the loop should run longer.
+- **Analysis:** the per-gate hard stop was a workaround for sessions dying
+  at context limits (each gate ended with a fresh bot re-warming from
+  docs). This environment auto-compacts, so a single goal can run for
+  many hours — the stop now costs warm context (the S2 bot would re-derive
+  renderer-seam knowledge) and an operator round-trip per gate, while
+  buying nothing the checkpoints don't already buy. What genuinely
+  protects the work is the checkpoint discipline (STATUS + evidence +
+  commit + refreshed 13-current-state at every gate), not the stop. The
+  real long-loop risks — stale-context drift after compaction and skipping
+  proof — are mitigated by a resume rule and by keeping gate ordering
+  strict.
+- **Acted:**
+  - Rewrote `docs/BOT5_PROMPT.md` as a continuous loop: gates S2 → S3 →
+    R1 in order, checkpoint-continue semantics (no stop, no new prompt
+    between gates), resume rule after compaction, operator constraints
+    re-verified at every checkpoint, honest-stop conditions unchanged
+    (3x same root cause or unsafe constraint), done condition = R1 PASS +
+    "what's next" section in 13-current-state.md instead of a BOT6
+    handoff.
+  - Amended `docs/BOT5_HANDOFF.md` (§4 scope note + §8 prime directive) so
+    it no longer instructs stop-after-S2 / write-BOT6.
+- **Files changed:** `docs/BOT5_PROMPT.md` (rewritten),
+  `docs/BOT5_HANDOFF.md` (amended), `docs/00-loop-log.md` (this entry).
+- **Next:** run the continuous loop from `docs/BOT5_PROMPT.md`.
