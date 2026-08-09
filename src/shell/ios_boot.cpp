@@ -41,6 +41,13 @@
 #include "game/kernel/jak1/kscheme.h"
 #include "game/runtime.h"
 
+// Ottsel A1.0 bounded trace (TEMPORARY): ring buffer written by the goalc
+// IR_FunctionCall shim via the 'ottsel-goal-call-trace' C export.
+extern "C" {
+extern volatile u64 g_ottsel_call_trace[];
+extern volatile u64 g_ottsel_call_idx;
+}
+
 // Ottsel A1.1: real KERNEL.CGO slice proof runner (a11_slice_runner.mm).
 extern "C" int ottsel_run_a11_slice_proof();
 
@@ -95,6 +102,27 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
   uintptr_t lr = uc->uc_mcontext->__ss.__lr;
   uintptr_t sp = uc->uc_mcontext->__ss.__sp;
   rawlog("OTTSEL_IOS: fault sp=0x%lx\n", (unsigned long)sp);
+  // S2.1 debug: RAW stack slots (no address filter) so saved x30/x22 values
+  // near the faulting frame are visible (the GOAL-relative filter hides
+  // them).
+  for (int i = 0; i < 48; i++) {
+    uintptr_t addr = sp - i * 16;
+    u32 w = 0;
+    u32 w2 = 0;
+    if (safe_read_u32((volatile u32*)addr, &w) &&
+        safe_read_u32((volatile u32*)(addr + 8), &w2)) {
+      rawlog("OTTSEL_IOS: rawstack[%d] @0x%lx = 0x%08x 0x%08x\n", i, (unsigned long)addr, w, w2);
+    }
+  }
+  for (int i = 1; i < 24; i++) {
+    uintptr_t addr = sp + i * 16;
+    u32 w = 0;
+    u32 w2 = 0;
+    if (safe_read_u32((volatile u32*)addr, &w) &&
+        safe_read_u32((volatile u32*)(addr + 8), &w2)) {
+      rawlog("OTTSEL_IOS: rawstack[+%d] @0x%lx = 0x%08x 0x%08x\n", i, (unsigned long)addr, w, w2);
+    }
+  }
   // S2.1 debug: walk the GOAL stack for saved LR chain (each GOAL frame's
   // str x30, [sp, #-16]! leaves the return address at the frame top).
   for (int i = 0; i < 64; i++) {
@@ -119,6 +147,41 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
   rawlog("OTTSEL_IOS: fault lr=0x%lx x21(st)=0x%lx x22(offset)=0x%lx x16=0x%lx\n",
          (unsigned long)lr, (unsigned long)uc->uc_mcontext->__ss.__x[21],
          (unsigned long)uc->uc_mcontext->__ss.__x[22], (unsigned long)uc->uc_mcontext->__ss.__x[16]);
+  // A1.0 bounded trace: last 48 GOAL->GOAL calls + the last target's code.
+  {
+    u64 idx = g_ottsel_call_idx;
+    u64 base = (u64)g_ee_main_mem;
+    // Ring holds 2 slots per call: even = (site<<32)|target, odd = caller LR.
+    for (int i = 0; i < 40; i++) {
+      u64 v = g_ottsel_call_trace[((idx - 40 + i) * 2) & 255];
+      u64 lr = g_ottsel_call_trace[((idx - 40 + i) * 2 + 1) & 255];
+      if (v || lr) {
+        rawlog("OTTSEL_IOS: trace[%d] site=0x%08x target=0x%08x caller-lr=0x%08x\n", i - 40,
+               (unsigned)(v >> 32), (unsigned)(v & 0xffffffff), (unsigned)(lr & 0xffffffff));
+      }
+    }
+    rawlog("OTTSEL_IOS: trace-count=%llu (base=0x%llx)\n", (unsigned long long)idx,
+           (unsigned long long)base);
+    u64 last = g_ottsel_call_trace[((idx - 1) * 2) & 255];
+    uintptr_t tgt = (uintptr_t)(last & 0xffffffff);
+    rawlog("OTTSEL_IOS: last-target=0x%08lx words:\n", (unsigned long)tgt);
+    for (int i = 0; i < 0x20; i++) {
+      u32 wt = 0;
+      if (safe_read_u32((volatile u32*)(base + tgt + i * 4), &wt)) {
+        rawlog("OTTSEL_IOS:   [%02x] 0x%08x\n", i * 4, wt);
+      }
+    }
+    // S2.1 debug: the code at the LAST recorded call site (the shim + the
+    // actual call + what follows).
+    uintptr_t site = (uintptr_t)(last >> 32);
+    rawlog("OTTSEL_IOS: last-site=0x%08lx code:\n", (unsigned long)site);
+    for (int i = -0x20; i < 0x90; i++) {
+      u32 wt = 0;
+      if (safe_read_u32((volatile u32*)(base + site + i * 4), &wt)) {
+        rawlog("OTTSEL_IOS:   [%+d] 0x%08x\n", i * 4, wt);
+      }
+    }
+  }
 #endif
   rawlog("OTTSEL_IOS BOOT FAILED (gated): signal %d at pc=0x%lx fault addr=0x%lx\n", sig,
          (unsigned long)pc, (unsigned long)(uintptr_t)info->si_addr);
@@ -227,10 +290,11 @@ extern "C" void ottsel_ios_load_kernel_from_bundle() {
 void ottsel_ios_run_boot() {
   install_gated_signal_handlers();
 
-  // Ottsel A1.1: the real KERNEL.CGO slice (string=, name=, ref, last,
-  // nmember) linked into this app's signed __TEXT runs first.  Self-contained:
-  // no EE memory or kernel state required.
-  ottsel_run_a11_slice_proof();
+  // Ottsel A1.1 (evidence captured): the real KERNEL.CGO slice proof runs
+  // first.  Disabled while the A1.0 call-trace probe is active (the offline
+  // slice linker does not resolve the trace symbol); re-enable for product
+  // builds.
+  // ottsel_run_a11_slice_proof();
 
   // ---- EE memory map (same as the host runtime, OTTSEL no-emit) ----
   g_ee_main_mem = (u8*)mmap((void*)EE_MAIN_MEM_MAP, EE_MAIN_MEM_SIZE, PROT_READ | PROT_WRITE,
