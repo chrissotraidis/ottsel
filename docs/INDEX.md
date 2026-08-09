@@ -24,5 +24,7 @@ Reading order for Phase 1 outputs (including deep pass).
 | [BOT2_PROMPT.md](BOT2_PROMPT.md) | Full build-agent goal loop | done (hardened) |
 | [BOT3_HANDOFF.md](BOT3_HANDOFF.md) | Next-bot goal-based handoff prompt | done |
 | [BOT4_HANDOFF.md](BOT4_HANDOFF.md) | Next-bot goal-based handoff prompt (H3 PASS → S1) | done (revised 2026-08-08 with S1.0–S1.4) |
+| [BOT5_HANDOFF.md](BOT5_HANDOFF.md) | Next-bot goal-based handoff prompt (S1 PASS → S2) | done |
+| [BOT5_PROMPT.md](BOT5_PROMPT.md) | Paste-able goal loop for the S2 build agent | done (2026-08-09) |
 
 Also see repo brief copy at [`jak1-researchloop.md`](jak1-researchloop.md).

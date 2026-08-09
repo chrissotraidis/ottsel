@@ -462,3 +462,35 @@
   docs/reports/2026-08-08-stop-S1.md (marked superseded).
 - **Next:** S1.4 handoff (BOT5_HANDOFF.md for S2 = Metal/first-frame spike);
   regenerate + verify the canonical patch; commit.
+
+## 2026-08-09 — Progress review + S2 loop authored (Bot 4 reviewer)
+
+### Iteration — independently re-verified S1, reviewed BOT5_HANDOFF, wrote BOT5_PROMPT
+- **Acted:**
+  - Reviewed HEAD (`24c23e5`): S1 PASS commit `4b302cc`, S1.0–S1.3
+    sub-gate commits, `docs/BOT5_HANDOFF.md` (S2 spec written by the S1
+    agent), STATUS.md gate board, and the S1 evidence set.
+  - Independently re-ran the S1 proof from the existing build
+    (`xcrun simctl boot/install/launch` of `OttselShell.app` on the iPad
+    Pro 11-inch (M4), iOS 18.5): EE map at `0x7000000000`, 8 objects
+    linked, `Got correct kernel version 2.0, loaded in 15 ms`,
+    `kernel: machine started`, dispatcher iteration lines advancing past
+    31,600 in ~40 s, zero faults. Screenshot of the visible log surface
+    captured. App terminated; Simulator shut down; verified zero booted
+    devices, zero gk/lldb/OttselShell processes afterwards.
+  - Read `docs/05-roadmap.md` P5/S2 bar to ground the next loop.
+- **Assessment:** S1 PASS is genuine and reproducible; evidence and docs
+  are consistent (STATUS, 13-current-state, BOT5_HANDOFF, S1 evidence all
+  agree). BOT5_HANDOFF.md is complete and correct as the S2 spec — kept
+  as-is. The missing piece was the paste-able goal loop for the next bot,
+  which this turn adds as `docs/BOT5_PROMPT.md` (same convention as
+  `docs/BOT2_PROMPT.md`).
+- **S2 read-ahead (for the next bot):** the S2 bar is a real first frame
+  from Jak 1 systems (no clear-color victory unless declared as a
+  sub-gate); the product path is Metal; do not port the ~45k-line desktop
+  OpenGL renderer; the biggest expected technical risk is the engine-side
+  IR lowerings still NYI (15 IRs, incl. vector swizzle/blend/sqrt) plus
+  GAME.CGO loading beyond the kernel.
+- **Files changed:** `docs/00-loop-log.md` (this entry),
+  `docs/BOT5_PROMPT.md` (new).
+- **Next:** run the S2 loop from `docs/BOT5_PROMPT.md`.
