@@ -58,8 +58,10 @@ Read `docs/15-progress-audit.md` first for the corrected execution order.
 | S2.1 GAME.CGO integration | **RESEARCH CHECKPOINT** — compile pass; RX-blob link reaches object 204 | `docs/evidence/S2/s21-*` |
 | **A1.0 semantic ARM64 regressions** | **PASS (2026-08-09)** — 14/14 assertions; CGOs still validate; object-204 localized by bounded call trace | `docs/evidence/A1/a1-semantic-regressions.md`, `a1-object204-bounded-trace.md` |
 | **A1.1 real GOAL in signed `__TEXT`** | **PASS (2026-08-09)** — real KERNEL.CGO slice executes on the Simulator; codesign verifies | `docs/evidence/A1/a11-signed-text-slice.md` |
-| **A1.2 execution-permission proof** | **ACTIVE — NEXT GATE** | — |
-| S2.2 First game frame | blocked on A1/S2.1 | — |
+| **A1.2 execution-permission proof** | **PASS (2026-08-09)** — AOT path audited clean; slice passes without CGO bundles; codesign/Mach-O evidence | `docs/evidence/A1/a12-execution-permission-proof.md` |
+| **A1 signed-native execution** | **PASS (2026-08-09)** — real OpenGOAL artifact executes from signed Mach-O text, no runtime-created executable code | `docs/evidence/A1/*` |
+| **S2.1 GAME.CGO engine integration** | **ACTIVE — NEXT GATE** — resume with the localized mood-tables fault | `docs/evidence/A1/a1-object204-bounded-trace.md` |
+| S2.2 First game frame | blocked on S2.1 | — |
 | S3 Touch MVP + lifecycle | blocked on S2 | — |
 | R1 Handoff package | blocked on S3 | — |
 

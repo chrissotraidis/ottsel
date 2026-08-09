@@ -924,3 +924,21 @@
 - **Next: A1.2** — signed-AOT execution-permission proof: source audit +
   negative proof that the product target excludes the RX-blob execution
   path; runtime mutation limited to writable data/function tables.
+
+## 2026-08-09 — A1.2 PASS: signed-AOT execution-permission proof
+
+- **Gate A1.2 PASS.** Source audit: the signed-AOT path (a11_slice_runner +
+  offline slice linker) has zero mprotect/PROT_EXEC/MAP_JIT/mmap calls; no
+  CGO bytes read or executed; no code copied to the EE heap; no instruction
+  patching at runtime (ADRP/ADD resolved offline by the Mach-O linker);
+  runtime mutation limited to writable __DATA function/type-pointer tables.
+- **Negative proof:** removed KERNEL.CGO + GAME.CGO from the app bundle,
+  re-signed, ran: the slice proof still PASSES all 7 checks — the AOT
+  artifact executes without any bundled CGO bytes.
+- **Mach-O evidence:** slice code in (__TEXT,__text), data in
+  (__DATA,__data); codesign -v PASS; Simulator runtime log PASS.
+- **A1 gate complete** (A1.0 semantic regressions + object-204 localization;
+  A1.1 real kernel slice in signed __TEXT; A1.2 execution-permission proof).
+- **Next: S2.1** — resume GAME.CGO engine integration with the localized
+  mood-tables fault (trace chain documented) + every emitter/ABI fix through
+  the A1.0 regression harness.
