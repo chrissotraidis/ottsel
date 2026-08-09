@@ -878,3 +878,24 @@
   `a1-mood-tables-bounded-trace.log`, `a1-semantic-regressions.md`.
 - **Next:** A1.1 — real KERNEL.CGO dispatcher slice via the H2.5
   `.word`->clang->Mach-O `__TEXT` route, codesign, execute on the Simulator.
+
+## 2026-08-09 — A1.0 committed (11885e0); A1.1 plan
+
+- A1.0 checkpoint committed: semantic harness + evidence + regenerated patch.
+- **A1.1 (next gate) plan — real KERNEL.CGO dispatcher slice in signed
+  Mach-O __TEXT:**
+  1. Tool: extend the H2.5 `.word`->clang route
+     (`tools/ottsel_h2/h2_5_macho_packaging_proof.cpp`) into an A1.1 emitter
+     that compiles a small REAL KERNEL slice (2-4 functions that call each
+     other, read/write a symbol, and reference a static) through goalc ARM64.
+  2. Offline relocation resolution: `emit_function_code_only` patches only
+     intra-function jumps; static refs (link_instruction_static /
+     link_instruction_to_function -> ADRP/ADD pairs) must be resolved to the
+     final Mach-O addresses before assembling.  The runtime linker's
+     `patch_arm64_static_ref` logic (ObjectGenerator.cpp) is the reference.
+  3. Emit `.word` code + writable `.data` slots; clang -> Mach-O; link into
+     OttselShell; `codesign -v`; execute the slice on the iPad Simulator
+     with captured output; no runtime relocation of instructions.
+  4. Minimum proof: multiple real GOAL functions in signed __TEXT, GOAL ABI
+     calls work, static/function refs resolve, writable data works, artifact
+     executes with output, no mprotect(PROT_EXEC).
