@@ -146,6 +146,18 @@ returned 1375532`) go to stderr (PTY), verified in both runs.
   process tree then starts), then implement the minimal Metal
   GfxRendererModule (make_display / texture_upload_now / send_chain) for
   the first real frame.
+- **S2.1 runtime linking (2026-08-09):** the shell bundles GAME.CGO and
+  links it on the Simulator after the kernel. 36 of 346 objects link; the
+  first runtime fault is a symbol-value call in `pad`'s top-level
+  (`lr=pad main+0x294`) that resolves to `st+0x20c0` (inside the GOAL heap,
+  not code) — the game's first exercised symbol-value resolution. Fixed en
+  route: cross-segment LDR-literal overflow (static loads now ADRP-based;
+  GAME.CGO revalidates 3,825,664 words). The gated handler logs
+  pc/lr/st/offset/faulting-words for the next fault. Evidence:
+  `docs/evidence/S2/s21-game-cgo-simboot.md` + `s21-simboot.log`.
+  Next: identify the symbol at `st+0x20c0` and fix the value-field
+  resolution (mirroring the S1 canonical-intern fix), then continue linking
+  the remaining 310 objects.
 - Reproduce S2.0:
 
       ./scripts/build-ios.sh

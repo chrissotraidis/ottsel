@@ -170,6 +170,7 @@ mkdir -p "$APP"
 cp "$APP_BUILD/OttselShell" "$APP/"
 cp "$REPO_DIR/src/shell/Info.plist" "$APP/"
 cp "$WORKTREE/out/jak1/iso/KERNEL.CGO" "$APP/KERNEL.CGO"
+cp "$WORKTREE/out/jak1/iso/GAME.CGO" "$APP/GAME.CGO"
 plutil -lint "$APP/Info.plist" >/dev/null
 codesign --force --sign - "$APP" >/dev/null 2>&1 || true
 

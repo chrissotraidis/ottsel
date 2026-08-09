@@ -612,3 +612,35 @@
 - **Next:** link + boot GAME.CGO on the Simulator (no-emit linker, run
   game top-levels, start the process tree); expect new runtime codegen
   paths. Then the Metal renderer module for the first real drawable.
+
+## 2026-08-09 — S2.1: GAME.CGO links on the Simulator; first runtime fault
+
+### Iteration — on-device game linking, cross-segment load fix, fault located
+- **Acted:**
+  - Bundled GAME.CGO into the app and added a post-kernel link step
+    (`ottsel_ios_link_cgo_from_bundle("GAME.CGO")`).
+  - Object 2 (math) hit a **cross-segment LDR-literal overflow**:
+    `diff=-37,356,532` on an LDR-S literal (float static load in the
+    top-level segment, target 37 MB away). Converted the 32/64-bit and
+    float pc-relative static loads to the ADRP + LDR-[X16,#imm12] pattern
+    (±4 GB reach; runtime linker already patches ADRP+ADD pairs). GAME.CGO
+    revalidated: 3,825,664 words PASS.
+  - On-device: **36 of 346 objects link** (kernel + types-h..pad), then a
+    gated SIGBUS at `pc=0x70001bfec4` (`st+0x20c0`, inside the GOAL heap):
+    `lr=pad main+0x294`, where the disassembly shows a symbol-value call —
+    load symbol -> value (+0x10) -> `blr`. The symbol's value field holds a
+    heap pointer, not a function: the first runtime symbol-value resolution
+    the game code exercises (same class as the S1 intern-order bug).
+  - Kept the debug instrumentation (gated handler now logs
+    pc/lr/st/offset/x16 + faulting words); evidence + boot log captured;
+    app terminated, Simulator shut down (verified zero booted devices, no
+    shell process).
+- **Files changed:** worktree `goalc/emitter/IGenARM64.cpp` (pcRel loads),
+  `game/kernel/jak1/klink.cpp` (overflow diagnostics); repo
+  `src/shell/ios_boot.cpp` (GAME.CGO link + fault dump), `scripts/build-ios.sh`
+  (bundle GAME.CGO), `docs/evidence/S2/s21-game-cgo-simboot.md`,
+  `s21-simboot.log`, `docs/STATUS.md`, `docs/00-loop-log.md` (this entry),
+  `docs/13-current-state.md` (refresh follows).
+- **Next:** identify the symbol at `st+0x20c0` (or the call's argument) and
+  fix the value-field resolution; continue linking the remaining 310
+  objects; then the game process tree + Metal renderer module.

@@ -61,9 +61,19 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
   uintptr_t pc = 0;
 #ifdef __aarch64__
   pc = uc->uc_mcontext->__ss.__pc;
+  uintptr_t lr = uc->uc_mcontext->__ss.__lr;
+  lg::error("OTTSEL_IOS: fault lr=0x{:x} x21(st)=0x{:x} x22(offset)=0x{:x} x16=0x{:x}",
+            lr, uc->uc_mcontext->__ss.__x[21], uc->uc_mcontext->__ss.__x[22],
+            uc->uc_mcontext->__ss.__x[16]);
 #endif
   lg::error("OTTSEL_IOS BOOT FAILED (gated): signal {} at pc=0x{:x} fault addr=0x{:x}",
             sig, pc, (uintptr_t)info->si_addr);
+  // dump the faulting instruction words (host view of the EE map)
+  if (pc >= 0x7000000000ull && pc < 0x7000000000ull + EE_MAIN_MEM_SIZE) {
+    volatile u32* w = (volatile u32*)pc;
+    lg::error("OTTSEL_IOS: faulting words: 0x{:08x} 0x{:08x} 0x{:08x} 0x{:08x}",
+              w[0], w[1], w[2], w[3]);
+  }
   lg::error("OTTSEL_IOS: stopping with a gated error (no crash loop); the no-emit "
             "symbol-slot resolution is the suspected root cause (see docs/reports/).");
   lg::finish();
@@ -97,13 +107,14 @@ void ottsel_ios_stop_dispatch() {
   MasterExit = RuntimeExitStatus::EXIT;
 }
 
-extern "C" void ottsel_ios_load_kernel_from_bundle() {
-  // Called from jak1::InitHeapAndSymbol after the GOAL heap + symbols exist.
+// Generic CGO loader: stage the DGO into EE memory and link+exec every
+// object (the no-emit linker pattern used for the kernel).
+void ottsel_ios_link_cgo_from_bundle(const char* cgo_name) {
   if (g_bundle_dir.empty()) {
-    gated_fail("bundle dir not set before kernel load");
+    gated_fail("bundle dir not set before CGO load");
   }
-  std::string path = g_bundle_dir + "KERNEL.CGO";
-  lg::info("OTTSEL_IOS: reading kernel DGO from {}", path);
+  std::string path = g_bundle_dir + cgo_name;
+  lg::info("OTTSEL_IOS: reading {} from {}", cgo_name, path);
 
   FILE* fp = fopen(path.c_str(), "rb");
   if (!fp) {
@@ -114,7 +125,7 @@ extern "C" void ottsel_ios_load_kernel_from_bundle() {
   fseek(fp, 0, SEEK_SET);
   if (fsize < 64 || fsize > 64 * 1024 * 1024) {
     fclose(fp);
-    gated_fail("KERNEL.CGO has an implausible size");
+    gated_fail((std::string(cgo_name) + " has an implausible size").c_str());
   }
   std::vector<u8> dgo((size_t)fsize);
   if (fread(dgo.data(), 1, (size_t)fsize, fp) != (size_t)fsize) {
@@ -140,7 +151,7 @@ extern "C" void ottsel_ios_load_kernel_from_bundle() {
   // ObjectHeader{ u32 size; char name[60] } + blob (16-byte aligned).
   u32 count = *(stage.cast<u32>());
   u32 off = 64;
-  lg::info("OTTSEL_IOS: kernel DGO has {} objects", count);
+  lg::info("OTTSEL_IOS: {} has {} objects", cgo_name, count);
   u32 flags = LINK_FLAG_OUTPUT_LOAD | LINK_FLAG_EXECUTE | LINK_FLAG_PRINT_LOGIN;
   for (u32 i = 0; i < count; i++) {
     u32 size = *(u32*)(stage.c() + off);
@@ -149,7 +160,12 @@ extern "C" void ottsel_ios_load_kernel_from_bundle() {
     jak1::link_and_exec(stage + off + 64, name, (int32_t)size, kglobalheap, flags, true);
     off += 64 + ((size + 15) & ~15u);
   }
-  lg::info("OTTSEL_IOS: kernel DGO linked ({} objects)", count);
+  lg::info("OTTSEL_IOS: {} linked ({} objects)", cgo_name, count);
+}
+
+extern "C" void ottsel_ios_load_kernel_from_bundle() {
+  // Called from jak1::InitHeapAndSymbol after the GOAL heap + symbols exist.
+  ottsel_ios_link_cgo_from_bundle("KERNEL.CGO");
 }
 
 void ottsel_ios_run_boot() {
@@ -181,6 +197,9 @@ void ottsel_ios_run_boot() {
   MasterDebug = 0;
   MasterUseKernel = 1;
   if (jak1::InitMachine() >= 0) {
+    // S2.1: load the full game engine after the kernel so the game's
+    // top-levels run and (in the full boot) the game processes start.
+    ottsel_ios_link_cgo_from_bundle("GAME.CGO");
     jak1::KernelCheckAndDispatch();
     jak1::ShutdownMachine();
     lg::info("OTTSEL_IOS: kernel dispatch loop exited cleanly");
