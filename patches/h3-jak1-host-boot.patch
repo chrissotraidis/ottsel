@@ -1878,10 +1878,10 @@ index 4355cb922..c1034ba72 100644
    void load_settings();
    void save_settings();
 diff --git a/goalc/CMakeLists.txt b/goalc/CMakeLists.txt
-index a9b02e7c4..52e59595d 100644
+index a9b02e7c4..22ab59892 100644
 --- a/goalc/CMakeLists.txt
 +++ b/goalc/CMakeLists.txt
-@@ -101,3 +101,29 @@ target_link_libraries(goalc common Zydis compiler)
+@@ -101,3 +101,33 @@ target_link_libraries(goalc common Zydis compiler)
  target_link_libraries(goalc-simple common Zydis compiler)
  target_link_libraries(build_level common Zydis compiler)
  target_link_libraries(build_actor common Zydis compiler)
@@ -1890,6 +1890,10 @@ index a9b02e7c4..52e59595d 100644
 +# Ottsel H1 host proof harness (ARM64 GOAL function codegen + execute)
 +add_executable(ottsel-h1-proof ../tools/ottsel_h1/h1_arm64_codegen_proof.cpp)
 +target_link_libraries(ottsel-h1-proof common Zydis compiler)
++
++# Ottsel A1.0 semantic regression harness (GOAL codegen -> semantic decode)
++add_executable(ottsel-a1-sem ../tools/ottsel_a1/semantic_regressions.cpp)
++target_link_libraries(ottsel-a1-sem common Zydis compiler)
 +
 +
 +# Ottsel H2 host proof harness (RX-only AOT execution)

@@ -844,3 +844,37 @@
   regression tests for SP->xzr, load-as-store, wrong widths, scaled offsets,
   ABI arg-pair swap, and LR/call/return preservation; reduce the object-204
   fault below the full boot loop.
+
+## 2026-08-09 — A1.0: semantic regressions PASS; object-204 localized by bounded trace
+
+- **Harness:** `out/jak-project/tools/ottsel_a1/semantic_regressions.cpp` +
+  CMake target `ottsel-a1-sem` (same pattern as `ottsel-h1-proof`). 14/14
+  assertions PASS: emitter-unit (static_load_f32 is LDR-s; load16u +s8 is
+  LDURH; store16 STURH; `_stack_call_arm64` pair order via source scan) and
+  goal-compile (SP->xzr ADD fix; u16 LDURH; non-leaf x30 save/restore; 2-level
+  nesting).  Negative proofs: reintroducing STR-Q/scaled-LDRH fails 4
+  assertions; swapping the asm pairs fails assertion 7 (after fixing the
+  harness to include its own `ok` flag in the check).
+- **Bounded trace (object-204 localization):** temporary goalc IR_FunctionCall
+  recorder shim (push x0-x15+x16,x17; call `ottsel-goal-call-trace` C export;
+  pop) + 256-entry ring + gated-handler dump.  First shim version clobbered
+  x8 (the function-pointer register) -> every call jumped to garbage
+  (display stall, `pc=0x70000000f3`); fixed by saving x8-x15.  Symbol-slot
+  resolution needed +offset before the value read (SIGSEGV in the shim
+  otherwise).  With the fix, one Simulator boot reproduces the object-204
+  fault deterministically: trace-count 30,422; last calls mood-tables
+  top-level -> 0x23d8554 -> 0x23d8004 -> 0x5ab0e4 -> 0x5fc574/0x5fd9d4 ->
+  0x5a9234 (x3, site 0x23d8408 loop) -> `signal 10 at pc=0x7000000000`
+  (x8=lr=0x7000000000 = x22).  The 0x5a9234 target is real SIMD matrix code
+  (last-target dump), so the corruption is in the call/return state, not a
+  garbage pointer.
+- **Validator caveat:** the probe's `adr x1, .` site capture breaks the
+  validator PC-rel round-trip (ADR byte immediate; no >>2) — legal A64, and
+  the probe build is diagnostic only.  Product CGOs rebuilt clean validate
+  PASS (KERNEL 86,016 / GAME 3,829,760 words).
+- **Probe preserved** as `docs/evidence/A1/a1-bounded-call-trace-probe.patch`
+  (with shim invariants); stripped from product sources (grep clean).
+  Evidence: `docs/evidence/A1/a1-object204-bounded-trace.md`,
+  `a1-mood-tables-bounded-trace.log`, `a1-semantic-regressions.md`.
+- **Next:** A1.1 — real KERNEL.CGO dispatcher slice via the H2.5
+  `.word`->clang->Mach-O `__TEXT` route, codesign, execute on the Simulator.

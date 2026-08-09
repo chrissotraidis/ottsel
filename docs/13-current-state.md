@@ -56,7 +56,9 @@ Read `docs/15-progress-audit.md` first for the corrected execution order.
 | S1 Simulator shell boot | **PASS (2026-08-08)** | `docs/evidence/S1/` (s13-dispatcher-loop.*, s11-*, s12-*) |
 | S2.0 Metal shell spike | **PASS (2026-08-09)** — game frame still pending | `docs/evidence/S2/s20-metal-spike.md` |
 | S2.1 GAME.CGO integration | **RESEARCH CHECKPOINT** — compile pass; RX-blob link reaches object 204 | `docs/evidence/S2/s21-*` |
-| **A1 signed-native execution** | **ACTIVE — precedes more S2** | `docs/15-progress-audit.md`; create `docs/evidence/A1/` |
+| **A1.0 semantic ARM64 regressions** | **PASS (2026-08-09)** — 14/14 assertions; CGOs still validate; object-204 localized by bounded call trace | `docs/evidence/A1/a1-semantic-regressions.md`, `a1-object204-bounded-trace.md` |
+| **A1.1 real GOAL in signed `__TEXT`** | **ACTIVE — NEXT GATE** (H2.5 `.word`->clang route, codesign, Simulator exec) | `docs/10-code-packaging-and-signing.md`, `tools/ottsel_h2/h2_5_macho_packaging_proof.cpp` |
+| A1.2 execution-permission proof | blocked on A1.1 | — |
 | S2.2 First game frame | blocked on A1/S2.1 | — |
 | S3 Touch MVP + lifecycle | blocked on S2 | — |
 | R1 Handoff package | blocked on S3 | — |
@@ -289,3 +291,30 @@ model.
   tests for the known legal-but-wrong defect classes (SP->xzr, load-as-store,
   wrong widths, scaled offsets, ABI arg-pair swap, LR/call/return), and reduce
   the object-204 value-0 call/return fault below the full boot loop.
+
+## 2026-08-09 late — A1.0 PASS: semantic regressions + object-204 localized
+
+- **A1.0 semantic regression layer PASS.** Harness
+  `out/jak-project/tools/ottsel_a1/semantic_regressions.cpp` (target
+  `ottsel-a1-sem`): 14/14 assertions — emitter-unit (static_load_f32 is
+  LDR-s not STR-Q; load16u +s8 is unscaled LDURH; store16 STURH;
+  `_stack_call_arm64` pushes (x6,x7)(x4,x5)(x2,x3)(x0,x1)) and goal-compile
+  (SP->xzr fixed via ADD; u16 LDURH; non-leaf x30 save/restore; 2-level
+  nesting).  Negative proofs captured (STR-Q/LDRH reintroduction fails 4;
+  asm pair swap fails the source-scan check).
+- **Object-204 localized below the boot loop.**  Temporary goalc
+  IR_FunctionCall recorder shim + 256-entry ring + gated-handler dump
+  (preserved as `docs/evidence/A1/a1-bounded-call-trace-probe.patch`,
+  stripped from product sources).  One boot reproduces the fault
+  deterministically: trace-count 30,422; chain mood-tables top-level ->
+  0x23d8554 -> 0x23d8004 -> 0x5ab0e4 -> 0x5fc574/0x5fd9d4 -> 0x5a9234
+  (called 3x from site 0x23d8408 loop) -> `signal 10 at pc=0x7000000000`
+  (x8 = lr = 0x7000000000 = x22).  The 0x5a9234 target is real SIMD matrix
+  code, so the corruption is call/return state around it (S2.1 will
+  root-cause after A1).  Key probe fixes: save x8-x15 across the recorder
+  (C-call clobbers; a first version destroyed the fn pointer in x8), and add
+  the EE-base offset before the symbol value read.
+- **Encoding validation:** product CGOs rebuilt clean — KERNEL.CGO 86,016
+  and GAME.CGO 3,829,760 code words PASS.
+- **Next: A1.1** — real KERNEL.CGO dispatcher slice in signed Mach-O
+  `__TEXT` via the proven H2.5 `.word`->clang route.
