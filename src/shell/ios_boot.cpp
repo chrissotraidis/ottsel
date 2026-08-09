@@ -94,7 +94,7 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
   rawlog("OTTSEL_IOS: fault sp=0x%lx\n", (unsigned long)sp);
   // S2.1 debug: walk the GOAL stack for saved LR chain (each GOAL frame's
   // str x30, [sp, #-16]! leaves the return address at the frame top).
-  for (int i = 0; i < 48; i++) {
+  for (int i = 0; i < 64; i++) {
     uintptr_t addr = sp + i * 16;
     u32 w = 0;
     if (safe_read_u32((volatile u32*)addr, &w) && (w >= 0x100000 && w < 0x4000000)) {
