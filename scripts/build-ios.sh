@@ -54,6 +54,12 @@ compile() {
   xcrun --sdk "$SDK" clang++ "${COMMON_FLAGS[@]}" "${INCS[@]}" -c "$src" -o "$out"
 }
 
+compile_objc() {
+  local src="$1" out="$2"
+  xcrun --sdk "$SDK" clang++ "${COMMON_FLAGS[@]}" -fobjc-arc \
+    "${INCS[@]}" -c "$src" -o "$out"
+}
+
 echo "== [1/4] SDL3 static (iOS Simulator) =="
 if [ ! -f "$SDL_BUILD/libSDL3.a" ]; then
   cmake -S "$SDL_SRC" -B "$SDL_BUILD" -G Ninja \
@@ -151,9 +157,10 @@ echo "runtime lib: $APP_BUILD/libottsel-runtime.a ($((${#OBJS[@]})) objects)"
 echo "== [3/4] compile + link app =="
 compile "$REPO_DIR/src/shell/main.cpp" "$OBJ/shell_main.o"
 compile "$REPO_DIR/src/shell/ios_boot.cpp" "$OBJ/ios_boot.o"
+compile_objc "$REPO_DIR/src/shell/metal_shell.mm" "$OBJ/metal_shell.o"
 
 xcrun --sdk "$SDK" clang++ "${COMMON_FLAGS[@]}" \
-  "$OBJ/shell_main.o" "$OBJ/ios_boot.o" \
+  "$OBJ/shell_main.o" "$OBJ/ios_boot.o" "$OBJ/metal_shell.o" \
   "$APP_BUILD/libottsel-runtime.a" "$SDL_BUILD/libSDL3.a" \
   "${FRAMEWORKS[@]}" -lobjc \
   -o "$APP_BUILD/OttselShell"

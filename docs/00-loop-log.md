@@ -524,3 +524,46 @@
 - **Files changed:** `docs/BOT5_PROMPT.md` (rewritten),
   `docs/BOT5_HANDOFF.md` (amended), `docs/00-loop-log.md` (this entry).
 - **Next:** run the continuous loop from `docs/BOT5_PROMPT.md`.
+
+## 2026-08-09 — S2.0: Metal spike PASS (first frame through CAMetalLayer)
+
+### Iteration — Metal pipeline in the shell, declared sub-gate S2.0
+- **Acted:**
+  - Read `docs/13-current-state.md`, `docs/BOT5_HANDOFF.md`, the S1 evidence,
+    `docs/05-roadmap.md`, `docs/STATUS.md`, and the loop-log tail (resume
+    rule). Operator state verified: zero gk processes, zero booted
+    Simulators, 16 GiB free.
+  - Built the Metal spike: `src/shell/metal_shell.{h,mm}` (CAMetalLayer
+    device/queue/pipeline, textured fullscreen triangle, per-frame texture
+    upload of the CPU log surface via SDL3's Metal view), rewired
+    `src/shell/main.cpp` to render the log surface into a CPU RGBA buffer
+    sized to the drawable and present it through Metal (SDL software
+    surface kept as fallback), and updated `scripts/build-ios.sh`
+    (`-fobjc-arc` + link the .mm).
+  - Iterated on evidence quality: (1) pre-layout drawable is 480x320 and
+    the simulator's windowed presentation keeps that size — the surface is
+    now re-queried and resized per frame; (2) discovered the **S1 log font
+    clipping bug**: `font5x7.h` rows use 7 bit-columns but the draw loop
+    used `kFontW = 5`, dropping bits 5-6 of every glyph; fixed `kFontW`
+    to 7 (this bug affected every S1/S2 log-surface screenshot).
+  - Verified pixel-for-pixel: the presented surface matches an offline
+    render of the same strings from the same font table at the same scale
+    — title `ottsel S2.0 - Metal` 1746/1746 (100%), `GPU path: Metal`
+    1566/1566 (100%).
+  - Captured evidence under `docs/evidence/S2/`: Simulator screenshot
+    (`s20-metal-frame.png`), the exact presented surface
+    (`s20-metal-surface.ppm|png|-4x.png`), and the runtime log
+    (`s20-runtime.log`: boot to the GOAL kernel dispatcher loop, 56,800+
+    iterations, zero faults). App terminated, Simulator shut down,
+    verified zero booted devices / zero gk / zero shell processes.
+- **Result:** **S2.0 PASS (declared sub-gate)** — Metal first frame in the
+  shell on the iPad Pro 11-inch (M4) Simulator. This is NOT yet a frame
+  from Jak 1 game systems (that is S2.1/S2.2).
+- **Files changed:** `src/shell/metal_shell.h`, `src/shell/metal_shell.mm`
+  (new), `src/shell/main.cpp`, `scripts/build-ios.sh`,
+  `docs/evidence/S2/s20-*`, `docs/STATUS.md`, `docs/00-loop-log.md` (this
+  entry), `docs/13-current-state.md` (refresh follows).
+- **Next:** S2.1 — wire the runtime's renderer-abstraction seams to Metal
+  where cheap and identify the first real drawable (background/TIE/texture
+  page path); read-ahead on GAME.CGO compile for ARM64 (expected NYI IR
+  hits).

@@ -9,6 +9,12 @@ This is the authoritative state document. Read it before doing anything.
   decision) are **PASS** with evidence.
 - Gate H3 (Jak 1 host AOT boot proof) is **PASS (2026-08-08, host)** — the
   GOAL **kernel dispatcher executes and loops** under RX with zero faults.
+- Gate S1 (Simulator shell boots the no-emit runtime to the dispatcher
+  loop) is **PASS (2026-08-08)**.
+- Gate S2 (first frame, Metal): **S2.0 PASS (2026-08-09)** — the shell now
+  presents its log surface through a real Metal (CAMetalLayer) pipeline on
+  the iPad Pro 11-inch (M4) Simulator. Declared sub-gate: not yet a frame
+  from game systems. S2.1 (renderer seam + first real drawable) is next.
 - The game does **not** load levels yet. The no-emit boot links all 8
   KERNEL.CGO objects, runs every top-level under RX, prints
   `Got correct kernel version 2.0`, starts the machine, and then the GOAL
@@ -43,7 +49,10 @@ This is the authoritative state document. Read it before doing anything.
 | H2 no-emit host runtime | **PASS** | `docs/evidence/H2/` (RX-only exec, bridge, shim) |
 | H2.5 packaging decision | **PASS** | `docs/evidence/H2.5/` + `docs/10-code-packaging-and-signing.md` |
 | H3 Jak 1 host AOT boot | **PASS (2026-08-08, host)** | `docs/evidence/H3/dispatcher-loop-2026-08-08.md`, `docs/evidence/H3/boot-dispatcher-loop-2026-08-08.log` |
-| S1–R1 | not started | — |
+| S1 Simulator shell boot | **PASS (2026-08-08)** | `docs/evidence/S1/` (s13-dispatcher-loop.*, s11-*, s12-*) |
+| S2 First frame (Metal) | **S2.0 PASS (2026-08-09)** — Metal spike; game frame pending (S2.1/S2.2) | `docs/evidence/S2/s20-metal-spike.md` |
+| S3 Touch MVP + lifecycle | not started | — |
+| R1 Handoff package | not started | — |
 
 ## What works (verified)
 
@@ -105,6 +114,40 @@ returned 1375532`) go to stderr (PTY), verified in both runs.
   scan in `find_symbol_from_c` (order-dependent intern could create
   duplicate symbol entries) resolved it.
 - **Gate S2 (first frame, Metal) is next** — see `docs/BOT5_HANDOFF.md`.
+
+## S2 status (2026-08-09)
+
+- **S2.0 PASS** — Metal spike: `src/shell/metal_shell.{h,mm}` render the
+  shell's log surface through a CAMetalLayer pipeline (device, command
+  queue, fullscreen textured triangle, per-frame texture upload, present).
+  `src/shell/main.cpp` sizes the CPU surface to the drawable each frame
+  (the simulator's windowed presentation keeps a 480x320 drawable; the
+  surface adapts on resize/rotation) and presents via Metal; SDL software
+  surface remains as fallback. Evidence + pixel verification
+  (title 1746/1746, GPU line 1566/1566 vs the font table):
+  `docs/evidence/S2/s20-metal-spike.md`.
+- **S1 log-font bug found and fixed:** `font5x7.h` rows are 7 bits wide
+  (bit 6 = rightmost) but the draw loop used `kFontW = 5`, clipping every
+  glyph's right edge in all S1/S2 screenshots. Fixed `kFontW` to 7.
+- **S2.1 next:** wire the runtime's renderer-abstraction seams
+  (`game/graphics/gfx.h` GfxRendererModule) to Metal where cheap, and
+  identify the first real drawable (background / TIE / texture page path).
+  Read-ahead: GAME.CGO ARM64 compile is unproven; the 15 NYI IRs (Asm
+  family, vector swizzle/blend/sqrt, partial FloatMath) are expected to
+  block engine code, and the dispatcher process pool is still idle (no
+  game processes), so a genuine game frame requires GAME.CGO loading first.
+- Reproduce S2.0:
+
+      ./scripts/build-ios.sh
+      xcrun simctl boot <iPad Pro 11-inch (M4) UDID>
+      xcrun simctl install <udid> out/jak-project/out/ios/app/OttselShell.app
+      xcrun simctl launch <udid> com.ottsel.shell
+      xcrun simctl io <udid> screenshot docs/evidence/S2/s20-metal-frame.png
+
+  Expected: `ottsel S2.0: Metal surface active (CAMetalLayer)` on the
+  console; the window shows the log surface rendered through Metal
+  (title `ottsel S2.0 - Metal`); the runtime boots to the GOAL kernel
+  dispatcher loop (`s20-runtime.log`).
 
 ## Known non-goals / boundaries
 

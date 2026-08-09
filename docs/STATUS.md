@@ -14,7 +14,7 @@ Mode: Phase 2 build loop (Bot 2) — Gate H1 active
 | **H2.5** | **Packaging form decision** | **PASS (2026-08-07)** | `docs/evidence/H2.5/`, `docs/10-code-packaging-and-signing.md` |
 | H3 | Jak 1 host AOT boot proof | **PASS (2026-08-08, host)** — GOAL kernel dispatcher executes and loops under RX, no faults; evidence captured | `docs/evidence/H3/dispatcher-loop-2026-08-08.md`, `docs/evidence/H3/boot-dispatcher-loop-2026-08-08.log`, `docs/13-current-state.md`, `docs/BOT4_HANDOFF.md` |
 | S1 | Simulator shell loads runtime | **PASS (2026-08-08)** — iPad Pro 11-inch (M4) Simulator launches the shell; the no-emit ARM64 runtime maps EE RW, links all 8 KERNEL.CGO objects with RW->RX flips, boots to the GOAL kernel dispatcher loop (48,200+ iterations, zero faults). Fix: register pc-prof/PC-port exports on iOS + full-table intern fallback scan; gated-error no-crash-loop safety net retained. | `docs/evidence/S1/s13-dispatcher-loop.md`, `docs/evidence/S1/s13-dispatcher-loop.log|png`, `docs/evidence/S1/s11-*`, `docs/evidence/S1/s12-*` |
-| S2 | First frame proof | — | — |
+| S2 | First frame proof | **S2.0 PASS (2026-08-09)** — Metal spike: the shell presents its log surface through a real CAMetalLayer pipeline on the iPad Pro 11-inch (M4) Simulator; pixel-verified 100% against the font table; runtime still boots to the dispatcher loop (56,800+ iterations, zero faults). Declared sub-gate — not yet a frame from game systems. | `docs/evidence/S2/s20-metal-spike.md`, `s20-metal-frame.png`, `s20-metal-surface.ppm|png|-4x.png`, `s20-runtime.log` |
 | S3 | Touch MVP + lifecycle | — | — |
 | R1 | Handoff package | — | — |
 
