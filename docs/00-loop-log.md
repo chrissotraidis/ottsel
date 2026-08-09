@@ -1024,3 +1024,20 @@
   that jumps to EE base, or hold the process at the fault for lldb
   inspection.  Verify the static-float ADRP patches in the light-kit
   builder (the `adrp x16, #0x4000` static refs).
+
+## 2026-08-09 — S2.1: caller-LR semantics corrected; root cause still open
+
+- **Correction:** the recorder's caller-LR = x30 at the shim = the return of
+  the MOST RECENT inner blr (not the enclosing function's return address).
+  The mood main's caller-LR changes across its calls (0x86b0 -> 0x8388)
+  simply reflect its inner calls' returns — NOT corruption.  The 0x5ab134
+  matrix callee's prologue saves x30 correctly (verified).  No return-
+  address corruption is proven.
+- **Remaining facts:** the crash is executing at EE base (pc = x8 = x22 =
+  0x7000000000), a jump through a null/garbage function pointer.  The null
+  call's recorder did not fire, so it is not a normal shim-instrumented
+  GOAL call at a site after the last recorded one — OR the fault is a
+  `ret` with x30 = x22 whose saved slot is outside the dumped stack range.
+- **Decisive next step:** a runtime jump/return tracer that records the last
+  N executed blr/br/ret targets + LR (a goalc emitter hook or a watchpoint
+  on the EE base page) to capture the exact jumping instruction.
