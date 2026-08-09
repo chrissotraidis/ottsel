@@ -107,3 +107,53 @@ The bug was introduced in the S2.1 ADRP-conversion of `static_load_f32`
 - The gated handler is now fault-proof (safe `mincore`-probed reads) so it
   no longer re-crashes while dumping.
 - Revalidated: GAME.CGO 3,825,664 words PASS; KERNEL.CGO 86,016 words PASS.
+
+## 2026-08-09 update — linking 55 -> 204 (six fixes); mood-tables fault
+
+### Verified fixes this session (each advanced the on-device link)
+
+1. **Stack-variable addressing (object 35 fault):** `IR_GetStackAddr`'s
+   offset==0 ARM64 branch emitted `mov_gpr64_gpr64(dst, SP)` = `orr xd,xzr,xzr`
+   (register 31 is xzr in ORR), so `(new 'stack-no-clear 'scf-time)` computed
+   EE address 0 and `DecodeTime`'s NUL-write hit the EE base.  Disassembly of
+   GAME.CGO's scf-time-to-int64 (`mov x0, xzr; sub x0, x0, x22`) confirmed it;
+   fixed by using the ADD-immediate form (accepts SP) for all offsets.
+2. **mips2c:** replaced the empty OTTSEL_IOS table with the full jak1 table +
+   link callbacks, pre-registered into the executable stub arena before the RX
+   flip, an ARM64 `_mips2c_call_arm64` ExecutionContext handler (replacing the
+   broken upstream port: it read wrong stack offsets and `blr x8` before
+   setting x8), and the `_call_goal8_asm_arm64` jalr declaration.  The 25
+   `jak1_functions/*.cpp` build into the app.
+3. **iOS SIF RPC:** `sceSifCallRpc` asserted mode==1 but the sound loader calls
+   sync mode 0, and deref'd a null IOP; made CallRpc/CheckStatRpc/BindRpc inert
+   on iOS and emulate the get-irx-version reply (2.0) so check-irx-version
+   passes (was crash!-ing deliberately).
+4. **`_stack_call_arm64` arg order:** the stack-arg array came out
+   [x1,x0,x3,x2,...]; `(format 0 ...)` passed dest=0 as the string -> NULL.
+5. **`load16u_..._plus_s8` LDRH scaling:** imm12 is scaled by 2; the raw offset
+   made `(-> type size)` read +0x10 and `(-> type heap-base)` read +0x18.  The
+   inline-array-class `new` computed 0x3f9334 (~4MB) for a 4096x16 array ->
+   kmalloc !alloc -> NULL perm-list.  Fixed to unscaled LDURH.
+6. **CGO stage:** full-22MB staging from the global-heap top left ~3MB free at
+   object 195; replaced with a reusable 512KB slot.
+
+### Current fault (object 204, mood-tables) — evidence
+
+- `signal 10 at pc=0x7000000000 fault addr=0x7000000000` (jump to the EE base
+  page; the page is RW so execution faults).  `lr = 0x7000000000` = x22.
+- GOAL-stack walk (gated handler): stack[0] = 0x3dafa48 = mood-tables top-level
+  +0x3a48 (the return address), so the faulting function was called at
+  top-level +0x3a44 -> the symbol slot there resolves `make-village1-light-kit`
+  (0x2924314).
+- All symbols/slots in the chain verified valid at fault time: make-light-kit
+  (0x2924004, slots 0xa4b0..), matrix-rotate-y! (0x5ea4e4), sin/cos
+  (0x6383f4/0x639554), vector+float*! (0x6d8554), vector*! (0x6d8174),
+  vector4-lerp! (0x6dad14), update-mood-shadow-direction (0x29258f4),
+  update-mood-erase-color (0x2925ae4).
+- Conclusion: a deep `ret`/`br` to x22 inside the make-village1-light-kit call
+  chain whose exact site is not yet identified.  lldb cannot set software
+  breakpoints on the RX-flipped GOAL pages (error 9), so the next step is a
+  live call/return tracer in the runtime or a debugger with hardware
+  breakpoint support.  The gated handler now prints the faulting pc/regs and a
+  GOAL-stack LR walk via raw stderr (robust even when the fault lands inside a
+  log call).

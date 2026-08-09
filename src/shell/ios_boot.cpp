@@ -7,6 +7,7 @@
 
 #include "ios_boot.h"
 
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -73,50 +74,59 @@ bool safe_read_u32(const volatile void* p, u32* out) {
 void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
   ucontext_t* uc = (ucontext_t*)ctx;
   uintptr_t pc = 0;
+  // All handler output goes through raw stderr writes: the fault may have
+  // happened inside a log call, and lg::error can deadlock/re-enter in that
+  // state (observed as a 100% CPU spin after the regs dump).
+  auto rawlog = [](const char* fmt, ...) {
+    char buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    if (n > 0) {
+      write(2, buf, (size_t)n);
+    }
+  };
 #ifdef __aarch64__
   pc = uc->uc_mcontext->__ss.__pc;
   uintptr_t lr = uc->uc_mcontext->__ss.__lr;
-  lg::error("OTTSEL_IOS: regs x0=0x{:x} x1=0x{:x} x2=0x{:x} x3=0x{:x} x4=0x{:x} x5=0x{:x}",
-            uc->uc_mcontext->__ss.__x[0], uc->uc_mcontext->__ss.__x[1],
-            uc->uc_mcontext->__ss.__x[2], uc->uc_mcontext->__ss.__x[3],
-            uc->uc_mcontext->__ss.__x[4], uc->uc_mcontext->__ss.__x[5]);
-  lg::error("OTTSEL_IOS: regs x8=0x{:x} x9=0x{:x} x10=0x{:x} x11=0x{:x} x12=0x{:x} x13=0x{:x}",
-            uc->uc_mcontext->__ss.__x[8], uc->uc_mcontext->__ss.__x[9],
-            uc->uc_mcontext->__ss.__x[10], uc->uc_mcontext->__ss.__x[11],
-            uc->uc_mcontext->__ss.__x[12], uc->uc_mcontext->__ss.__x[13]);
-  lg::error("OTTSEL_IOS: regs x14=0x{:x} x15=0x{:x} x17=0x{:x} x19=0x{:x} x20=0x{:x} x23=0x{:x}",
-            uc->uc_mcontext->__ss.__x[14], uc->uc_mcontext->__ss.__x[15],
-            uc->uc_mcontext->__ss.__x[17], uc->uc_mcontext->__ss.__x[19],
-            uc->uc_mcontext->__ss.__x[20], uc->uc_mcontext->__ss.__x[23]);
-  lg::error("OTTSEL_IOS: fault lr=0x{:x} x21(st)=0x{:x} x22(offset)=0x{:x} x16=0x{:x}",
-            lr, uc->uc_mcontext->__ss.__x[21], uc->uc_mcontext->__ss.__x[22],
-            uc->uc_mcontext->__ss.__x[16]);
-  // dump the linked instruction words around the call site (lr - 0x40)
-  if (lr >= 0x7000000000ull && lr < 0x7000000000ull + EE_MAIN_MEM_SIZE) {
-    u32 word = 0;
-    for (int i = 0; i < 20; i++) {
-      if (safe_read_u32((volatile u32*)(lr - 0x40 + i * 4), &word)) {
-        lg::error("OTTSEL_IOS: lr-{:#x} word: 0x{:08x}", 0x40 - i * 4, word);
-      }
+  uintptr_t sp = uc->uc_mcontext->__ss.__sp;
+  rawlog("OTTSEL_IOS: fault sp=0x%lx\n", (unsigned long)sp);
+  // S2.1 debug: walk the GOAL stack for saved LR chain (each GOAL frame's
+  // str x30, [sp, #-16]! leaves the return address at the frame top).
+  for (int i = 0; i < 48; i++) {
+    uintptr_t addr = sp + i * 16;
+    u32 w = 0;
+    if (safe_read_u32((volatile u32*)addr, &w) && (w >= 0x100000 && w < 0x4000000)) {
+      rawlog("OTTSEL_IOS: stack[%d] @0x%lx = 0x%08x\n", i, (unsigned long)addr, w);
     }
   }
+  rawlog("OTTSEL_IOS: regs x0=0x%lx x1=0x%lx x2=0x%lx x3=0x%lx x4=0x%lx x5=0x%lx\n",
+         (unsigned long)uc->uc_mcontext->__ss.__x[0], (unsigned long)uc->uc_mcontext->__ss.__x[1],
+         (unsigned long)uc->uc_mcontext->__ss.__x[2], (unsigned long)uc->uc_mcontext->__ss.__x[3],
+         (unsigned long)uc->uc_mcontext->__ss.__x[4], (unsigned long)uc->uc_mcontext->__ss.__x[5]);
+  rawlog("OTTSEL_IOS: regs x8=0x%lx x9=0x%lx x10=0x%lx x11=0x%lx x12=0x%lx x13=0x%lx\n",
+         (unsigned long)uc->uc_mcontext->__ss.__x[8], (unsigned long)uc->uc_mcontext->__ss.__x[9],
+         (unsigned long)uc->uc_mcontext->__ss.__x[10], (unsigned long)uc->uc_mcontext->__ss.__x[11],
+         (unsigned long)uc->uc_mcontext->__ss.__x[12], (unsigned long)uc->uc_mcontext->__ss.__x[13]);
+  rawlog("OTTSEL_IOS: regs x14=0x%lx x15=0x%lx x17=0x%lx x19=0x%lx x20=0x%lx x23=0x%lx\n",
+         (unsigned long)uc->uc_mcontext->__ss.__x[14], (unsigned long)uc->uc_mcontext->__ss.__x[15],
+         (unsigned long)uc->uc_mcontext->__ss.__x[17], (unsigned long)uc->uc_mcontext->__ss.__x[19],
+         (unsigned long)uc->uc_mcontext->__ss.__x[20], (unsigned long)uc->uc_mcontext->__ss.__x[23]);
+  rawlog("OTTSEL_IOS: fault lr=0x%lx x21(st)=0x%lx x22(offset)=0x%lx x16=0x%lx\n",
+         (unsigned long)lr, (unsigned long)uc->uc_mcontext->__ss.__x[21],
+         (unsigned long)uc->uc_mcontext->__ss.__x[22], (unsigned long)uc->uc_mcontext->__ss.__x[16]);
 #endif
-  lg::error("OTTSEL_IOS BOOT FAILED (gated): signal {} at pc=0x{:x} fault addr=0x{:x}",
-            sig, pc, (uintptr_t)info->si_addr);
+  rawlog("OTTSEL_IOS BOOT FAILED (gated): signal %d at pc=0x%lx fault addr=0x%lx\n", sig,
+         (unsigned long)pc, (unsigned long)(uintptr_t)info->si_addr);
   u32 fw[4] = {0, 0, 0, 0};
   for (int i = 0; i < 4; i++) {
     safe_read_u32((volatile u32*)(pc + i * 4), &fw[i]);
   }
-  lg::error("OTTSEL_IOS: faulting words: 0x{:08x} 0x{:08x} 0x{:08x} 0x{:08x}", fw[0], fw[1],
-            fw[2], fw[3]);
-  lg::error("OTTSEL_IOS: stopping with a gated error (no crash loop); the no-emit "
-            "symbol-slot resolution is the suspected root cause (see docs/reports/).");
-  lg::finish();
-  // Hold briefly so the shell's visible log surface shows the gated error
-  // before the process exits (evidence capture).
-  sleep(6);
+  rawlog("OTTSEL_IOS: faulting words: 0x%08x 0x%08x 0x%08x 0x%08x\n", fw[0], fw[1], fw[2], fw[3]);
   _exit(1);
 }
+
 
 void install_gated_signal_handlers() {
   struct sigaction sa = {};
@@ -169,31 +179,39 @@ void ottsel_ios_link_cgo_from_bundle(const char* cgo_name) {
   }
   fclose(fp);
 
-  // Stage the whole DGO into EE memory (the no-emit linker reads objects via
-  // EE-relative pointers).  Same pattern as the host's dgo-buffer-2: kmalloc
-  // from the top of the global heap, 64-byte aligned.
-  u32 stage_size = ((u32)dgo.size() + 0x3f) & ~0x3fu;
-  auto stage = kmalloc(kglobalheap, stage_size, KMALLOC_TOP | KMALLOC_ALIGN_64,
+  // Ottsel S2.1: the no-emit linker copies each object out of the stage
+  // during link (jak1_work_v3 state 0 -> ultimate_memcpy to the final heap
+  // location), so a single reusable stage slot suffices.  Staging the whole
+  // 22MB CGO from the global heap top left only ~3MB free at object 195 and
+  // broke GOAL-side (new ...) allocations (kmalloc !alloc) -- the global heap
+  // must stay available for the game engine's own allocations.
+  const u32 STAGE_SLOT = 512 * 1024;  // largest object blob is ~110KB
+  auto stage = kmalloc(kglobalheap, STAGE_SLOT, KMALLOC_TOP | KMALLOC_ALIGN_64,
                        "ottsel-ios-dgo-stage");
   if (!stage.offset) {
-    gated_fail("kmalloc of DGO staging buffer failed");
+    gated_fail("kmalloc of the reusable DGO stage slot failed");
   }
-  memcpy(stage.c(), dgo.data(), dgo.size());
-  dgo.clear();
-  dgo.shrink_to_fit();
 
   // DGO layout: DgoHeader{ u32 object_count; char name[60] }, then per object
-  // ObjectHeader{ u32 size; char name[60] } + blob (16-byte aligned).
-  u32 count = *(stage.cast<u32>());
-  u32 off = 64;
+  // ObjectHeader{ u32 size; char name[60] } + blob (16-byte aligned).  The
+  // DGO is parsed in HOST memory; each object's blob is copied into the
+  // reusable EE stage slot right before linking it.
+  u32 count = *(u32*)dgo.data();
   lg::info("OTTSEL_IOS: {} has {} objects", cgo_name, count);
   u32 flags = LINK_FLAG_OUTPUT_LOAD | LINK_FLAG_EXECUTE | LINK_FLAG_PRINT_LOGIN;
+  u64 off = 64;
   for (u32 i = 0; i < count; i++) {
-    u32 size = *(u32*)(stage.c() + off);
-    const char* name = (const char*)(stage.c() + off + 4);
+    u32 size = *(u32*)(dgo.data() + off);
+    const char* name = (const char*)(dgo.data() + off + 4);
+    u64 blob_off = off + 64;
+    u32 blob_size = (size + 15) & ~15u;  // blobs are 16-byte aligned in the DGO
+    if (blob_size > STAGE_SLOT) {
+      gated_fail("object blob larger than the reusable stage slot");
+    }
+    memcpy(stage.c(), dgo.data() + blob_off, size);
     lg::info("OTTSEL_IOS: linking object {} ({}) size {}", i, name, size);
-    jak1::link_and_exec(stage + off + 64, name, (int32_t)size, kglobalheap, flags, true);
-    off += 64 + ((size + 15) & ~15u);
+    jak1::link_and_exec(stage, name, (int32_t)size, kglobalheap, flags, true);
+    off = blob_off + blob_size;
   }
   lg::info("OTTSEL_IOS: {} linked ({} objects)", cgo_name, count);
 }

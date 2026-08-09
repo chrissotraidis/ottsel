@@ -227,3 +227,24 @@ to snapshot the EE thread PC inside the RX kernel code.
   reaches GOAL top-level entry; cross-segment ADR fixed to ADRP+ADD; encoder
   fixes (cmp, load32u); **GOAL kernel dispatcher executes and loops** —
   H3 PASS (2026-08-08, host).
+
+## 2026-08-09 late — S2.1: linking 55 -> 204; mood-tables fault (checkpoint)
+
+- **GAME.CGO on-device linking advanced 55 -> 204 of 346 objects** with six
+  verified fixes: (1) ARM64 stack-variable addressing (IR_GetStackAddr used
+  ORR where register 31 = xzr, so `mov xd, sp` became xd = 0); (2) mips2c
+  ARM64 no-emit dispatch + jak1 table + pre-registration + jalr shim;
+  (3) iOS SIF RPC stubs + get-irx-version emulation; (4) `_stack_call_arm64`
+  arg-pair order (format); (5) LDRH imm12 scaling in 16-bit static-field
+  loads; (6) reusable 512KB CGO stage slot (was staging the whole 22MB from
+  the global heap).
+- GAME.CGO revalidates 3,829,760 code words PASS; the app reproduces the same
+  fault deterministically.
+- **Current blocker:** object 204 (mood-tables) top-level -> `make-village1-light-kit`
+  call chain: `signal 10 at pc=0x7000000000` (jump/return to the EE base =
+  x22).  All symbol/slot values in the chain verified valid; the deep
+  ret-to-x22 site needs a live call tracer or a debugger that can breakpoint
+  RX-flipped GOAL pages (lldb cannot).  Gated handler now prints pc/regs and a
+  GOAL-stack LR walk via raw stderr.
+- **Next:** identify the ret-to-x22 inside the make-village1-light-kit chain,
+  then continue linking objects 205-346 (S2.1 -> S2.2 renderer seam).

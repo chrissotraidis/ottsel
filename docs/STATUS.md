@@ -127,3 +127,22 @@ Mode: Phase 2 build loop (Bot 2) — Gate H1 active
 - Verdict: CONDITIONAL GO — `docs/02-execution-model-verdict.md`.
 - No game assets in git. ISO moved to `~/ottsel-user/iso/` (outside repo) on 2026-08-07.
 - Upstream OpenGOAL: no mobile plans; x86_64 product path.
+
+## S2.1 runtime linking (2026-08-09, updated)
+
+- **PASS milestones this session (all verified on the iPad Pro 11-inch (M4)
+  Simulator, no-emit runtime):**
+  - GAME.CGO linking advances **55 -> 204 of 346 objects**.
+  - Six runtime/emitter fixes: ARM64 stack-variable addressing (IR_GetStackAddr
+    used ORR-to-xzr for `mov xd, sp`), mips2c ARM64 dispatch + pre-registration
+    (jak1 table, ExecutionContext handler, jalr shim), iOS SIF RPC stubs +
+    get-irx-version emulation, `_stack_call_arm64` arg-pair order (format calls),
+    LDRH imm12 scaling in the 16-bit static-field load (type size/heap-base),
+    and the reusable CGO stage slot (heap pressure).
+  - GAME.CGO (3,829,760 code words) and KERNEL.CGO (86,016) revalidate PASS.
+- **Current blocker:** object 204 (mood-tables) top-level -> `make-village1-light-kit`
+  call chain faults with `signal 10 at pc=0x7000000000` (return/jump to the EE
+  base).  All symbol/slot values in the chain verified valid; the deep ret-to-x22
+  mechanism needs a live debugger that can breakpoint RX-flipped GOAL pages
+  (lldb cannot write software breakpoints there).  Evidence:
+  `docs/evidence/S2/s21-game-cgo-simboot.md` (updated 2026-08-09).

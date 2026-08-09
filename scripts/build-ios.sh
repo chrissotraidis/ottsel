@@ -126,6 +126,31 @@ KERNEL_SRC="
   game/kernel/jak1/kscheme.cpp
   game/kernel/jak1/ksound.cpp
   game/mips2c/mips2c_table.cpp
+  game/mips2c/jak1_functions/bones.cpp
+  game/mips2c/jak1_functions/collide_cache.cpp
+  game/mips2c/jak1_functions/collide_edge_grab.cpp
+  game/mips2c/jak1_functions/collide_func.cpp
+  game/mips2c/jak1_functions/collide_mesh.cpp
+  game/mips2c/jak1_functions/collide_probe.cpp
+  game/mips2c/jak1_functions/draw_string.cpp
+  game/mips2c/jak1_functions/generic_effect.cpp
+  game/mips2c/jak1_functions/generic_effect2.cpp
+  game/mips2c/jak1_functions/generic_merc.cpp
+  game/mips2c/jak1_functions/generic_tie.cpp
+  game/mips2c/jak1_functions/joint.cpp
+  game/mips2c/jak1_functions/merc_blend_shape.cpp
+  game/mips2c/jak1_functions/ocean.cpp
+  game/mips2c/jak1_functions/ocean_vu0.cpp
+  game/mips2c/jak1_functions/ripple.cpp
+  game/mips2c/jak1_functions/shadow.cpp
+  game/mips2c/jak1_functions/sky_tng.cpp
+  game/mips2c/jak1_functions/sparticle.cpp
+  game/mips2c/jak1_functions/sparticle_launcher.cpp
+  game/mips2c/jak1_functions/test_func.cpp
+  game/mips2c/jak1_functions/texture.cpp
+  game/mips2c/jak1_functions/tfrag.cpp
+  game/mips2c/jak1_functions/tie_methods.cpp
+  game/mips2c/jak1_functions/time_of_day.cpp
   game/sce/deci2.cpp
   game/sce/libcdvd_ee.cpp
   game/sce/libdma.cpp

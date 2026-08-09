@@ -733,3 +733,56 @@
   `docs/00-loop-log.md` (this entry).
 - **Next:** dump the goalc IR for the display object's function at
   main+0xa10 (structure copy) and fix the address model; continue linking.
+
+## 2026-08-09 — S2.1: linking 55 -> 204 (six runtime fixes); mood-tables fault localized
+
+### Iteration — stack-alloc, mips2c, SIF, format, load16u, CGO-stage fixes
+- **Fixed `IR_GetStackAddr` ARM64 offset==0 branch:** `mov_gpr64_gpr64(dst, SP)`
+  emits `orr xd, xzr, xzr` (register 31 = xzr, never SP), so stack-variable
+  addresses computed as 0.  scf-time's `(new 'stack-no-clear 'scf-time)` then
+  dereferenced EE 0 (`strb wzr,[x1,x22]` fault at object 35).  Fix: always use
+  the ADD-immediate form (`lea_reg_plus_off(dst, SP, off)`).
+- **mips2c on ARM64 no-emit:** the iOS table was empty (engine wasn't linked
+  before).  Implemented the jak1 table + link callbacks, pre-registration into
+  the executable stub arena before the RX flip (kboot), an ARM64
+  `_mips2c_call_arm64` dispatch (replacing the half-ported upstream block) that
+  builds the ExecutionContext like the x86 `_mips2c_call_systemv`, and the
+  `_call_goal8_asm_arm64` jalr declaration.  jak1_functions/*.cpp now build
+  into the app.
+- **SIF RPC stubs on iOS:** `sceSifCallRpc` asserted `mode == 1` (the sound
+  loader uses sync mode 0) and deref'd a null IOP.  Made CallRpc/CheckStatRpc/
+  BindRpc inert on OTTSEL_IOS + emulate the get-irx-version response (command
+  12 -> 2.0) so `check-irx-version` passes instead of crash!-ing.
+- **`_stack_call_arm64` arg-pair swap:** the stack-arg array was built as
+  [x1,x0,x3,x2,...] instead of [x0..x7]; `(format 0 "IRX version...")` passed
+  dest=0 as the format string -> NULL-deref.  Fixed the stp pairing.
+- **`load16u_gpr64_gpr64_plus_gpr64_plus_s8` LDRH scaling bug:** the positive
+  branch used LDRH's imm12 field (scaled by 2) with the raw offset, so
+  `(-> type size)` read [type+0x10] instead of [type+8] and
+  `(-> type heap-base)` read [type+0x18] instead of [type+12].  The
+  inline-array-class `new` computed ~4MB for `(new 'global 'entity-perm-array
+  4096)` -> kmalloc !alloc -> NULL perm-list -> NUL-write through 0.  Fixed to
+  the unscaled LDURH form (matches load16s and the store).
+- **CGO staging heap pressure:** the shell staged the whole 22MB GAME.CGO from
+  the global-heap top (only ~3MB free at object 195).  Replaced with a single
+  reusable 512KB stage slot (the linker copies each object out during link).
+- **Result:** GAME.CGO linking on the Simulator advances from object 55 to
+  **object 204 (mood-tables)**.  GAME.CGO revalidates 3,829,760 code words PASS.
+- **Current fault (object 204, mood-tables):** `signal 10 at pc=0x7000000000`
+  (jump/return to EE 0); LR = x22 (the EE base), i.e. a `ret`/`br` to x22.
+  GOAL-stack walk shows the faulting function was called from the mood-tables
+  top-level at +0x3a44 (return addr 0x3dafa48) = `make-village1-light-kit`
+  (0x2924314).  Every symbol/slot in the verified chain
+  (make-light-kit, matrix-rotate-y!, sin/cos, vector+float*!, vector*!,
+  vector4-lerp!) reads a VALID function value; the deep ret-to-x22 mechanism
+  is not yet identified (a live debugger that can breakpoint RX GOAL pages is
+  the next tool; lldb cannot write breakpoints to RX-flipped pages).
+- **Files changed:** worktree IR.cpp (GetStackAddr), IGenARM64.cpp (load16u),
+  mips2c_table.{cpp,h}, mips2c_private.h, asm_funcs_arm64.s (mips2c dispatch,
+  stack-call pair order), sif_ee.cpp, kboot.cpp, kmachine.cpp (via kscheme
+  trace removed), kscheme.cpp (traces removed); repo ios_boot.cpp (reusable
+  stage slot, rawlog gated handler with GOAL-stack LR walk),
+  scripts/build-ios.sh (jak1 mips2c sources).
+- **Next:** instrument a live call/ret tracer (or a debugger that can
+  breakpoint RX pages) to find the ret-to-x22 inside the
+  make-village1-light-kit call chain; continue linking objects 205-346.
