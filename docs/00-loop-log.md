@@ -986,3 +986,26 @@
   frame; check whether 0x5a9234's SIMD body (post-index ldr q clobbers
   x1/x2) corrupts the caller's frame; verify every fix through the A1.0
   regression harness.
+
+## 2026-08-09 — S2.1: mood-tables fault — caller-LR trace + function decode
+
+- **Probe extended:** the recorder now also captures the caller's LR per call
+  (the address the caller resumes at after the callee returns).  The trace
+  proves the mood main (0x23d8004) had a VALID x30 (return addr 0x023d86b0
+  at entry, 0x023d8388 at its last call) — it returns normally; the crash is
+  a jump to EE base (x8 = x22, lr = x22) AFTER it returns, in the caller
+  0x23d8564's continuation or via a zeroed function slot.
+- **Call chain decoded:** the top-level calls 0x23d8564 (main+0x564) at site
+  0x3dab7d0; 0x23d8564 calls the mood main (0x23d8004) via blr; the mood
+  main (prologue x19,x23-x26,x30 + sub 0x40) makes 2 calls to the SIMD
+  matrix function 0x5a9264 (sites 0x830c/0x8414) with straight-line static-
+  float writes between, then epilogue-ret to 0x23d8564's continuation (which
+  has another call + static writes, and so on — a light-kit builder).
+- **Stack forensics:** the raw GOAL stack below the fault sp is mostly empty
+  (saved-regs region of the faulting frame not populated) — suspicious frame
+  state.  No x22 value on the stack, so the crash is a br/blr through x8 =
+  0 (null fn ptr + offset), not a ret-to-x22 from a slot.
+- **Next (S2.1):** runtime jump tracer or lldb-attach with the process held
+  alive to capture the exact instruction that jumps to x22; verify the
+  static-float ADRP patches in the light-kit builder; add a regression test
+  once the emitter/ABI defect is identified.
