@@ -965,3 +965,24 @@
 - **Next (S2.1):** decode the 0x5a9234 call/return path (post-index ldr q
   clobbers x1/x2; verify the caller's x30 slot) and the loop's next
   iteration; every fix through the A1.0 regression harness.
+
+## 2026-08-09 — S2.1 root-cause analysis (mood-tables): call-site decode
+
+- Decoded the mood main (0x23d8004, mood-tables blob 0x16b73 + 0x4):
+  prologue pushes x19,x23-x26,x30 + sub sp,#0x40; calls: blr x2 (+0x12c),
+  blr x16 (+0x32c), blr x3 (+0x37c = 0x5a9234 #1), recorder shim
+  (+0x430), blr x3 (+0x480 = 0x5a9234 #2), epilogue ret (+0x54c).
+  Straight-line static-float writes between the calls and the epilogue.
+- Entry path verified: 0x23d8554 calls 0x23d8004 via `add x5,x5,x22;
+  blr x5` (a real blr, not a tail call) -> x30 is valid at entry; the
+  tail-call hypothesis is rejected for this path.
+- Fault state: x3 = 0x70005a9234 (fn host of the in-flight 0x5a9234 call),
+  x8 = x22 = 0x7000000000, lr = x22, pc = 0x7000000000 (executing EE base).
+  Either a `br x8` through a null fn ptr (x8 = 0 + offset) or a `ret` with
+  x30 = x22 after the 0x5a9234 call path.  Fault sp near the GOAL stack top
+  suggests the fault is shallow (a call site in the mood main or a callee
+  frame near the top-level).
+- Next: dump the full GOAL stack + the saved-x30 slots of the faulting
+  frame; check whether 0x5a9234's SIMD body (post-index ldr q clobbers
+  x1/x2) corrupts the caller's frame; verify every fix through the A1.0
+  regression harness.
