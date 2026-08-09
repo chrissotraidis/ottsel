@@ -1009,3 +1009,18 @@
   alive to capture the exact instruction that jumps to x22; verify the
   static-float ADRP patches in the light-kit builder; add a regression test
   once the emitter/ABI defect is identified.
+
+## 2026-08-09 — S2.1: stack forensics rule out return-address corruption
+
+- Raw GOAL stack above AND below the fault sp contains no 0x7000000000
+  (x22) values — the mood main's saved x30 is valid, so the crash is NOT a
+  ret-to-x22 from a corrupted slot.  It is a `br`/`blr x8` with x8 = 0 (a
+  null GOAL function pointer + offset) — the null call's recorder did not
+  fire, so the jump happens between the last recorded call (site 0x8414 ->
+  0x5a9264) and the next call's shim (the 0x23d8564 continuation at
+  0x6b0..0x7a0, which has no visible call/jump in the decoded blob).
+- Next decisive step: a runtime jump/return tracer (record the last N
+  br/blr/ret targets + LR in the runtime) to capture the exact instruction
+  that jumps to EE base, or hold the process at the fault for lldb
+  inspection.  Verify the static-float ADRP patches in the light-kit
+  builder (the `adrp x16, #0x4000` static refs).
