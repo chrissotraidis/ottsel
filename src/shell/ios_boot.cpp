@@ -208,6 +208,74 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
              (unsigned long)ppv, cfr, nm, sp8, ra);
     }
   }
+  // S2.1 debug (TEMPORARY): dump the code around the faulting blr and the
+  // run-function-in-process catch-frame-new func-lookup chain so the
+  // x16-vs-pp corruption at the real call can be pinned down.
+  {
+    const uintptr_t ee2 = (uintptr_t)g_ee_main_mem;
+    // S2.1 (asr fix): the caller's epilogue now pops its saved x30 (the
+    // run-function-in-process GOAL-relative value 0x1e7004) and rets to it
+    // raw.  Dump the code at the ret target and the return-address chain
+    // found on the stack so the x30 source can be identified.
+    rawlog("OTTSEL probe: ret-target code @ee+0x1e7004:\n");
+    for (u32 a = 0x1e6fe0; a < 0x1e7040; a += 4) {
+      u32 wt = 0;
+      if (safe_read_u32((volatile u32*)(ee2 + a), &wt)) {
+        rawlog("OTTSEL probe:   0x%08x: 0x%08x\n", a, wt);
+      }
+    }
+    rawlog("OTTSEL probe: rfn+0x118 @ee+0x1e711c:\n");
+    for (u32 a = 0x1e70f0; a < 0x1e7150; a += 4) {
+      u32 wt = 0;
+      if (safe_read_u32((volatile u32*)(ee2 + a), &wt)) {
+        rawlog("OTTSEL probe:   0x%08x: 0x%08x\n", a, wt);
+      }
+    }
+    // The faulting site: lr-4 is the blr; dump lr-0x30 .. lr+0x10.
+    const uintptr_t lrv = (uintptr_t)lr;
+    rawlog("OTTSEL probe: fault-site code around lr=0x%lx:\n", (unsigned long)lrv);
+    for (int i = -0x30; i < 0x20; i += 4) {
+      u32 wt = 0;
+      if (safe_read_u32((volatile u32*)(lrv + i), &wt)) {
+        rawlog("OTTSEL probe:   [%+d] 0x%08x\n", (int)i, wt);
+      }
+    }
+    // The full run-function-in-process catch-frame-new shim region:
+    // func-lookup at 0x1f2730 .. real call at 0x1f284c.
+    rawlog("OTTSEL probe: shim region 0x1f2720-0x1f2860:\n");
+    for (u32 a = 0x1f2720; a < 0x1f2860; a += 4) {
+      u32 wt = 0;
+      if (safe_read_u32((volatile u32*)(ee2 + a), &wt)) {
+        rawlog("OTTSEL probe:   0x%08x: 0x%08x\n", a, wt);
+      }
+    }
+    // catch-frame-new call func chain: slot@0x1f529c -> sym -> value ->
+    // new-method at value+0x10 (kernel base 0x1e4000, st = x21).
+    const uintptr_t st2 = (uintptr_t)uc->uc_mcontext->__ss.__x[21];
+    u32 slot = 0, symval = 0, method = 0;
+    if (safe_read_u32((volatile u32*)(ee2 + 0x1f529c), &slot)) {
+      rawlog("OTTSEL probe: cfn slot@0x1f529c = 0x%08x st=0x%lx\n", slot, (unsigned long)st2);
+      if (safe_read_u32((volatile u32*)(ee2 + slot + st2 + 0), &symval)) {
+        rawlog("OTTSEL probe: cfn sym@0x%lx value=0x%08x\n", (unsigned long)(slot + st2), symval);
+        if (safe_read_u32((volatile u32*)(ee2 + symval + 0x10), &method)) {
+          rawlog("OTTSEL probe: cfn new-method@0x%lx = 0x%08x\n",
+                 (unsigned long)(symval + 0x10), method);
+        }
+      }
+    }
+    // The GAME-side chain that corrupted pp: 0x1f21794 / 0x1f21870 /
+    // 0x1f219c0 (init-time-of-day -> ... -> gcommon 0x1c5f64 -> stub).
+    const u32 game_sites[] = {0x1f21794, 0x1f21870, 0x1f219c0, 0x1c5f64, 0x1c6014};
+    for (u32 gs : game_sites) {
+      rawlog("OTTSEL probe: code @0x%08x:\n", gs);
+      for (int i = 0; i < 0x60; i += 4) {
+        u32 wt = 0;
+        if (safe_read_u32((volatile u32*)(ee2 + gs + i), &wt)) {
+          rawlog("OTTSEL probe:   [%02x] 0x%08x\n", i, wt);
+        }
+      }
+    }
+  }
   // A1.0 bounded trace: last 48 GOAL->GOAL calls + the last target's code.
   {
     u64 idx = g_ottsel_call_idx;
@@ -217,8 +285,9 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
       u64 v = g_ottsel_call_trace[((idx - 40 + i) * 2) & 255];
       u64 lr = g_ottsel_call_trace[((idx - 40 + i) * 2 + 1) & 255];
       if (v || lr) {
-        rawlog("OTTSEL_IOS: trace[%d] site=0x%08x target=0x%08x caller-lr=0x%08x\n", i - 40,
-               (unsigned)(v >> 32), (unsigned)(v & 0xffffffff), (unsigned)(lr & 0xffffffff));
+        rawlog("OTTSEL_IOS: trace[%d] site=0x%08x target=0x%08x caller-lr=0x%08x pp=0x%08x\n",
+               i - 40, (unsigned)(v >> 32), (unsigned)(v & 0xffffffff),
+               (unsigned)(lr & 0xffffffff), (unsigned)(lr >> 32));
       }
     }
     rawlog("OTTSEL_IOS: trace-count=%llu (base=0x%llx)\n", (unsigned long long)idx,

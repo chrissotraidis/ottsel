@@ -1169,3 +1169,199 @@
   (candidates: the C-export trampoline path, an unmodeled x20 write in the
   launch-control code, or a wrong-width store into the process object that
   happens to alias the pp register's stack save).
+
+## 2026-08-10 — S2.1: pp-trace instrumentation + x30-shim bug FIXED; fault moved to throw-dispatch ret-to-pp
+
+### What happened
+- Built a host-side offline CGO link tool (`ottsel-cgolink-dump`, game/ottsel_cgolink_dump.cpp)
+  that links KERNEL.CGO + GAME.CGO with the same runtime linker and dumps the linked
+  code at fixed EE offsets.  Ground truth for the fault chain WITHOUT Simulator boots.
+  Kernel objects link 0x40000 lower on the host than the Simulator (symbol-table
+  allocation offset); GAME object placement differs, so kernel regions are dumped at
+  sim-addr - 0x40000.
+- Verified with the offline dump: field offsets are the OpenGOAL -4 convention
+  (type at obj-4, stack-frame-top at pp+0x58, catch-frame next at this+4, etc.) —
+  NOT a field-offset bug.
+- Added pp (x20) capture to the GOAL call-trace recorder (shim `mov x3, x20`, recorder
+  packs (caller_lr & 0xffffffff) | (pp << 32)).  Rebuilt goalc, regenerated CGOs.
+- **Found + fixed a REAL shim bug: the trace recorder call clobbers x30, and the
+  shim's `push x30` (the GOAL call's stack return address, consumed by asm-funcs
+  like catch-frame-new's `(.pop temp)`) pushed the RECORDER'S RETURN instead of the
+  caller's x30.**  Fix: push x30 before the recorder, pop it after (goalc/compiler/IR.cpp).
+- **pp is NOT corrupted**: the pp trace shows pp = 0x24783b (the real process) through
+  the whole chain (run-function-in-process -> catch-frame-new -> init-time-of-day ->
+  kmalloc stub -> gstate -> set-to-run -> throw -> throw-dispatch).  pp = 0x18fe04
+  (st) before the process spawn — this is the upstream x86 behavior (call_goal sets
+  pp = st), NOT a bug.
+- The kmalloc failure message still prints "#<process @ #x4f00afc>" (the alloc stub's
+  own address) while the trace shows pp = 0x24783b at the same call — still unexplained;
+  the message's pp source needs one more probe (likely a different kmalloc call path).
+
+### Fault after the x30 fix (deterministic, in s21-x30fix-boot.log)
+- Before: `blr x16` at run-function-in-process+0x1d8 with x16 = ee + pp (0x700024783b).
+- After: a `ret` jumps to the RAW GOAL pp 0x24783b (pc = lr = 0x24783b, no ee base).
+  Chain: throw-dispatch (0x1f1bf4) dispatched the 'initialize catch-frame, restored
+  regs, then `.ret` popped 0x24783b — the catch-frame's ra field appears to hold pp.
+  throw-dispatch's ra+ee math (ldursw ra; add x22; push; ldr x30,[sp],#16; ret) is
+  verified correct in the offline dump — so the catch-frame's ra field = 0x24783b,
+  i.e. the dispatched catch-frame object is wrong (its ra slot holds pp), OR the ret
+  popped the wrong stack slot.
+- Next: dump the dispatched catch-frame object at fault time (pp->stack-frame-top
+  before throw-dispatch pops it, or the throw walk state), and find who wrote pp into
+  the frame's ra slot.  Candidates: catch-frame-new's ra capture (shim push x30) still
+  wrong for this frame, or the frame object is at the wrong address (alloc corruption).
+- Tooling now avoids full rebuilds: ios_boot.cpp-only probe changes = 2-min app relink;
+  CGO regen = ~1 min; the offline dump = seconds.
+
+### Files
+- worktree: goalc/compiler/IR.cpp (x30 save/restore around recorder), kscheme.cpp
+  (4-arg recorder), tools/ottsel_a1/typelayout.cpp (NEW), game/ottsel_cgolink_dump.cpp
+  (NEW), goalc/CMakeLists.txt + game/CMakeLists.txt (dump tools); repo:
+  src/shell/ios_boot.cpp (fault-site + cfn-chain + pp-trace probes).
+- Evidence: docs/evidence/S2/s21-pptrace-boot.log, s21-x30fix-boot.log.
+
+## 2026-08-10 (cont) — S2.1: no-trace (product) path faults identically; catch-frame forensics
+
+### No-trace product-path test (s21-notrace2-boot.log)
+- Disabled the diagnostic trace shim (goalc/CMakeLists.txt), regenerated CGOs
+  (KERNEL 86016 + GAME 3895296 words validate), booted the PRODUCT path.
+- **Same root fault**: pc = lr = 0x23b83b — a `ret` to the raw GOAL pp (the
+  process object moved to 0x23b83b in this build).  kmalloc failure identical
+  ("!alloc mem ... #<process @ #x4f00afc>").  So the fault is NOT caused by
+  the trace shim; it is a real throw/return ABI defect.
+- pp (x20) = 0x23b83b = the process — consistent (not corrupted), same as the
+  trace build's finding.
+
+### Catch-frame forensics (lldb on the HELD process)
+- The dispatched catch-frame is ON THE STACK at ee+0x7fffeb4:
+    type@-4 = 0x1dc2d4 (catch-frame type)
+    name@+0 = 0x192ae4, next@+4 = #f (top frame), sp@+8 = 0x7fffe70,
+    ra@+0xc = 0x237d410
+- The frame's ra = 0x237d410 = the x30-pop of a GAME function F's call site
+  (the shim at 0x237d404: push x30; add; blr; pop).  So the throw matched
+  F's catch-frame (name = 0x192ae4), NOT the run-function-in-process
+  'initialize frame.  F = a GAME function (float/vector ops) whose continuation
+  (0x237d410-0x237d444) reads fields and returns via `ldr x30,[sp],#0x10; ret`.
+- The frame's sp field (0x7007fffe70) sits 0x44 below the frame object
+  (0x7007fffeb4); catch-frame-new's sp capture (`mov x0,sp; sub x0,x0,x22;
+  (-> this sp) = x0`) is at the entry sp.  The return path after the
+  throw-dispatch therefore lands the caller on the frame's sp, and a later
+  `ret` pops pp from the stack -> fault.
+- Both the normal asm-func return and the throw path appear to pop the same
+  slots in static analysis, so the exact diverging slot is still unproven.
+  The next probe must identify the FAULTING ret instruction (e.g. dump the
+  code at the saved-return chain on the stack: 0x1e711c / 0x237d410 / 0x1e7004
+  are visible below the fault sp) and confirm the throw-dispatch's sp/ra
+  restore against the caller's frame layout.
+
+### Files/evidence
+- docs/evidence/S2/s21-notrace2-boot.log (no-trace product fault + regs + stack).
+- The trace-shim x30 fix (goalc/compiler/IR.cpp) stays; the tracer is disabled
+  for product-path testing.
+
+## 2026-08-10 (cont) — S2.1: asm-func `.ret` sp-advance bug FIXED; A1.0 green; fault progressed to ret-to-raw-rfn
+
+### The fix (real ABI defect, verified)
+- Root cause of the persistent ret-to-pp: GOAL asm-func `.ret` (catch-frame-new /
+  throw-dispatch / return-from-thread) emitted `ldr x30, [sp], #16; ret` — it
+  ADVANCED sp by 16, then the call-site shim's `ldr x30, [sp], #16` (emitted
+  after the blr) advanced it AGAIN.  The caller's epilogue then ran 16 bytes
+  off and popped a garbage slot (observed: the process pointer) into x30.
+- Fix: `.ret` now emits `ldr x30, [sp]` (no post-index) + ret
+  (goalc/emitter/IGenARM64.* load_gpr64_sp, goalc/compiler/IR.cpp IR_AsmRet).
+  The shim's pop still restores the caller's sp.
+- A1.0 regression (test 11) updated: a1-asmret now compiles a minimal asm-func
+  (no saved-reg epilogue) and asserts `ldr x30,[sp]` (0xf94003fe) with no
+  post-index.  [A1.0] PASS all semantic regressions.
+- Verified in the linked CGO: throw-dispatch's `.ret` at offline 0x1a63f4 is
+  now 0xf94003fe (was 0xf84107fe).
+
+### Boot progression (s21-asrfix-boot.log)
+- Before: `fault pc=0x23b83b lr=0x23b83b` (ret to the raw pp).
+- After: `fault pc=0x1e7004 lr=0x1e7004` — the caller's epilogue now pops the
+  CORRECT saved-x30 slot (F's saved x30 = 0x1e7004 = run-function-in-process's
+  GOAL-relative func value) — but the value is GOAL-relative (no ee base), so
+  the `ret` jumps to raw 0x1e7004 and faults.
+- Next: find where the x30 chain gets the GOAL-relative rfn value
+  (0x1e7004 = the 'run-function-in-process symbol value).  The chain's x30
+  should be an absolute return address; F's caller apparently passed x30 =
+  rfn's value.  Candidates: the process-spawn / set-to-run path or a function
+  returning a func value in x30.
+
+## 2026-08-10 (cont 2) — S2.1: `.ret` fix verified in boot; fault now ret-to-raw-rfn; trace re-enabled
+
+### Boot verification of the `.ret` fix (s21-asrfix-boot.log)
+- Fault moved from `ret to raw pp` (0x23b83b) to `ret to 0x1e7004` (= the
+  GOAL-relative run-function-in-process func value).  The caller's epilogue now
+  pops the CORRECT saved-x30 slot, but the value is a GOAL-relative func value
+  (no ee base), so the `ret` fetches raw 0x1e7004 and faults.
+- The ret target 0x1e7004 IS run-function-in-process's entry (prologue
+  `str x19,[sp,#-16]!` ...) — mapped RX, so if ee were added the return would
+  re-enter rfn instead of faulting.  The x30 chain is carrying a func VALUE
+  where a return address belongs.
+
+### Trace re-enabled (with the x30-shim fix) — s21-trace3-fixed-boot.log
+- Same fault shape at trace-build offsets (ret to 0x1f2df4 = that build's rfn).
+- Call chain (last 40): init-time-of-day -> 0x1f25984 (launch-control-ish,
+  the function that calls gcommon 0x1c6034 + the kmalloc stub + gstate) ->
+  gstate 0x550514 -> set-to-run -> throw -> throw-dispatch -> fault.
+- pp = 0x24783b (the real process) through the whole chain; all recorded
+  caller-LRs are absolute (0x0244xxxx / 0x03dbxxxx / 0x001exxxx / 0x0055xxxx)
+  -- NONE is rfn's value.  The x30 = rfn's value appears only AFTER the last
+  traced call (in the throw-dispatch return path / the caller epilogue).
+- Next: find where the launch-control chain sets x30 to the func value (the
+  function at 0x1f25984 trace / its no-trace counterpart); candidates include
+  the set-to-run/thread-resume path and the gstate call into throw.
+
+## 2026-08-10 (cont 3) — S2.1: trace4 probe + host-side offline CGO link+dump; fault narrowed to the catch-frame ra contract
+
+### trace4 probe (s21-trace4-boot.log)
+- Fault confirmed deterministic: `signal 11 at pc=0x1f2df4 fault addr=0x1f2df4`
+  = a `ret` to the RAW GOAL-relative run-function-in-process func value
+  (probe confirms sym value@0x19627c = 0x001f2df4). ee+0x1f2df4 = 0x70001f2df4
+  IS rfn's mapped RX entry, so the value is right but the EE base was not
+  added somewhere on the throw/return path.
+- Tail call chain (last traced): ... -> rfn (0x1f2df4, from trampoline site
+  0x0244a63c, caller-lr 0x03db086c) -> 0x1f2f58 -> 0x1f1b2c -> dispatch
+  0x02449af0/0x02449d30 -> launch-control 0x01f25984 -> gcommon 0x1c6034 ->
+  C-export 0x04f00afc (kmalloc stub: "!alloc mem ... (160 bytes)") -> gstate
+  0x550514 -> set-to-run 0x1f3454/0x1f1d14 -> throw-dispatch 0x001f1bf4 ->
+  FAULT. pp = 0x24783b the whole way; all traced caller-LRs absolute.
+- Fault-time regs: x0=0x1bfe44 x1=0x18fe0c x2=0x7fffeb4 (catch-frame ptr)
+  x3=0x550514 (gstate) x21(st)=0x18fe04 x22(off)=0x7000000000 x19=x20=0x24783b
+  (pp). Catch-frame object visible at 0x7007fffeb4: type@-4=0x001e02d4,
+  ra@+0xc=0x0244a6c0 (the TRAMPOLINE continuation - the rfn catch-frame, ra
+  CORRECT). Stack slot 0x7007fffe80 holds the raw 0x001f2df4.
+
+### Host-side offline link+dump (ottsel-cgolink-dump, rebuilt)
+- Tool reproduces the Simulator's linked layout: throw-dispatch pattern scan
+  finds it at offline 0x1b1bf4 = sim 0x1f1bf4 (kernel delta -0x40000 holds).
+- throw-dispatch disassembly MATCHES the GOAL source exactly (gkernel.gc
+  line 1531): restores pp->stack-frame-top, saved regs, sp = this->sp + off,
+  pops a word, pushes this->ra + off (ABSOLUTE), ret. Given x22=0x7000000000
+  and a u32 this->ra, this tail CANNOT produce x30=0x001f2df4 - so the
+  faulting ret is a DIFFERENT instruction (a caller epilogue popping a slot
+  that holds the raw func value), not throw-dispatch's final ret.
+- catch-frame-new source (gkernel.gc 1444): ra = (popped return addr) - off.
+  rfn's code (offline 0x1b2df4) shows the `new 'stack 'catch-frame` call
+  pushes rfn's x30 = 0x0244a6c0 (the trampoline continuation) -> the rfn
+  catch-frame's ra = 0x0244a6c0 (correct, matches the stack forensics).
+- Therefore the faulting frame (ra=0x001f2df4 raw) is a DIFFERENT catch-frame
+  or a raw func-value slot in a caller's saved-x30 position. Candidates:
+  (a) a nested catch-frame-new entered with [sp]=absolute rfn entry
+  (0x70001f2df4, so ra - off = 0x001f2df4), i.e. a process/thread setup path
+  (set-to-run-bootstrap pushes return-from-thread-dead+off then .jr s0+off)
+  where x30 leaked the func value; (b) set-to-run's rreg0=func flowing into
+  a saved-x30 slot.
+
+### Next probe (deterministic)
+- lldb attach to the HELD process at the fault (handler keeps it alive) and
+  capture the FAULTING ret instruction address (the last instruction before
+  the fetch fault - not the target 0x1f2df4). Then offline-disassemble that
+  exact function and find which slot it pops (candidate: 0x7007fffe80) and
+  who wrote the raw func value there.
+- Also: dump the offline GAME main-seg base (find where sim 0x0244a6c0 maps
+  offline) to disassemble the 0x0244a63c trampoline and the 0x0244a6c0
+  continuation - the two candidate "return to" sites for the process chain.
+- Keep the trace4 probe build (s21-trace4-boot.log is the current evidence);
+  the ios_boot.cpp probe changes stay active.
