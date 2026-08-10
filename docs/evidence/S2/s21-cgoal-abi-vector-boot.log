@@ -1,0 +1,164 @@
+Timestamp               Ty Process[PID:TID]
+2026-08-10 07:15:39.422 Df OttselShell[72019:3061f27] [com.apple.xpc:connection] [0x600003d00000] activating connection: mach=true listener=false peer=false name=com.apple.cfprefsd.daemon
+2026-08-10 07:15:39.424 A  OttselShell[72019:3061f27] (CoreFoundation) Loading Preferences From User Session CFPrefsD
+2026-08-10 07:15:39.429 Df OttselShell[72019:3061f2a] (libMobileGestalt.dylib) No persisted cache on this platform.
+2026-08-10 07:15:39.431 Df OttselShell[72019:3061f28] [com.apple.runningboard:connection] Initializing connection
+2026-08-10 07:15:39.434 Df OttselShell[72019:3061f28] [com.apple.runningboard:process] Removing all cached process handles
+2026-08-10 07:15:39.434 Df OttselShell[72019:3061f27] [com.apple.runningboard:connection] Sending handshake request attempt #1 to server
+2026-08-10 07:15:39.434 Df OttselShell[72019:3061f27] [com.apple.runningboard:connection] Creating connection to com.apple.runningboard
+2026-08-10 07:15:39.434 Df OttselShell[72019:3061f27] [com.apple.xpc:connection] [0x600003d10000] activating connection: mach=true listener=false peer=false name=com.apple.runningboard
+2026-08-10 07:15:39.434 Df OttselShell[72019:3061f28] [com.apple.xpc:connection] [0x1057064f0] activating connection: mach=false listener=false peer=false name=(anonymous)
+2026-08-10 07:15:39.435 Df OttselShell[72019:3061f26] [com.apple.UIKit:BackgroundTask] Creating new assertion because there is no existing background assertion.
+2026-08-10 07:15:39.435 A  OttselShell[72019:3061f2b] (RunningBoardServices) didChangeInheritances
+2026-08-10 07:15:39.436 Df OttselShell[72019:3061f27] [com.apple.runningboard:connection] Handshake succeeded
+2026-08-10 07:15:39.449 Df OttselShell[72019:3061f26] [com.apple.UIKit:BackgroundTask] Creating new background assertion
+2026-08-10 07:15:39.449 Df OttselShell[72019:3061f27] [com.apple.runningboard:connection] Identity resolved as app<com.ottsel.shell((null))>
+2026-08-10 07:15:39.449 Df OttselShell[72019:3061f26] [com.apple.UIKit:BackgroundTask] Created new background assertion <BKSProcessAssertion: 0x600002128be0>
+2026-08-10 07:15:39.450 Df OttselShell[72019:3061f26] [com.apple.UIKit:BackgroundTask] Incrementing reference count for background assertion <BKSProcessAssertion: 0x600002128be0>
+2026-08-10 07:15:39.451 Df OttselShell[72019:3061f26] [com.apple.UIKit:BackgroundTask] Created background task <_UIBackgroundTaskInfo: 0x6000017050c0>: taskID = 1, taskName = Launch Background Task for Coalescing, creationTime = 2742733 (elapsed = 0).
+2026-08-10 07:15:39.451 Df OttselShell[72019:3061f1c] [com.apple.UIKit:Application] Deactivation reason added: 10; deactivation reasons: 0 -> 1024; animating application lifecycle event: 0
+2026-08-10 07:15:39.451 Df OttselShell[72019:3061f26] [com.apple.FrontBoard:SceneExtension] Realizing settings extension _UIApplicationSceneKeyboardSettings on FBSSceneSettings
+2026-08-10 07:15:39.451 E  OttselShell[72019:0] [com.apple.os_debug_log:] assertion failed: 25F84 22F77: libxpc.dylib + 72720 [021C0BF8-EDD4-395A-B281-2CC7A26F742F]: 0x7d
+2026-08-10 07:15:39.451 Df OttselShell[72019:3061f1c] [com.apple.BoardServices:Injection] activating monitor for service com.apple.frontboard.open
+2026-08-10 07:15:39.452 Df OttselShell[72019:3061f1c] [com.apple.BoardServices:Injection] activating monitor for service com.apple.frontboard.workspace-service
+2026-08-10 07:15:39.452 Df OttselShell[72019:3061f1c] [com.apple.FrontBoard:Common] FBSWorkspace registering source: com.apple.frontboard.systemappservices
+2026-08-10 07:15:39.453 Df OttselShell[72019:3061f1c] [com.apple.FrontBoard:Common] FBSWorkspace connected to endpoint : <BSServiceConnectionEndpoint: 0x600001701ec0; target: com.apple.frontboard.systemappservices; service: com.apple.frontboard.workspace-service>
+2026-08-10 07:15:39.453 Df OttselShell[72019:3061f1c] [com.apple.FrontBoard:Common] <FBSWorkspaceScenesClient:0x600002c01380 com.apple.frontboard.systemappservices> attempting immediate handshake from activate
+2026-08-10 07:15:39.453 Df OttselShell[72019:3061f1c] [com.apple.FrontBoard:Common] <FBSWorkspaceScenesClient:0x600002c01380 com.apple.frontboard.systemappservices> sent handshake
+2026-08-10 07:15:39.453 Df OttselShell[72019:3061f1c] [com.apple.runningboard:general] Added observer for process assertions expiration warning: <_RBSExpirationWarningClient: 0x600000224840>
+2026-08-10 07:15:39.454 Df OttselShell[72019:3061f26] [com.apple.FrontBoard:SceneExtension] Realizing settings extension <_UISceneOcclusionSettings> on FBSSceneSettings
+2026-08-10 07:15:39.455 Df OttselShell[72019:3061f26] [com.apple.FrontBoard:SceneExtension] Realizing settings extension <_UISceneInterfaceProtectionSceneSettings> on FBSSceneSettings
+2026-08-10 07:15:39.456 Df OttselShell[72019:3061f26] [com.apple.FrontBoard:SceneExtension] Realizing settings extension <_UIHomeAffordanceHostSceneSettings> on FBSSceneSettings
+2026-08-10 07:15:39.456 Df OttselShell[72019:3061f26] [com.apple.FrontBoard:SceneExtension] Realizing settings extension _UISystemShellSceneHostingEnvironmentSettings on FBSSceneSettings
+2026-08-10 07:15:39.456 Df OttselShell[72019:3061f26] [com.apple.FrontBoard:SceneExtension] Realizing settings extension _UISceneRenderingEnvironmentSettings on FBSSceneSettings
+2026-08-10 07:15:39.457 Df OttselShell[72019:3061f26] [com.apple.FrontBoard:SceneExtension] Realizing settings extension <_UISceneTransitioningHostSettings> on FBSSceneSettings
+2026-08-10 07:15:39.458 Df OttselShell[72019:3061f26] [com.apple.FrontBoard:SceneExtension] Realizing settings extension <_UISceneHostingContentSizePreferenceClientSettings> on FBSSceneClientSettings
+2026-08-10 07:15:39.458 Df OttselShell[72019:3061f26] [com.apple.FrontBoard:SceneExtension] Realizing settings extension _UISceneHostingTraitCollectionPropagationSettings on FBSSceneSettings
+2026-08-10 07:15:39.459 Df OttselShell[72019:3061f1c] [com.apple.UIKit:UIScreen] Evaluated capturing state as 0 on <UIScreen: 0x107008860> for initial
+2026-08-10 07:15:39.459 Df OttselShell[72019:3061f26] [com.apple.FrontBoard:SceneExtension] Realizing settings extension <_UISceneHostingSheetPresentationSettings> on FBSSceneSettings
+2026-08-10 07:15:39.459 Df OttselShell[72019:3061f1c] [com.apple.UIKit:UIScreen] Evaluated capturing state as 0 on <UIScreen: 0x107008860> for CADisplay KVO
+2026-08-10 07:15:39.460 Df OttselShell[72019:3061f26] [com.apple.FrontBoard:SceneExtension] Realizing settings extension <_UISceneHostingSheetPresentationClientSettings> on FBSSceneClientSettings
+2026-08-10 07:15:39.460 Df OttselShell[72019:3061f26] [com.apple.FrontBoard:SceneExtension] Realizing settings extension <_UISceneHostingEventDeferringSettings> on FBSSceneSettings
+2026-08-10 07:15:39.461 Df OttselShell[72019:3061f26] [com.apple.FrontBoard:SceneExtension] Realizing settings extension <UIKit__UITypedKeyValueSceneSettings> on FBSSceneSettings
+2026-08-10 07:15:39.462 Df OttselShell[72019:3061f26] [com.apple.FrontBoard:SceneExtension] Realizing settings extension <UIKit__UITypedKeyValueSceneSettings> on FBSSceneClientSettings
+2026-08-10 07:15:39.462 Df OttselShell[72019:3061f1c] [com.apple.Accessibility:AXSupportCommon] Read CategoryName: per-app = 1, category name = (null)
+2026-08-10 07:15:39.462 Df OttselShell[72019:3061f1c] [com.apple.Accessibility:AXSupportCommon] Read CategoryName: per-app = 0, category name = (null)
+2026-08-10 07:15:39.462 Df OttselShell[72019:3061f2b] [com.apple.FrontBoard:SceneExtension] Realizing settings extension FBSSceneSettingsCore on FBSSceneSettings
+2026-08-10 07:15:39.464 Df OttselShell[72019:3061f2b] [com.apple.FrontBoard:SceneExtension] Realizing settings extension FBSSceneClientSettingsCore on FBSSceneClientSettings
+2026-08-10 07:15:39.465 Df OttselShell[72019:3061f2b] [com.apple.FrontBoard:SceneExtension] UIMutableApplicationSceneSettings setting counterpart class: UIApplicationSceneSettings
+2026-08-10 07:15:39.465 Df OttselShell[72019:3061f2b] [com.apple.FrontBoard:SceneExtension] UIMutableApplicationSceneClientSettings setting counterpart class: UIApplicationSceneClientSettings
+2026-08-10 07:15:39.465 Df OttselShell[72019:3061f2b] [com.apple.FrontBoard:SceneExtension] Realizing settings extension FBSSceneTransitionContextCore on FBSSceneTransitionContext
+2026-08-10 07:15:39.960 A  OttselShell[72019:3061f2b] (CoreFoundation) Updating Key-Value Observers Of Preferences
+2026-08-10 07:15:39.977 Df OttselShell[72019:3061f1c] [com.apple.dt.xctest:Default] Registering for test daemon availability notify post.
+2026-08-10 07:15:39.977 Df OttselShell[72019:3061f1c] [com.apple.dt.xctest:Default] notify_get_state check indicated test daemon not ready.
+2026-08-10 07:15:39.977 Df OttselShell[72019:3061f1c] [com.apple.dt.xctest:Default] notify_get_state check indicated test daemon not ready.
+2026-08-10 07:15:39.977 Df OttselShell[72019:3061f1c] [com.apple.dt.xctest:Default] notify_get_state check indicated test daemon not ready.
+2026-08-10 07:15:39.977 Df OttselShell[72019:3061f1c] [com.apple.UIKit:Application] Deactivation reason added: 11; deactivation reasons: 1024 -> 3072; animating application lifecycle event: 0
+2026-08-10 07:15:39.977 Df OttselShell[72019:3061f1c] [com.apple.UIKit:ViewServices] Launching as view service: NO
+2026-08-10 07:15:39.978 Df OttselShell[72019:3061f1c] [com.apple.UIKit:Application] Deactivation reason removed: 10; deactivation reasons: 3072 -> 2048; animating application lifecycle event: 0
+2026-08-10 07:15:39.980 Df OttselShell[72019:3061f1c] [com.apple.UIKit:EventBus] Event Timing Profile for Touch: not found, path="/System/Library/EventTimingProfiles/Sim.Touch.plist"
+2026-08-10 07:15:39.980 Df OttselShell[72019:3061f1c] [com.apple.UIKit:EventBus] Event Timing Profile for Pencil: not found, path="/System/Library/EventTimingProfiles/Sim.Pencil.plist"
+2026-08-10 07:15:39.980 Df OttselShell[72019:3061f1c] [com.apple.UIKit:UpdateScheduler] Selected display: name=LCD (PurpleMain), id=1
+2026-08-10 07:15:39.982 Df OttselShell[72019:3061f1c] [com.apple.UIKit:Application] Deactivation reason added: 5; deactivation reasons: 2048 -> 2080; animating application lifecycle event: 1
+2026-08-10 07:15:39.982 Df OttselShell[72019:3061f1c] [com.apple.UIKit:InterfaceStyle] Not push traits update to screen for new style 1, <UIWindowScene: 0x105614a30> (A119460B-6620-4950-B652-CDA2954DCC51)
+2026-08-10 07:15:39.982 Df OttselShell[72019:3061f1c] [com.apple.UIKit:InterfaceStyle] Should send trait collection or coordinate space update, interface style 1 -> 1, <UIWindowScene: 0x105614a30> (A119460B-6620-4950-B652-CDA2954DCC51)
+2026-08-10 07:15:39.983 Df OttselShell[72019:3061f1c] [com.apple.UIKit:InterfaceStyle] Not push traits update to screen for new style 1, <UIWindowScene: 0x105614a30> (A119460B-6620-4950-B652-CDA2954DCC51)
+2026-08-10 07:15:39.983 Df OttselShell[72019:3061f1c] [com.apple.UIKit:HomeAffordanceObservation] Initializing: <_UIHomeAffordanceSceneNotifier: 0x600002924a10>; with scene: <UIWindowScene: 0x105614a30>
+2026-08-10 07:15:39.983 Df OttselShell[72019:3061f1c] [com.apple.BacklightServices:scenes] 0x600000d34930 setDelegate:<0x600000d36250 _UIBacklightEnvironment> hasDelegate:YES for environment:sceneID:com.ottsel.shell-default
+2026-08-10 07:15:39.983 Df OttselShell[72019:3061f1c] [com.apple.UIKit:InterfaceStyle] Not push traits update to screen for new style 1, <UIWindowScene: 0x105614a30> (A119460B-6620-4950-B652-CDA2954DCC51)
+2026-08-10 07:15:39.983 Df OttselShell[72019:3061f1c] [com.apple.UIKit:EventDeferring] [0x6000029249a0] Initialized with scene: <UIWindowScene: 0x105614a30>; behavior: <_UIEventDeferringBehavior_iOS: 0x600000227c40>; availableForProcess: 1, systemShellManagesKeyboardFocus: 1
+2026-08-10 07:15:39.984 Df OttselShell[72019:3061f1c] [com.apple.xpc:connection] [0x105615960] activating connection: mach=false listener=false peer=false name=(anonymous)
+2026-08-10 07:15:40.013 Df OttselShell[72019:3061f1c] [com.apple.BackBoard:EventDelivery] policyStatus:<BKSHIDEventDeliveryPolicyObserver: 0x60000210b610; process scope; status: target> was:none
+2026-08-10 07:15:40.013 Df OttselShell[72019:3061f1c] [com.apple.UIKit:KeyWindow] Setting default evaluation strategy for UIUserInterfaceIdiomPhone to LastOneWins
+2026-08-10 07:15:40.013 Df OttselShell[72019:3061f1c] [com.apple.UIKit:KeyWindow] Scene target of keyboard event deferring environment did change: 1; scene: UIWindowScene: 0x105614a30; scene identity: com.apple.frontboard.systemappservices/FBSceneManager:sceneID%3Acom.ottsel.shell-default
+2026-08-10 07:15:40.013 Df OttselShell[72019:3061f1c] [com.apple.UIKit:EventDeferring] [0x6000029249a0] Scene target of event deferring environments did update: scene: 0x105614a30; current systemShellManagesKeyboardFocus: 1; systemShellManagesKeyboardFocusForScene: 1; eligibleForRecordRemoval: 1;
+2026-08-10 07:15:40.013 Df OttselShell[72019:3061f1c] [com.apple.UIKit:KeyWindow] Scene became target of keyboard event deferring environment: UIWindowScene: 0x105614a30; scene identity: com.apple.frontboard.systemappservices/FBSceneManager:sceneID%3Acom.ottsel.shell-default
+2026-08-10 07:15:40.013 Df OttselShell[72019:3061f1c] [com.apple.UIKit:KeyWindow] Setting default evaluation strategy for UIUserInterfaceIdiomPhone to SystemShellManaged
+2026-08-10 07:15:40.013 Df OttselShell[72019:3061f1c] [com.apple.UIKit:KeyWindow] Key window needs update: 0; currentKeyWindowScene: 0x0; evaluatedKeyWindowScene: 0x105614a30; currentApplicationKeyWindow: 0x0; evaluatedApplicationKeyWindow: 0x0; reason: UIWindowScene: 0x105614a30: Window scene became target of keyboard environment
+2026-08-10 07:15:40.013 Df OttselShell[72019:3061f1c] [com.apple.UIKit:InterfaceStyle] Not push traits update to screen for new style 1, <UIWindowScene: 0x105614a30> (A119460B-6620-4950-B652-CDA2954DCC51)
+2026-08-10 07:15:40.014 Df OttselShell[72019:3061f1c] [com.apple.UIKit:InterfaceStyle] Not push traits update to screen for new style 1, <UIWindowScene: 0x105614a30> (A119460B-6620-4950-B652-CDA2954DCC51)
+2026-08-10 07:15:40.014 Df OttselShell[72019:3061f1c] [com.apple.UIKit:InterfaceStyle] Not push traits update to screen for new style 1, <UIWindowScene: 0x105614a30> (A119460B-6620-4950-B652-CDA2954DCC51)
+2026-08-10 07:15:40.015 Df OttselShell[72019:3061f1c] [com.apple.UIKit:AssetManager] Could not load asset catalog from bundle NSBundle </Users/chrissotraidis/Library/Developer/CoreSimulator/Devices/08636791-2675-4675-8335-EF72EF954DCF/data/Containers/Bundle/Application/65B3702E-1609-4849-9FE7-10C676E17B66/OttselShell.app> (loaded): Error Domain=NSCocoaErrorDomain Code=260 "RunTimeThemeRefForBundleIdentifierAndName() couldn't find Assets.car in bundle with identifier: com.ottsel.shell" UserInfo={NSLocalizedDescription=RunTimeThemeRefForBundleIdentifierAndName() couldn't find Assets.car in bundle with identifier: com.ottsel.shell}
+2026-08-10 07:15:40.016 Df OttselShell[72019:3061f1c] [com.apple.UIKit:InterfaceStyle] Not push traits update to screen for new style 1, <UIWindowScene: 0x105614a30> (A119460B-6620-4950-B652-CDA2954DCC51)
+2026-08-10 07:15:40.019 Df OttselShell[72019:3061f1c] [com.apple.UIKit:AppLifecycle] sceneOfRecord: sceneID: sceneID:com.ottsel.shell-default  persistentID: A119460B-6620-4950-B652-CDA2954DCC51
+2026-08-10 07:15:40.019 Df OttselShell[72019:3061f1c] [com.apple.UIKit:Application] Ignoring already applied deactivation reason: 5; deactivation reasons: 2080
+2026-08-10 07:15:40.019 Df OttselShell[72019:3061f1c] [com.apple.UIKit:Application] Deactivation reason added: 12; deactivation reasons: 2080 -> 6176; animating application lifecycle event: 1
+2026-08-10 07:15:40.019 Df OttselShell[72019:3061f1c] [com.apple.UIKit:Application] Deactivation reason removed: 11; deactivation reasons: 6176 -> 4128; animating application lifecycle event: 1
+2026-08-10 07:15:40.020 Df OttselShell[72019:3061f28] [com.apple.UIIntelligenceSupport:xpc] establishing connection to agent
+2026-08-10 07:15:40.020 Df OttselShell[72019:3061f1c] [com.apple.UIKit:InterfaceStyle] Not push traits update to screen for new style 1, <UIWindowScene: 0x105614a30> (A119460B-6620-4950-B652-CDA2954DCC51)
+2026-08-10 07:15:40.020 Df OttselShell[72019:3061f28] [com.apple.xpc:session] [0x6000021097c0] Session created.
+2026-08-10 07:15:40.020 Df OttselShell[72019:3061f28] [com.apple.xpc:session] [0x6000021097c0] Session created from connection [0x600003d0ce10]
+2026-08-10 07:15:40.020 Df OttselShell[72019:3061f28] [com.apple.xpc:connection] [0x600003d0ce10] activating connection: mach=true listener=false peer=false name=com.apple.uiintelligencesupport.agent
+2026-08-10 07:15:40.020 Df OttselShell[72019:3061f28] [com.apple.xpc:session] [0x6000021097c0] Session activated
+2026-08-10 07:15:40.021 Df OttselShell[72019:3061f1c] [com.apple.network:activity] Create activity from XPC object <nw_activity 50:1 [35F84118-3D92-453E-B058-3016928CA0E8] (reporting strategy default)>
+2026-08-10 07:15:40.021 Df OttselShell[72019:3061f1c] [com.apple.network:activity] Create activity from XPC object <nw_activity 50:2 [2AEA094A-C49E-4246-BFF0-C61E94D75FC3] (reporting strategy default)>
+2026-08-10 07:15:40.021 Df OttselShell[72019:3061f1c] [com.apple.network:activity] Set activity <nw_activity 50:1 [35F84118-3D92-453E-B058-3016928CA0E8] (reporting strategy default)> as the global parent
+2026-08-10 07:15:40.021 Df OttselShell[72019:3061f1c] [com.apple.UIKit:BackgroundTask] Ending background task with UIBackgroundTaskIdentifier: 1
+2026-08-10 07:15:40.021 Df OttselShell[72019:3061f1c] [com.apple.UIKit:BackgroundTask] Ending task with identifier 1 and description: <_UIBackgroundTaskInfo: 0x6000017050c0>: taskID = 1, taskName = Launch Background Task for Coalescing, creationTime = 2742733 (elapsed = 0), _expireHandler: (null)
+2026-08-10 07:15:40.021 Df OttselShell[72019:3061f1c] [com.apple.UIKit:BackgroundTask] Decrementing reference count for assertion <BKSProcessAssertion: 0x600002128be0> (used by background task with identifier 1: <_UIBackgroundTaskInfo: 0x6000017050c0>: taskID = 1, taskName = Launch Background Task for Coalescing, creationTime = 2742733 (elapsed = 0))
+2026-08-10 07:15:40.021 Df OttselShell[72019:3061f1c] [com.apple.UIKit:BackgroundTask] Will invalidate assertion: <BKSProcessAssertion: 0x600002128be0> for task identifier: 1
+2026-08-10 07:15:40.022 Df OttselShell[72019:3061f1c] [com.apple.UIKit:AppLifecycle] sceneOfRecord: sceneID: sceneID:com.ottsel.shell-default  persistentID: A119460B-6620-4950-B652-CDA2954DCC51
+2026-08-10 07:15:40.022 A  OttselShell[72019:3061f1c] (CoreFoundation) Updating Key-Value Observers Of Preferences
+2026-08-10 07:15:40.027 A  OttselShell[72019:3061f2f] (RunningBoardServices) didChangeInheritances
+2026-08-10 07:15:40.059 Df OttselShell[72019:3061f1c] [com.apple.UIKit:AppLifecycle] sceneOfRecord: sceneID: sceneID:com.ottsel.shell-default  persistentID: A119460B-6620-4950-B652-CDA2954DCC51
+2026-08-10 07:15:40.059 A  OttselShell[72019:3061f2f] (RunningBoardServices) didChangeInheritances
+2026-08-10 07:15:40.061 Df OttselShell[72019:3061f1c] [com.apple.gamecontroller:Session] Creating global game controller session...
+2026-08-10 07:15:40.065 Df OttselShell[72019:3061f1c] [com.apple.BackBoard:EventDelivery] policyStatus:<BKSHIDEventDeliveryPolicyObserver: 0x6000021513b0; process scope; status: target> was:none
+2026-08-10 07:15:40.065 Df OttselShell[72019:3061f1c] You need UIApplicationSupportsIndirectInputEvents in your Info.plist for mouse support
+2026-08-10 07:15:40.076 Df OttselShell[72019:3061f26] [com.apple.xpc:connection] [0x10703c600] activating connection: mach=true listener=false peer=false name=com.apple.fontservicesd
+2026-08-10 07:15:40.103 Df OttselShell[72019:3061f1c] [com.apple.runningboard:connection] Creating side-channel connection to com.apple.runningboard
+2026-08-10 07:15:40.103 Df OttselShell[72019:3061f1c] [com.apple.xpc:connection] [0x600003d0ad00] activating connection: mach=true listener=false peer=false name=com.apple.runningboard
+2026-08-10 07:15:40.103 Df OttselShell[72019:3061f1c] [com.apple.runningboard:process] Hit the server for a process handle 17858ad700011953 that resolved to: [app<com.ottsel.shell((null))>:72019]
+2026-08-10 07:15:40.104 A  OttselShell[72019:3061f2f] (RunningBoardServices) didChangeInheritances
+2026-08-10 07:15:40.104 Df OttselShell[72019:3061f1c] [com.apple.UIKit:Orientation] <UIWindowScene: 0x105614a30> (A119460B-6620-4950-B652-CDA2954DCC51) Scene updated orientation preferences: none -> ( Ll Lr )
+2026-08-10 07:15:40.105 Df OttselShell[72019:3061f1c] [com.apple.UIKit:InterfaceStyle] Not push traits update to screen for new style 1, <UIWindowScene: 0x105614a30> (A119460B-6620-4950-B652-CDA2954DCC51)
+2026-08-10 07:15:40.105 Df OttselShell[72019:3061f1c] [com.apple.UIKit:KeyWindow] Key window API is scene-level: YES
+2026-08-10 07:15:40.105 Df OttselShell[72019:3061f1c] [com.apple.UIKit:KeyWindow] UIWindowScene: 0x105614a30: Window became key in scene: UIWindow: 0x107009500; contextId: 0x2770A40D: reason: UIWindowScene: 0x105614a30: Window requested to become key in scene: 0x107009500
+2026-08-10 07:15:40.105 Df OttselShell[72019:3061f1c] [com.apple.UIKit:KeyWindow] Key window needs update: 1; currentKeyWindowScene: 0x0; evaluatedKeyWindowScene: 0x105614a30; currentApplicationKeyWindow: 0x0; evaluatedApplicationKeyWindow: 0x107009500; reason: UIWindowScene: 0x105614a30: Window requested to become key in scene: 0x107009500
+2026-08-10 07:15:40.105 Df OttselShell[72019:3061f1c] [com.apple.UIKit:KeyWindow] Window did become application key: UIWindow: 0x107009500; contextId: 0x2770A40D; scene identity: com.apple.frontboard.systemappservices/FBSceneManager:sceneID%3Acom.ottsel.shell-default
+2026-08-10 07:15:40.105 Df OttselShell[72019:3061f1c] [com.apple.UIKit:EventDeferring] [0x6000029249a0] Begin local event deferring requested for token: 0x60000260b8a0; environments: 1; reason: UIWindowScene: 0x105614a30: Begin event deferring in keyboardFocus for window: 0x107009500
+2026-08-10 07:15:40.107 Df OttselShell[72019:3061f26] [com.apple.BackBoard:EventDelivery] policyStatus:<BKSHIDEventDeliveryPolicyObserver: 0x60000210b610; token: com.apple.frontboard.systemappservices/FBSceneManager:sceneID%3Acom.ottsel.shell-default; status: ancestor> was:target
+2026-08-10 07:15:40.107 Df OttselShell[72019:3061f26] [com.apple.BackBoard:EventDelivery] observerPolicyDidChange: 0x60000210b610 -> <_UIKeyWindowSceneObserver: 0x600000d36610>
+2026-08-10 07:15:40.122 Df OttselShell[72019:3061f1c] [com.apple.xpc:connection] [0x10710bc80] activating connection: mach=true listener=false peer=false name=com.apple.metal.simulator
+2026-08-10 07:15:40.124 Df OttselShell[72019:3061f1c] [com.apple.xpc:connection] [0x10710c610] activating connection: mach=true listener=false peer=false name=com.apple.metal.simulator
+2026-08-10 07:15:40.124 Df OttselShell[72019:3061f1c] [com.apple.xpc:connection] [0x105720920] activating connection: mach=true listener=false peer=false name=com.apple.metal.simulator
+2026-08-10 07:15:40.126 Df OttselShell[72019:3061f1c] [com.apple.UIKit:Orientation] <UIWindowScene: 0x105614a30> (A119460B-6620-4950-B652-CDA2954DCC51) Scene updated orientation preferences: ( Ll Lr ) -> ( Pu )
+2026-08-10 07:15:40.126 Df OttselShell[72019:3061f1c] [com.apple.UIKit:Orientation] <UIWindowScene: 0x105614a30> (A119460B-6620-4950-B652-CDA2954DCC51) Scene updated orientation preferences: ( Pu ) -> ( Ll Lr )
+2026-08-10 07:15:40.128 E  OttselShell[72019:3061f1c] [com.apple.UIKit:Assert] A new orientation transaction token is being requested while a valid one already exists. reason=Root View Controller Setup: <SDL_uikitviewcontroller: 0x10bda3600>; windowOrientation=landscapeRight; sceneOrientation=portrait; existingTransaction=<_UIForcedOrientationTransactionToken: 0x60000177c400; state: committing; originalOrientation: portrait (1)>
+2026-08-10 07:15:40.144 Df OttselShell[72019:3061f1c] [com.apple.UIKit:Orientation] <UIWindowScene: 0x105614a30> (A119460B-6620-4950-B652-CDA2954DCC51) Scene updated orientation preferences: ( Ll Lr ) -> ( Pu )
+2026-08-10 07:15:40.144 Df OttselShell[72019:3061f1c] [com.apple.UIKit:Orientation] <UIWindowScene: 0x105614a30> (A119460B-6620-4950-B652-CDA2954DCC51) Scene updated orientation preferences: ( Pu ) -> ( Ll Lr )
+2026-08-10 07:15:40.146 E  OttselShell[72019:3061f1c] [com.apple.UIKit:Assert] A new orientation transaction token is being requested while a valid one already exists. reason=Root View Controller Setup: <SDL_uikitviewcontroller: 0x10bda3600>; windowOrientation=landscapeRight; sceneOrientation=portrait; existingTransaction=<_UIForcedOrientationTransactionToken: 0x60000173b000; state: committing; originalOrientation: landscapeRight (3)>
+2026-08-10 07:15:40.150 Df OttselShell[72019:3061f1c] [com.apple.UIKit:UpdateScheduler] Target list changed: <CADisplay:LCD PurpleMain>
+2026-08-10 07:15:40.158 Df OttselShell[72019:3061f1c] [com.apple.UIKit:AppLifecycle] sceneOfRecord: sceneID: sceneID:com.ottsel.shell-default  persistentID: A119460B-6620-4950-B652-CDA2954DCC51
+2026-08-10 07:15:40.158 Df OttselShell[72019:3061f1c] [com.apple.UIKit:InterfaceStyle] Not push traits update to screen for new style 1, <UIWindowScene: 0x105614a30> (A119460B-6620-4950-B652-CDA2954DCC51)
+2026-08-10 07:15:40.158 Df OttselShell[72019:3061f1c] [com.apple.UIKit:AppLifecycle] sceneOfRecord: sceneID: sceneID:com.ottsel.shell-default  persistentID: A119460B-6620-4950-B652-CDA2954DCC51
+2026-08-10 07:15:40.158 Df OttselShell[72019:3061f1c] [com.apple.UIKit:Application] Deactivation reason removed: 12; deactivation reasons: 4128 -> 32; animating application lifecycle event: 1
+2026-08-10 07:15:40.158 Df OttselShell[72019:3061f1c] [com.apple.KeyboardArbiter:Client] Send setDeactivating: N (-DeactivationReason:SuspendedEventsOnly)
+2026-08-10 07:15:40.158 Df OttselShell[72019:3061f1c] [com.apple.UIKit:Application] Deactivation reason removed: 5; deactivation reasons: 32 -> 0; animating application lifecycle event: 0
+2026-08-10 07:15:40.159 A  OttselShell[72019:3061f1c] (GameController) Notify ApplicationDidBecomeActive
+2026-08-10 07:15:40.159 Df OttselShell[72019:3061f1c] [com.apple.KeyboardArbiter:Client] startConnection
+2026-08-10 07:15:40.160 Df OttselShell[72019:3061f1c] [com.apple.xpc:connection] [0x107112660] activating connection: mach=true listener=false peer=false name=com.apple.UIKit.KeyboardManagement.hosted
+2026-08-10 07:15:40.160 Df OttselShell[72019:3061f1c] [com.apple.UIKit:AppLifecycle] sceneOfRecord: sceneID: sceneID:com.ottsel.shell-default  persistentID: A119460B-6620-4950-B652-CDA2954DCC51
+2026-08-10 07:15:40.160 Df OttselShell[72019:3061f1c] [com.apple.UIKit:AppLifecycle] sceneOfRecord: sceneID: sceneID:com.ottsel.shell-default  persistentID: A119460B-6620-4950-B652-CDA2954DCC51
+2026-08-10 07:15:40.169 A  OttselShell[72019:3061f1c] (GameController) [GCDeviceSession] Activate
+2026-08-10 07:15:40.175 A  OttselShell[72019:3061f1c] (GameControllerFoundation) [HID Event System Client] Notify HID Service Matched
+2026-08-10 07:15:40.177 A  OttselShell[72019:3061f1c] (GameControllerFoundation) [HID Event System Client] Notify HID Service Matched
+2026-08-10 07:15:40.192 A  OttselShell[72019:3061f1c] (GameControllerFoundation) [HID Event System Client] Activate
+2026-08-10 07:15:40.193 Df OttselShell[72019:3061f1c] [com.apple.CoreAnalytics:client] No XPC connection in Simulator
+2026-08-10 07:15:40.193 Df OttselShell[72019:3061f1c] [com.apple.UIKit:EventDeferring] [0x6000029249a0] Scene target of event deferring environments did update: scene: 0x105614a30; current systemShellManagesKeyboardFocus: 1; systemShellManagesKeyboardFocusForScene: 1; eligibleForRecordRemoval: 1;
+2026-08-10 07:15:40.193 Df OttselShell[72019:3061f1c] [com.apple.UIKit:KeyWindow] Scene became target of keyboard event deferring environment: UIWindowScene: 0x105614a30; scene identity: com.apple.frontboard.systemappservices/FBSceneManager:sceneID%3Acom.ottsel.shell-default
+2026-08-10 07:15:40.193 Df OttselShell[72019:3061f1c] [com.apple.UIKit:AppLifecycle] sceneOfRecord: sceneID: sceneID:com.ottsel.shell-default  persistentID: A119460B-6620-4950-B652-CDA2954DCC51
+2026-08-10 07:15:40.193 Df OttselShell[72019:3061f1c] [com.apple.UIKit:Orientation] <UIWindowScene: 0x105614a30> (A119460B-6620-4950-B652-CDA2954DCC51) Scene will change interface orientation: landscapeRight (3)
+2026-08-10 07:15:40.194 Df OttselShell[72019:3061f1c] [com.apple.UIKit:InterfaceStyle] Should send trait collection or coordinate space update, interface style 1 -> 1, <UIWindowScene: 0x105614a30> (A119460B-6620-4950-B652-CDA2954DCC51)
+2026-08-10 07:15:40.195 Df OttselShell[72019:3061f1c] (UIKitCore) Unbalanced calls to begin/end appearance transitions for <SDL_uikitviewcontroller: 0x10bda3600>.
+2026-08-10 07:15:40.195 Df OttselShell[72019:3061f1c] (UIKitCore) Unbalanced calls to begin/end appearance transitions for <SDL_uikitviewcontroller: 0x10bda3600>.
+2026-08-10 07:15:40.195 Df OttselShell[72019:3061f1c] (UIKitCore) Unbalanced calls to begin/end appearance transitions for <SDL_uikitviewcontroller: 0x10bda3600>.
+2026-08-10 07:15:40.195 Df OttselShell[72019:3061f1c] (UIKitCore) Unbalanced calls to begin/end appearance transitions for <SDL_uikitviewcontroller: 0x10bda3600>.
+2026-08-10 07:15:40.196 Df OttselShell[72019:3061f1c] [com.apple.KeyboardArbiter:Client] handleKeyboardChange: set currentKeyboard:N (wasKeyboard:N)
+2026-08-10 07:15:40.196 Df OttselShell[72019:3061f1c] [com.apple.UIKit:KeyboardSceneDelegate] forceReloadInputViews
+2026-08-10 07:15:40.196 Df OttselShell[72019:3061f1c] [com.apple.UIKit:KeyboardSceneDelegate] Reloading input views for: <(null): 0x0; > force: 1
+2026-08-10 07:15:40.196 Df OttselShell[72019:3061f1c] [com.apple.UIKit:KeyboardArbiterClientLog] isWritingToolsHandlingKeyboardTracking:Y (WT ready:Y, Arbiter ready:Y)
+2026-08-10 07:15:40.204 Df OttselShell[72019:3061f1c] [com.apple.xpc:connection] [0x600003d481e0] activating connection: mach=true listener=false peer=false name=com.apple.IOSurface.Remote
+2026-08-10 07:15:40.504 A  OttselShell[72019:3061f26] (RunningBoardServices) didChangeInheritances
+2026-08-10 07:15:40.609 A  OttselShell[72019:3061f2f] (RunningBoardServices) didChangeInheritances
+2026-08-10 07:15:40.952 Df OttselShell[72019:3061f1c] [com.apple.BackBoard:Display] [FBSDisplaySource 1-1] silently connecting raw configuration: <FBSDisplayConfiguration: 0x600003d49ef0; Main; mode: "834x1210@2x 60Hz p3 SDR">

@@ -1387,3 +1387,84 @@ return address, not the call-site continuation
   0x001f2df4). So the shim semantics are a real defect to fix, but the
   faulting instruction still needs runtime identification (lldb) before
   changing the emitter.
+
+## 2026-08-10 (BOT7) — audit passes; rfn continuation fix moves S2.1 forward
+
+- **Audited:** trace4 fault shape/call chain, offline dump scan, catch-frame
+  contract, A1 evidence, handoff commit scope, and a fresh-pin canonical-patch
+  apply check. The full reconciliation is
+  `docs/reports/2026-08-10-audit-bot7.md`.
+- **Corrected:** the live trampoline disassembly identified the faulting ret at
+  `ee+0x0244a700`. The earlier conclusion that the rfn catch-frame's wrong
+  continuation could not cause the raw-rfn fault was false: returning to the
+  trampoline bypassed rfn cleanup, then that epilogue popped raw rfn from its
+  stack slot.
+- **Fixed with regression:** the ARM64 call shim now saves incoming x30 below
+  an `adr x17, post-blr` stack return, discards that continuation on the normal
+  path, then restores x30. The focused semantic case failed on the old emitter
+  and passes after the fix; all existing A1.0 semantic assertions pass.
+- **Validated and booted:** regenerated KERNEL/GAME.CGO (332 targets), ARM64
+  validator PASS for 5,337,088 words / 346 objects, rebuilt/signed the app,
+  stopped the held trace4 process, and launched one replacement Simulator app.
+  `time-of-day` top-level now returns: raw-rfn ret is fixed.
+- **New blocker:** a distinct native PC fault immediately after that return,
+  symbolized as `VULKAN_CreateDeviceResources +7516`. It is not an EE-relative
+  GOAL return. Evidence: `docs/evidence/S2/s21-bot7-shimfix-boot.log`.
+
+## 2026-08-10 (BOT8 continuation) — trace-free S2.1 static-symbol fault
+
+- The native-PC attribution was corrected: after the C-to-GOAL bridge began
+  preserving x19-x28 and q8-q15, the boot advanced through the prior
+  post-time-of-day boundary. The temporary call tracer was then removed and
+  KERNEL.CGO/GAME.CGO regenerated (ARM64 semantic harness + full validator
+  pass) to reproduce the product path.
+- The trace-free app deterministically holds at `ee+0x03db00c0`, a top-level
+  symbol-value load while linking GAME objects. Its signal context has
+  `x21=0x18fe04`, `x22=ee`, `x16=0x00195cf4`, and `si_addr=0x00195cf4`:
+  execution is attempting a raw symbol-slot access instead of its
+  EE-addressed counterpart. `ee+0x195cf4` contains `0x04f00e14`, a C-stub
+  value, so the raw address is specifically a symbol slot rather than a
+  callable entry. Evidence: `docs/evidence/S2/s21-product-after-trace-removal.log`.
+- Live disassembly shows a type-method call immediately before the failing
+  symbol-value sequence. Next: add a top-level (not function-only) A1.0
+  regression that exercises this `deftype` initializer sequence, then fix the
+  proven static-symbol/return-state defect and rerun the product boot.
+
+## 2026-08-10 (S2.1) — process-context stub fix validated; later dispatch fault
+
+- Fixed the no-emit C-stub order: `mov x3, x20` must execute before `br x17`.
+  The old order made process-heap `object-new` pass its stale stub pointer as
+  C argument 4 and return `#f`. A1.0 regression 16 and the full semantic suite
+  pass.
+- The rebuilt Simulator now advances beyond that `font-h` fault. The next,
+  distinct fault is a zero type-method field at `ee+0x0019b8a30` which branches
+  to `ee+0`; the continuation is `ee+0x0019b8a34`. Evidence:
+  `docs/evidence/S2/s21-cstub-pp-and-dispatch.md`.
+
+## 2026-08-10 — S2.1 stop checkpoint: ARM64 `AND` encoding bug isolated
+
+- **Runtime state at stop:** GAME.CGO's 346 objects continue to compile/link,
+  and the boot is past the raw-rfn/process-spawn faults. S2.1 remains ACTIVE:
+  there is no stable renderer-ready boundary and no Jak frame.
+- **Live proof:** object 316 (`fuel-cell`) executes the `merc-ctrl` login path.
+  A valid `merc-ctrl` has `header.eye-ctrl = 0` at `this+0x5c`, so
+  `(not (logtest? -65536 eye-ctrl))` must take its no-eye branch. Live ARM64
+  code instead executes `add x0,x0,x1` for the `logand`, branches to the
+  eye-shader loop, constructs raw x0=0x10, and faults in the callee.
+- **Source proof:** `compile_logand` and `IR_IntegerMath` select `AND_64`, but
+  `IGen::and_gpr64_gpr64` encodes ADD (`0b10001011000`) at
+  `goalc/emitter/IGenARM64.cpp:2282-2287`. This is the precise, unmodified
+  next defect—not a missing merc asset or an invitation to patch game source.
+- **Stop hygiene:** killed the held OttselShell process; one Simulator remains
+  booted. Removed the temporary object-316 SIGSTOP probe. No build or new
+  runtime was launched after the diagnosis.
+- **Next:** add a failing A1.0 AND encoding/semantics regression, correct only
+  the AND encoder, run the full semantic suite, regenerate/validate CGOs,
+  rebuild/boot once, and prove the zero-eye branch advances. Full details and
+  commands/constraints are in `docs/reports/2026-08-10-bot8-handoff.md` and
+  `docs/BOT9_PROMPT.md`.
+- **Publication hygiene:** canonical `patches/h3-jak1-host-boot.patch` was
+  regenerated from the pinned OpenGOAL worktree (including required source
+  proof tools, excluding asset guards and disassembly scratch output). It
+  clean-applies to `641fb572e876750d8618434d9f7c1a531b43b366` and reverse-
+  applies against the live worktree.

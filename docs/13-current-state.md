@@ -60,7 +60,7 @@ Read `docs/15-progress-audit.md` first for the corrected execution order.
 | **A1.1 real GOAL in signed `__TEXT`** | **PASS (2026-08-09)** — real KERNEL.CGO slice executes on the Simulator; codesign verifies | `docs/evidence/A1/a11-signed-text-slice.md` |
 | **A1.2 execution-permission proof** | **PASS (2026-08-09)** — AOT path audited clean; slice passes without CGO bundles; codesign/Mach-O evidence | `docs/evidence/A1/a12-execution-permission-proof.md` |
 | **A1 signed-native execution** | **PASS (2026-08-09)** — real OpenGOAL artifact executes from signed Mach-O text, no runtime-created executable code | `docs/evidence/A1/*` |
-| **S2.1 GAME.CGO engine integration** | **ACTIVE — NEXT GATE** — resume with the localized mood-tables fault | `docs/evidence/A1/a1-object204-bounded-trace.md` |
+| **S2.1 GAME.CGO engine integration** | **ACTIVE (2026-08-10)** — corrected the ARM64 asm-func call-return contract and advanced through the former time-of-day/raw-rfn fault. The current live `merc-ctrl` zero-eye-control crash is a proven ARM64 AND encoder bug (`and_gpr64_gpr64` emits ADD); add regression, fix narrowly, rebuild, and re-boot. No game frame or renderer-ready boundary yet. | `docs/reports/2026-08-10-bot8-handoff.md`, `docs/reports/2026-08-10-audit-bot7.md` |
 | S2.2 First game frame | blocked on S2.1 | — |
 | S3 Touch MVP + lifecycle | blocked on S2 | — |
 | R1 Handoff package | blocked on S3 | — |

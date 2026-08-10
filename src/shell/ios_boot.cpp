@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstring>
 #include <csignal>
+#include <fcntl.h>
 #include <string>
 #include <sys/mman.h>
 #include <ucontext.h>
@@ -39,6 +40,7 @@
 #include "game/kernel/jak1/klink.h"
 #include "game/kernel/jak1/kmachine.h"
 #include "game/kernel/jak1/kscheme.h"
+#include "game/mips2c/mips2c_table.h"
 #include "game/runtime.h"
 
 // Ottsel A1.0 bounded trace (TEMPORARY): ring buffer written by the goalc
@@ -54,6 +56,50 @@ extern "C" int ottsel_run_a11_slice_proof();
 namespace {
 
 std::string g_bundle_dir;
+int g_fault_log_fd = -1;
+
+// The gated fault handler may only use async-signal-safe operations.  Keep
+// its formatting local and write directly to the app's fault log and stderr.
+void raw_write(const char* data, size_t size) {
+  write(2, data, size);
+  if (g_fault_log_fd >= 0) {
+    write(g_fault_log_fd, data, size);
+  }
+}
+
+void raw_write_lit(const char* text) {
+  size_t size = 0;
+  while (text[size]) {
+    size++;
+  }
+  raw_write(text, size);
+}
+
+void raw_write_hex(uintptr_t value) {
+  char buf[2 + sizeof(value) * 2];
+  static constexpr char hex[] = "0123456789abcdef";
+  buf[0] = '0';
+  buf[1] = 'x';
+  for (size_t i = 0; i < sizeof(value) * 2; i++) {
+    buf[2 + i] = hex[(value >> ((sizeof(value) * 2 - i - 1) * 4)) & 0xf];
+  }
+  raw_write(buf, sizeof(buf));
+}
+
+void raw_write_dec(unsigned value) {
+  char buf[10];
+  size_t count = 0;
+  do {
+    buf[count++] = char('0' + (value % 10));
+    value /= 10;
+  } while (value);
+  for (size_t i = 0; i < count / 2; i++) {
+    char tmp = buf[i];
+    buf[i] = buf[count - i - 1];
+    buf[count - i - 1] = tmp;
+  }
+  raw_write(buf, count);
+}
 
 // Safe 32-bit read for the signal handler: probes the page with mincore
 // before dereferencing so a bad pointer in the dump path cannot re-fault
@@ -84,25 +130,36 @@ bool safe_read_u32(const volatile void* p, u32* out) {
 void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
   ucontext_t* uc = (ucontext_t*)ctx;
   uintptr_t pc = 0;
-  // All handler output goes through raw stderr writes: the fault may have
-  // happened inside a log call, and lg::error can deadlock/re-enter in that
-  // state (observed as a 100% CPU spin after the regs dump).
-  auto rawlog = [](const char* fmt, ...) {
-    char buf[512];
-    va_list ap;
-    va_start(ap, fmt);
-    int n = vsnprintf(buf, sizeof(buf), fmt, ap);
-    va_end(ap);
-    if (n > 0) {
-      write(2, buf, (size_t)n);
-    }
-  };
 #ifdef __aarch64__
   pc = uc->uc_mcontext->__ss.__pc;
   uintptr_t lr = uc->uc_mcontext->__ss.__lr;
   uintptr_t sp = uc->uc_mcontext->__ss.__sp;
-  rawlog("OTTSEL_IOS: fault pc=0x%lx lr=0x%lx\n", (unsigned long)pc, (unsigned long)lr);
-  rawlog("OTTSEL_IOS: fault sp=0x%lx\n", (unsigned long)sp);
+  raw_write_lit("OTTSEL_IOS: fault pc=");
+  raw_write_hex(pc);
+  raw_write_lit(" lr=");
+  raw_write_hex(lr);
+  raw_write_lit("\nOTTSEL_IOS: fault sp=");
+  raw_write_hex(sp);
+  raw_write_lit("\nOTTSEL_IOS: regs x0=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[0]);
+  raw_write_lit(" x1=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[1]);
+  raw_write_lit(" x2=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[2]);
+  raw_write_lit(" x3=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[3]);
+  raw_write_lit(" x16=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[16]);
+  raw_write_lit(" x20=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[20]);
+  raw_write_lit(" x21=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[21]);
+  raw_write_lit(" x22=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[22]);
+  raw_write_lit("\n");
+  // These broad stack/probe dumps were useful during the earlier rfn fault,
+  // but are not async-signal-safe enough for arbitrary later faults.
+#if 0
   // S2.1 debug: RAW stack slots (no address filter) so saved x30/x22 values
   // near the faulting frame are visible (the GOAL-relative filter hides
   // them).
@@ -153,7 +210,15 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
   rawlog("OTTSEL_IOS: fault lr=0x%lx x21(st)=0x%lx x22(offset)=0x%lx x16=0x%lx\n",
          (unsigned long)lr, (unsigned long)uc->uc_mcontext->__ss.__x[21],
          (unsigned long)uc->uc_mcontext->__ss.__x[22], (unsigned long)uc->uc_mcontext->__ss.__x[16]);
-  // S2.1 debug (TEMPORARY): dump the process-spawn func-slot chain so the
+  // S2.1 debug (TEMPORARY): these probes dereference GOAL-only addresses.
+  // A host-native fault (for example SDL renderer setup) must not re-fault
+  // inside this handler before its own backtrace can be captured.
+  const uintptr_t ee_for_probe = (uintptr_t)g_ee_main_mem;
+  // The original trace4-specific probes assume a process-spawn parameter
+  // layout.  They are not valid for arbitrary GAME faults and can re-fault
+  // while dereferencing a small non-pointer register value.
+  if (false && pc >= ee_for_probe && pc < ee_for_probe + 0x08000000) {
+  // Dump the process-spawn func-slot chain so the
   // func=#t regression can be traced without lldb (which cannot read these
   // pages reliably).
   {
@@ -313,16 +378,26 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
     }
   }
 #endif
-  rawlog("OTTSEL_IOS BOOT FAILED (gated): signal %d at pc=0x%lx fault addr=0x%lx\n", sig,
-         (unsigned long)pc, (unsigned long)(uintptr_t)info->si_addr);
+#endif
+  raw_write_lit("OTTSEL_IOS BOOT FAILED (gated): signal ");
+  raw_write_dec((unsigned)sig);
+  raw_write_lit(" at pc=");
+  raw_write_hex(pc);
+  raw_write_lit(" fault addr=");
+  raw_write_hex((uintptr_t)info->si_addr);
+  raw_write_lit("\n");
+#if 0
   u32 fw[4] = {0, 0, 0, 0};
   for (int i = 0; i < 4; i++) {
     safe_read_u32((volatile u32*)(pc + i * 4), &fw[i]);
   }
   rawlog("OTTSEL_IOS: faulting words: 0x%08x 0x%08x 0x%08x 0x%08x\n", fw[0], fw[1], fw[2], fw[3]);
+#endif
   // S2.1 debug: hold the process alive at the fault so lldb can attach and
   // unwind the faulting thread (the jump source is one step behind pc).
-  rawlog("OTTSEL_IOS: HELD AT FAULT for lldb attach (pid %d)\n", (int)getpid());
+  raw_write_lit("OTTSEL_IOS: HELD AT FAULT for lldb attach (pid ");
+  raw_write_dec((unsigned)getpid());
+  raw_write_lit(")\n");
   for (;;) {
     sleep(3600);
   }
@@ -343,6 +418,11 @@ void install_gated_signal_handlers() {
 
 void ottsel_ios_set_bundle_dir(const std::string& dir) {
   g_bundle_dir = dir;
+  if (g_fault_log_fd >= 0) {
+    close(g_fault_log_fd);
+  }
+  g_fault_log_fd = open((g_bundle_dir + "ottsel-fault.log").c_str(),
+                        O_WRONLY | O_CREAT | O_TRUNC, 0644);
 }
 
 std::string ottsel_ios_bundle_dir() {
@@ -400,6 +480,12 @@ void ottsel_ios_link_cgo_from_bundle(const char* cgo_name) {
   u32 count = *(u32*)dgo.data();
   lg::info("OTTSEL_IOS: {} has {} objects", cgo_name, count);
   u32 flags = LINK_FLAG_OUTPUT_LOAD | LINK_FLAG_EXECUTE | LINK_FLAG_PRINT_LOGIN;
+
+  // This replaces the host's load_and_link_dgo_from_c path, which holds
+  // *enable-method-set* for the entire package load.  A CGO can define a
+  // parent method after child types have been linked; keep inheritance
+  // propagation enabled until every top-level has run.
+  *EnableMethodSet += 1;
   u64 off = 64;
   for (u32 i = 0; i < count; i++) {
     u32 size = *(u32*)(dgo.data() + off);
@@ -414,6 +500,7 @@ void ottsel_ios_link_cgo_from_bundle(const char* cgo_name) {
     jak1::link_and_exec(stage, name, (int32_t)size, kglobalheap, flags, true);
     off = blob_off + blob_size;
   }
+  *EnableMethodSet -= 1;
   lg::info("OTTSEL_IOS: {} linked ({} objects)", cgo_name, count);
 }
 
@@ -457,6 +544,11 @@ void ottsel_ios_run_boot() {
   MasterDebug = 0;
   MasterUseKernel = 1;
   if (jak1::InitMachine() >= 0) {
+    // Match the native boot order: linking GAME invokes Mips2C callbacks,
+    // so register their C exports while arena B is writable, then seal it
+    // before any GAME top-level can call one.
+    Mips2C::register_all_jak1();
+    jak1::ottsel_stub_flip_phase_b();
     // S2.1: load the full game engine after the kernel so the game's
     // top-levels run and (in the full boot) the game processes start.
     ottsel_ios_link_cgo_from_bundle("GAME.CGO");
