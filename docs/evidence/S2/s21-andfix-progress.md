@@ -384,6 +384,32 @@ out of the global heap's allocation range (or allocate the runtime Type
 objects above the code region) so deftype-created Types are not overwritten
 by code.
 
+## Root cause mechanism: the no-emit linker places code IN the global heap
+
+`link_control::jak1_work_v3` (`game/kernel/jak1/klink.cpp`, OTTSEL_NO_EMIT
+main-segment branch) places each code segment at the heap's current
+allocation pointer:
+
+```cpp
+uint32_t seg_start = (m_heap->current.offset + page - 1) & ~(page - 1);
+uint32_t seg_end   = seg_start + round_up(code_size);
+m_heap->current.offset = seg_end;   // the code placement ADVANCES the heap
+ofh->code_infos[seg_id].offset = seg_start;
+```
+
+So the code placements ARE global-heap allocations.  The game's runtime
+Type objects (created by the deftype top-levels during the link) are
+kmalloc'd from the same heap and can land inside a later code segment's
+range; the code placement then overwrites the Type (e.g. the node's type at
+0x2381704 inside the time-of-day segment 0x2380000-0x2388434).  The kernel
+never collided because its data footprint is small; the game's larger
+allocations reach the code region.
+
+Fix direction (next iteration): place the no-emit code segments in a
+dedicated region ABOVE the global heap (a fixed code base above
+GLOBAL_HEAP_END with its own cumulative cursor), separate from the runtime
+allocations, so deftype-created Types are never overwritten by code.
+
 ## Honest status
 
 S2.1 is NOT PASS: there is no stable renderer-ready boundary and no Jak

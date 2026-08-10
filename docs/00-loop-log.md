@@ -1697,3 +1697,14 @@ return address, not the call-site continuation
 - Fix direction: keep the game code placements out of the global heap's
   allocation range (or allocate runtime Type objects above the code region)
   so deftype-created Types are not overwritten by code.
+
+## 2026-08-10 (BOT9 cont 12) — root cause: the no-emit linker places code in the global heap
+
+- `jak1_work_v3` (klink.cpp, OTTSEL_NO_EMIT) places each code segment at
+  `m_heap->current.offset` and advances the heap - the code placements ARE
+  global-heap allocations.  The game's deftype Type objects can land inside
+  a later code segment's range and get overwritten by code (the node's type
+  at 0x2381704 inside the time-of-day segment).
+- Fix direction: place no-emit code segments in a dedicated region above the
+  global heap (fixed code base above GLOBAL_HEAP_END, own cursor), separate
+  from runtime allocations.
