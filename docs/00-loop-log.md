@@ -1093,3 +1093,45 @@
 - **Next:** pin the func=#t arg corruption (candidate: freg/arg-register
   collision in IR_FunctionCall codegen for multi-arg calls, or a
   recorder-less shim arg clobber); add an A1.0 regression; regenerate; boot.
+
+## 2026-08-09 — S2.1: fn-register/arg collision + C-export pp-stub bugs fixed (A1.0 tests 12-13)
+
+### Iteration — the time-of-day process spawn now runs init-time-of-day; next fault traced
+- **Boot evidence (with the A1.0 call tracer re-enabled):** the time-of-day
+  process spawn now WORKS end-to-end once: run-function-in-process ->
+  catch-frame-new -> init-time-of-day executes (calls stack-size-set!,
+  create-launch-control).  The fault moved to a SECOND catch-frame-new
+  invocation whose func arg = 0x18fe0c (#t).
+- **Root cause #1 (fixed): the function register collided with the GOAL
+  argument registers.**  IR_FunctionCall's m_func had no register constraint,
+  so the allocator placed the fn in x2/x3 (argument slots).  The object-new
+  call passed the fn as `pp` (kmalloc failed with pp = the alloc_heap_object
+  stub 0x4f00afc); the spawn chain corrupted the func arg.  Fix:
+  IR_FunctionCall pins m_func to the reserved X16 temp on ARM64
+  (new IR_FunctionCall::set_arm64 flag).  A1.0 test 12 (a1-fnreg) fails
+  before / passes after; emitted calls now `blr x16`.
+- **Root cause #2 (fixed): the ARM64 C-export stub ignored arg3_is_pp.**  The
+  x86 stub does `mov rcx, r13` (pp -> 4th arg); the ARM64 stub did
+  `(void)arg3_is_pp`, so alloc_from_heap/new_basic/alloc_heap_object read
+  garbage pp (the fn before fix #1).  Fix: the stub now emits
+  `mov x3, x20` (0xAA1403E3) in the padding when arg3_is_pp.  A1.0 test 13
+  checks the stub source.
+- **Next fault (still open, deterministic):** the SECOND run-function-in-process
+  receives func = 0x18fe0c (#t).  Trace chain:
+  init-time-of-day -> create-launch-control (sparticle-launcher) -> a process
+  kmalloc fails with pp = 0x4f00afc (the pp REGISTER itself is corrupted to a
+  stub address during init-time-of-day's chain, before the kmalloc) ->
+  enter-state go-during-init -> set-to-run -> throw -> throw-dispatch ->
+  second catch-frame-new -> func = #t -> SIGILL at 0x18fe0c.  The pp-register
+  corruption (x20 = 0x4f00afc / 0x18fe0c) is the first anomaly and is not yet
+  root-caused; the second run-function-in-process's call is not in the trace
+  window (possibly a non-shim path).
+- **Files changed (worktree):** goalc/compiler/IR.h + IR.cpp (m_func -> X16
+  constraint), goalc/compiler/compilation/Function.cpp (set_arm64),
+  game/kernel/jak1/kscheme.cpp (arg3_is_pp stub mov x3,x20),
+  tools/ottsel_a1/semantic_regressions.cpp (tests 12-13); goalc/CMakeLists.txt
+  (temporary OTTSEL_TRACE_GOAL_CALLS define, now removed).  CGOs regenerated;
+  KERNEL 86,016 + GAME 5,120,000 words validate; A1.0 all 13 tests PASS.
+- **Next:** trace the pp-register corruption (candidates: the C-export
+  trampoline path or an unmodeled x20 write in the launch-control chain);
+  keep every fix through the A1.0 harness.

@@ -170,6 +170,30 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
     } else {
       rawlog("OTTSEL probe: func slot read FAILED\n");
     }
+    u32 rfn = 0;
+    if (safe_read_u32((volatile u32*)(ee + 0x19627c), &rfn)) {
+      rawlog("OTTSEL probe: run-function-in-process sym value@0x19627c = 0x%08x\n", rfn);
+    }
+    // The func-lookup ADRP+ADD in the no-trace time-of-day main (offset 0x12e0).
+    u32 la0 = 0, la1 = 0, la2 = 0, la3 = 0;
+    if (safe_read_u32((volatile u32*)(ee + 0x23792e0), &la0) &&
+        safe_read_u32((volatile u32*)(ee + 0x23792e4), &la1) &&
+        safe_read_u32((volatile u32*)(ee + 0x23792e8), &la2) &&
+        safe_read_u32((volatile u32*)(ee + 0x23792ec), &la3)) {
+      rawlog("OTTSEL probe: func-lookup adrp+add @0x23792e0 = 0x%08x 0x%08x 0x%08x 0x%08x\n", la0,
+             la1, la2, la3);
+    } else {
+      rawlog("OTTSEL probe: func-lookup adrp read FAILED\n");
+    }
+    // param-array contents (the func-call args) at the fault's s2 (x23).
+    u32 p0 = 0, p1 = 0, p2 = 0;
+    uintptr_t par = (uintptr_t)uc->uc_mcontext->__ss.__x[23];
+    if (safe_read_u32((volatile u32*)(ee + par + 0), &p0) &&
+        safe_read_u32((volatile u32*)(ee + par + 8), &p1) &&
+        safe_read_u32((volatile u32*)(ee + par + 16), &p2)) {
+      rawlog("OTTSEL probe: param-block@0x%lx = 0x%08x 0x%08x 0x%08x\n",
+             (unsigned long)par, p0, p1, p2);
+    }
   }
   // A1.0 bounded trace: last 48 GOAL->GOAL calls + the last target's code.
   {
