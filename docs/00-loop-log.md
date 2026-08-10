@@ -1468,3 +1468,48 @@ return address, not the call-site continuation
   proof tools, excluding asset guards and disassembly scratch output). It
   clean-applies to `641fb572e876750d8618434d9f7c1a531b43b366` and reverse-
   applies against the live worktree.
+
+## 2026-08-10 (BOT9) — AND encoder fixed (regression-first); all 346 GAME objects link; new dispatcher pc=0 fault
+
+- **A1.0 regression added (fails first):** `tools/ottsel_a1/semantic_regressions.cpp`
+  tests 24-25 — emitter-unit asserts `and_gpr64_gpr64` emits AND
+  (top-11 opcode 0x450, never ADD 0x458) plus the `AND(-65536,0)=0`
+  zero-mask branch semantics; GOAL-compile runs real `(logand -65536 v)`
+  through ARM64 goalc and requires an AND-shifted word and no ADD-shifted
+  word.  Red: `[A1.0] FAIL: 3 semantic assertion(s)` (`word=0x8b010000
+  op=0x458`, GOAL emitted `add x1,x1,x0` 0x8b000021).
+- **One-word fix:** `IGen::and_gpr64_gpr64` now emits logical shifted-
+  register AND `Base(0b10001010000, 11)`.  Full harness:
+  `[A1.0] PASS all semantic regressions`.
+- **Regenerated/validated:** KERNEL.CGO 86,016 words PASS; GAME.CGO
+  3,985,408 words / 346 objects PASS.  The merc-ctrl eye-check site
+  (`merc` seg0+0x1a6c) emits `and x0,x0,x1` (0x8a010000) — pre-fix
+  `add x0,x0,x1`.  With eye-ctrl=0 the no-eye branch runs (set eye-ctrl=0,
+  return 0); no raw x0=0x10 call.
+- **Stage-slot resize:** object 323 `eichar` (1,349,024 B) exceeded the iOS
+  loader's 512 KB reusable CGO stage slot; `src/shell/ios_boot.cpp`
+  `STAGE_SLOT` raised to 2 MB (measured max documented; `sidekick` 675,936 B
+  was the other over-512 KB object).
+- **Boot milestone (one Simulator, Windowed, zero stale processes):** the
+  app links ALL 346 GAME objects (`GAME.CGO linked (346 objects)`), past the
+  former merc-ctrl zero-eye fault, and reaches the FIRST kernel-dispatcher
+  call.
+- **New blocker (S2.1 still ACTIVE):** the first dispatcher call faults
+  `signal 11 at pc=0x0 fault addr=0x0`, sp=0x70001f4be0 (0x400+ zero bytes
+  above sp — fresh stack), lr=0, x16=native `pc_prof` (the C-export profiler
+  for `(profiler-instant-event "ROOT")`), x20=0x23b844 (pp).  The pc-prof
+  stub (EE+0x04F02FD4) is intact in-process; the dispatcher code at
+  0x1e6054 still holds unpatched ADRP placeholders whose raw chain would
+  fault at a garbage load (not the observed pc=0), so the faulting call is a
+  different pc-prof site (process-tree context).  lldb external memory reads
+  are unreliable for the Simulator EE mapping; in-process expression reads
+  were used instead.  Evidence: `docs/evidence/S2/s21-andfix-progress.md`,
+  `s21-andfix-pc0-boot.log`, `s21-andfix-pc0-fault.log`.
+- **Diagnostic probe kept (marked temporary):** fault handler dumps 96
+  frame slots above the fault sp (mincore-guarded, async-safe) to identify
+  the pc=0 caller chain; remove once the pc-prof caller is proven.
+- **Canonical patch regenerated** from the pinned worktree
+  (`641fb572e876750d8618434d9f7c1a531b43b366`) including the AND fix and
+  tests 24-25 (excludes `gkernel-disasm.txt` scratch); clean-apply on a
+  fresh pin checkout verified, reverse-apply against the live worktree
+  verified.

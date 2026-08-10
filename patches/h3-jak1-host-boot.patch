@@ -4456,7 +4456,7 @@ index 27cbcc8c1..e2eec60e9 100644
   * Divide (idiv, 32 bit)
   */
 diff --git a/goalc/emitter/IGenARM64.cpp b/goalc/emitter/IGenARM64.cpp
-index 1180f722d..17ce93425 100644
+index 1180f722d..e22d1c525 100644
 --- a/goalc/emitter/IGenARM64.cpp
 +++ b/goalc/emitter/IGenARM64.cpp
 @@ -90,6 +90,19 @@ InstructionARM64 mov_gpr64_gpr64(Register dst, Register src) {
@@ -5042,6 +5042,21 @@ index 1180f722d..17ce93425 100644
  }
  
  //;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+@@ -2152,11 +2280,11 @@ InstructionARM64 or_gpr64_gpr64(Register dst, Register src) {
+ }
+ 
+ InstructionARM64 and_gpr64_gpr64(Register dst, Register src) {
+-  // https://www.scs.stanford.edu/~zyedidia/arm64/add_addsub_shift.html
+-  // ADD <Xd>, <Xn>, <Xm>{, <shift> #<amount>}
++  // https://www.scs.stanford.edu/~zyedidia/arm64/and_log_shift.html
++  // AND <Xd>, <Xn>, <Xm>{, <shift> #<amount>}
+   ASSERT(dst.is_gpr(instr_set));
+   ASSERT(src.is_gpr(instr_set));
+-  return InstructionARM64(Base(0b10001011000, 11), Rd(dst.id()), Rn(dst.id()), Rm(src.id()));
++  return InstructionARM64(Base(0b10001010000, 11), Rd(dst.id()), Rn(dst.id()), Rm(src.id()));
+ }
+ 
+ InstructionARM64 xor_gpr64_gpr64(Register dst, Register src) {
 @@ -2210,7 +2338,7 @@ InstructionARM64 sar_gpr64_reg(Register reg, Register shift_reg) {
  InstructionARM64 shl_gpr64_u8(Register reg, uint8_t sa) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/lsl_ubfm.html
@@ -6636,10 +6651,10 @@ index f5b031f1a..52ba45e49 100644
        }
 diff --git a/tools/ottsel_a1/semantic_regressions.cpp b/tools/ottsel_a1/semantic_regressions.cpp
 new file mode 100644
-index 000000000..0c2459941
+index 000000000..1edfaa655
 --- /dev/null
 +++ b/tools/ottsel_a1/semantic_regressions.cpp
-@@ -0,0 +1,830 @@
+@@ -0,0 +1,885 @@
 +// Ottsel A1.0 semantic ARM64 regression harness.
 +//
 +// The emission validator proves only that words decode as legal A64
@@ -7007,6 +7022,30 @@ index 000000000..0c2459941
 +    check(in_bridge && restore_frame != std::string::npos && unwind_stub != std::string::npos &&
 +              ret != std::string::npos && restore_frame < unwind_stub && unwind_stub < ret,
 +          "Mips2C bridge consumes its trampoline's 32-byte [stack_size, exec] frame");
++  }
++
++  // 24. ARM64 logical AND (merc-ctrl eye-check).  and_gpr64_gpr64 must emit
++  //     the AND shifted-register encoding (top-11 opcode 0x450), never the
++  //     ADD shifted-register encoding (0x458).  Live GAME.CGO showed
++  //     `add x0,x0,x1` for `(logand -65536 eye-ctrl)`: with eye-ctrl = 0 the
++  //     result was -65536 (nonzero), so logtest? was true, merc entered the
++  //     eye-shader loop, built raw x0 = 0x10 and faulted in the callee.
++  {
++    auto ins = IGen::ARM64::and_gpr64_gpr64(emitter::X0, emitter::X1);
++    u32 w = ins.encodings[ins.count - 1];
++    const u32 op = w >> 21;
++    check(op == 0x450, "and_gpr64_gpr64 emits AND shifted-register (0x450), not ADD (0x458)");
++    if (op != 0x450) {
++      std::cout << "    word=0x" << std::hex << w << std::dec << " op=0x" << std::hex << op
++                << std::dec << "\n";
++    }
++    // Zero-mask semantics of the merc-ctrl branch: only AND(-65536,0)=0
++    // selects the no-eye branch; ADD(-65536,0)=-65536 (nonzero) wrongly
++    // enters the eye path.
++    const int64_t and_result = int64_t(-65536) & int64_t(0);
++    const int64_t add_result = int64_t(-65536) + int64_t(0);
++    check(and_result == 0 && add_result != 0,
++          "AND(-65536,0)=0 selects the no-eye branch; ADD would enter the eye path");
 +  }
 +}
 +
@@ -7442,6 +7481,37 @@ index 000000000..0c2459941
 +          "fixed method-of-type after structure new does not load an untagged object type at -4");
 +  } catch (const std::exception& e) {
 +    check(false, (std::string("structure-method compile: ") + e.what()).c_str());
++  }
++
++  // 25. Real GOAL `logand` through the ARM64 codegen must emit the AND
++  //     instruction, not ADD.  Same defect class as the merc-ctrl eye-check:
++  //     the compiler selects AND_64 correctly; only the emitter is wrong.
++  try {
++    auto bytes = emit_function(compiler, "a1-logand",
++                               "(defun ottsel-a1-logand ((v int)) (logand -65536 v))",
++                               "ottsel-a1-logand");
++    bool has_and = false;
++    bool has_add = false;
++    for (size_t i = 0; i + 4 <= bytes.size(); i += 4) {
++      u32 w;
++      std::memcpy(&w, bytes.data() + i, 4);
++      const u32 op = w >> 21;
++      if (op == 0x450) has_and = true;  // AND shifted-register (64-bit)
++      if (op == 0x458) has_add = true;  // ADD shifted-register (64-bit)
++    }
++    check(has_and, "logand emits AND shifted-register (was ADD)");
++    check(!has_add, "logand emits no ADD shifted-register word");
++    if (!has_and || has_add) {
++      std::cout << "    logand bytes (" << bytes.size() << "):";
++      for (size_t i = 0; i < bytes.size(); i += 4) {
++        u32 w;
++        std::memcpy(&w, bytes.data() + i, 4);
++        std::cout << " " << std::hex << w << std::dec;
++      }
++      std::cout << "\n";
++    }
++  } catch (const std::exception& e) {
++    check(false, (std::string("logand compile: ") + e.what()).c_str());
 +  }
 +}
 +

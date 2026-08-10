@@ -157,6 +157,27 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
   raw_write_lit(" x22=");
   raw_write_hex(uc->uc_mcontext->__ss.__x[22]);
   raw_write_lit("\n");
+  // S2.1 (2026-08-10, dispatcher pc=0 probe): dump the frame region ABOVE
+  // the fault-time sp.  For a down-growing stack the caller frames (saved
+  // x30 / continuation slots) live at sp + N*16; the all-zero memory at sp
+  // itself means the transfer-to-zero happened on a fresh region, and the
+  // nearest nonzero slots above identify the call chain.
+  for (int i = 0; i < 96; i++) {
+    uintptr_t addr = sp + i * 16;
+    u32 w = 0, w2 = 0;
+    if (safe_read_u32((volatile u32*)addr, &w) &&
+        safe_read_u32((volatile u32*)(addr + 8), &w2)) {
+      raw_write_lit("OTTSEL_IOS: above[");
+      raw_write_dec((unsigned)i);
+      raw_write_lit("] @0x");
+      raw_write_hex(addr);
+      raw_write_lit(" = 0x");
+      raw_write_hex(w);
+      raw_write_lit(" 0x");
+      raw_write_hex(w2);
+      raw_write_lit("\n");
+    }
+  }
   // These broad stack/probe dumps were useful during the earlier rfn fault,
   // but are not async-signal-safe enough for arbitrary later faults.
 #if 0
@@ -466,7 +487,12 @@ void ottsel_ios_link_cgo_from_bundle(const char* cgo_name) {
   // 22MB CGO from the global heap top left only ~3MB free at object 195 and
   // broke GOAL-side (new ...) allocations (kmalloc !alloc) -- the global heap
   // must stay available for the game engine's own allocations.
-  const u32 STAGE_SLOT = 512 * 1024;  // largest object blob is ~110KB
+  // S2.1 (2026-08-10, AND-encoder fix boot): object 323 `eichar` is
+  // 1,349,024 bytes and `sidekick` 675,936 -- the old 512KB slot assumed
+  // ~110KB max.  Sized from the actual GAME.CGO object list (max 1,349,024,
+  // 16-byte aligned); 2MB covers every object with margin while the reusable
+  // slot keeps the global heap top available for game allocations.
+  const u32 STAGE_SLOT = 2 * 1024 * 1024;
   auto stage = kmalloc(kglobalheap, STAGE_SLOT, KMALLOC_TOP | KMALLOC_ALIGN_64,
                        "ottsel-ios-dgo-stage");
   if (!stage.offset) {
