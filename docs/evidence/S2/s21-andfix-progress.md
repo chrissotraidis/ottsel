@@ -163,6 +163,50 @@ It is consistent with the same broken GOAL-call-context class as the pc=0
 fault (a GOAL call into a C export carrying corrupted state), and it is
 recorded here as evidence, not yet root-caused.
 
+## Function identity (2026-08-10): the faulting function is the
+execute-process-tree lambda
+
+`tools/ottsel_a1/kernel_fn_dump.cpp` (target `ottsel-kernel-fn-dump`)
+compiles the real kernel group in order through the ARM64 goalc and names
+every gkernel function with its emitted code size
+(`docs/evidence/S2/s21-kernel-fn-dump.log`):
+
+```text
+iterate-process-tree  code=468 bytes
+execute-process-tree   code=468 bytes
+anon-function-5        code=2444 bytes
+kernel-dispatcher      code=0 (emit skipped)
+```
+
+`anon-function-5` (2444 bytes) is the anonymous lambda passed to
+`execute-process-tree` inside `kernel-dispatcher`
+(`goal_src/jak1/kernel/gkernel.gc:1334`).  Its emitted code has the same
+shape as the faulting function's live disassembly: multiple calls with
+`(static-string, 1)` arguments (including the pc-prof profiler-start with
+`x1 = 1`), stores into `[x19+0x20]` / `[x23+0x14]`, and a `mov x0, x21`
+return path.  This matches the trace's last calls
+(`0x1f0ca4 -> 0x1e4774`, `0x1f0f80 -> pc-prof`, both caller-lr = 0).
+
+`execute-process-tree`'s emitted lambda call uses the full call shim
+(`str x30; adr x17; str x17; add x16,x16,x22; blr x16`) - so a normal
+dispatch sets the lambda's x30.  The faulting run therefore did NOT enter
+the lambda through execute-process-tree's shim: the observed entry state
+(x30 = 0, x20 = the process 0x24b844, sp = *kernel-dram-stack* top
+0x1f4be0, all callee-saved registers zero, no pushed return address) is the
+signature of the process-thread machinery - `reset-and-call`
+(`gkernel.gc:495`) / `set-to-run-bootstrap` (`gkernel.gc:1832`) both end in
+a tail jump (`.jr func`) that does not set x30 and run the callee on the
+thread's (dram) stack.  A tail-call chain with x30 = 0 into the lambda
+makes its epilogue `ret` (restoring x30 = 0) fault at pc = 0.
+
+Root cause is thereby narrowed to the process-thread entry/return contract,
+not the C-export path (verified correct) and not a compiler encoding bug.
+The next probe: verify the exact tail-call transition into the lambda (which
+game function / thread entry leaves x30 = 0 and sp on the dram stack) and
+fix the entry contract so a GOAL function entered with x30 = 0 cannot return
+through a zeroed x30 on a fresh stack.  Do not patch game source around
+this.
+
 ## Honest status
 
 S2.1 is NOT PASS: there is no stable renderer-ready boundary and no Jak

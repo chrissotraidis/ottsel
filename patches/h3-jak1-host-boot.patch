@@ -2545,7 +2545,7 @@ index 4355cb922..c1034ba72 100644
    void load_settings();
    void save_settings();
 diff --git a/goalc/CMakeLists.txt b/goalc/CMakeLists.txt
-index a9b02e7c4..422860fa0 100644
+index a9b02e7c4..979107cb3 100644
 --- a/goalc/CMakeLists.txt
 +++ b/goalc/CMakeLists.txt
 @@ -91,6 +91,9 @@ if (WIN32)
@@ -2558,7 +2558,7 @@ index a9b02e7c4..422860fa0 100644
  add_executable(goalc main.cpp)
  add_executable(goalc-simple simple_main.cpp)
  
-@@ -101,3 +104,42 @@ target_link_libraries(goalc common Zydis compiler)
+@@ -101,3 +104,46 @@ target_link_libraries(goalc common Zydis compiler)
  target_link_libraries(goalc-simple common Zydis compiler)
  target_link_libraries(build_level common Zydis compiler)
  target_link_libraries(build_actor common Zydis compiler)
@@ -2596,6 +2596,10 @@ index a9b02e7c4..422860fa0 100644
 +# ARM64 goalc type system (process / stack-frame / catch-frame).
 +add_executable(ottsel-typelayout ../tools/ottsel_a1/typelayout.cpp)
 +target_link_libraries(ottsel-typelayout common Zydis compiler)
++
++# Ottsel S2.1 diagnostic: name the gkernel function that calls pc-prof.
++add_executable(ottsel-kernel-fn-dump ../tools/ottsel_a1/kernel_fn_dump.cpp)
++target_link_libraries(ottsel-kernel-fn-dump common Zydis compiler)
 +
 +
 +# Ottsel H2.5: Mach-O packaging path proof (AOT bytes -> .s -> clang -> native object)
@@ -6649,6 +6653,139 @@ index f5b031f1a..52ba45e49 100644
                                         std::make_unique<REPL::Wrapper>(game_version));
          status = ReplStatus::OK;
        }
+diff --git a/tools/ottsel_a1/kernel_fn_dump.cpp b/tools/ottsel_a1/kernel_fn_dump.cpp
+new file mode 100644
+index 000000000..aa57858db
+--- /dev/null
++++ b/tools/ottsel_a1/kernel_fn_dump.cpp
+@@ -0,0 +1,127 @@
++// Ottsel S2.1 diagnostic: name the gkernel function that calls the pc-prof
++// C export (the pc=0 fault site).  Compiles the real kernel GOAL sources
++// through the ARM64 goalc and prints every function name + code size, then
++// flags the functions whose emitted code contains a pc-prof symbol call
++// (the IR_FunctionCall whose target symbol name is "pc-prof").
++
++#include <cstdint>
++#include <iostream>
++#include <string>
++#include <vector>
++
++#include "common/log/log.h"
++#include "common/util/FileUtil.h"
++#include "common/versions/versions.h"
++
++#include "goalc/compiler/CodeGenerator.h"
++#include "goalc/compiler/Compiler.h"
++#include "goalc/compiler/IR.h"
++#include "goalc/debugger/DebugInfo.h"
++#include "goalc/emitter/InstructionSet.h"
++#include "goalc/emitter/Register.h"
++
++using namespace emitter;
++
++int main(int argc, char** argv) {
++  lg::set_stdout_level(lg::level::warn);
++  lg::set_flush_level(lg::level::warn);
++  lg::initialize();
++
++  if (!file_util::setup_project_path(std::nullopt)) {
++    std::cerr << "setup_project_path failed\n";
++    return 2;
++  }
++
++  try {
++    Compiler compiler(GameVersion::Jak1, InstructionSet::ARM64);
++    RegisterInfo::set_active_instruction_set(InstructionSet::ARM64);
++
++    // Compile the kernel group in order (kernel.gd) so gcommon's globals exist
++    // before gkernel.gc is compiled; then dump the pc-prof callers.
++    std::vector<std::pair<const char*, const char*>> kernel_files = {
++        {"goal_src/jak1/kernel/gcommon.gc", "gcommon"},
++        {"goal_src/jak1/kernel/gstring-h.gc", "gstring-h"},
++        {"goal_src/jak1/kernel/gkernel-h.gc", "gkernel-h"},
++        {"goal_src/jak1/kernel/gkernel.gc", "gkernel"},
++        {"goal_src/jak1/kernel/pskernel.gc", "pskernel"},
++        {"goal_src/jak1/kernel/gstring.gc", "gstring"},
++        {"goal_src/jak1/kernel/dgo-h.gc", "dgo-h"},
++        {"goal_src/jak1/kernel/gstate.gc", "gstate"},
++    };
++    const char* target = argc > 1 ? argv[1] : "goal_src/jak1/kernel/gkernel.gc";
++    std::vector<FunctionEnv*> target_fns;
++    FileEnv* target_fe = nullptr;
++    for (auto& [file, obj_name] : kernel_files) {
++      auto obj = compiler.get_goos().reader.read_from_file({file});
++      auto* fe = compiler.compile_object_file(obj_name, obj, true);
++      compiler.color_only_for_proof(fe);
++      if (std::string(file) == target) {
++        target_fe = fe;
++        for (auto& f : fe->functions()) {
++          target_fns.push_back(f.get());
++        }
++      }
++    }
++
++    auto* debug = &compiler.get_debugger().get_debug_info_for_object("gkernel");
++
++    for (auto* f : target_fns) {
++      debug->clear();
++      bool calls_pc_prof = false;
++      for (auto& ir : f->code()) {
++        auto* call = dynamic_cast<IR_FunctionCall*>(ir.get());
++        if (call) {
++          if (call->print().find("pc-prof") != std::string::npos) {
++            calls_pc_prof = true;
++          }
++        }
++      }
++      size_t code_size = 0;
++      try {
++        CodeGenerator gen(target_fe, debug, GameVersion::Jak1, InstructionSet::ARM64);
++        code_size = gen.emit_function_machine_code(f, 0).size();
++      } catch (const std::exception&) {
++        code_size = 0;
++      }
++      std::cout << (calls_pc_prof ? "PC_PROF: " : "        ") << f->name() << "  code="
++                << code_size << " bytes\n";
++      if (f->name().find("anon-function-5") != std::string::npos) {
++        for (auto& ir : f->code()) {
++          auto* call = dynamic_cast<IR_FunctionCall*>(ir.get());
++          if (call) {
++            std::cout << "    call IR: " << call->print() << "\n";
++          }
++        }
++      }
++      if (f->name() == "execute-process-tree") {
++        debug->clear();
++        CodeGenerator gen2(target_fe, debug, GameVersion::Jak1, InstructionSet::ARM64);
++        auto bytes2 = gen2.emit_function_machine_code(f, 0);
++        std::cout << "execute-process-tree code:";
++        for (size_t i = 0; i < bytes2.size(); i += 4) {
++          u32 w;
++          std::memcpy(&w, bytes2.data() + i, 4);
++          std::cout << " " << std::hex << w << std::dec;
++        }
++        std::cout << "\n";
++      }
++      if (f->name().find("anon-function-5") != std::string::npos) {
++        debug->clear();
++        CodeGenerator gen3(target_fe, debug, GameVersion::Jak1, InstructionSet::ARM64);
++        auto bytes3 = gen3.emit_function_machine_code(f, 0);
++        std::cout << "anon-function-5 code:";
++        for (size_t i = 0; i < bytes3.size(); i += 4) {
++          u32 w;
++          std::memcpy(&w, bytes3.data() + i, 4);
++          std::cout << " " << std::hex << w << std::dec;
++        }
++        std::cout << "\n";
++      }
++    }
++    std::cout << "total gkernel functions: " << target_fns.size() << "\n";
++  } catch (const std::exception& e) {
++    std::cerr << "fatal: " << e.what() << "\n";
++    return 1;
++  }
++  return 0;
++}
 diff --git a/tools/ottsel_a1/semantic_regressions.cpp b/tools/ottsel_a1/semantic_regressions.cpp
 new file mode 100644
 index 000000000..1edfaa655

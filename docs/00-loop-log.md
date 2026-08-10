@@ -1554,3 +1554,30 @@ return address, not the call-site continuation
     top-level during a link `jak1_finish`; non-deterministic (only one boot),
     consistent with the same broken GOAL-call-context class as the pc=0
     fault; evidence `docs/evidence/S2/s21-crash-*.ips`.
+
+## 2026-08-10 (BOT9 cont 2) — faulting function identified: the execute-process-tree lambda
+
+- **Named the faulting function:** new goalc tool `tools/ottsel_a1/kernel_fn_dump.cpp`
+  (target `ottsel-kernel-fn-dump`) compiles the real kernel group in order and
+  lists every gkernel function + emitted size
+  (`docs/evidence/S2/s21-kernel-fn-dump.log`).  The pc=0 fault site is
+  **`anon-function-5` (2444 bytes) = the anonymous lambda passed to
+  `execute-process-tree` in `kernel-dispatcher` (gkernel.gc:1334)** — its
+  emitted code matches the faulting function's live disassembly (multiple
+  `(static-string, 1)` calls incl. the pc-prof profiler-start, stores at
+  [x19+0x20]/[x23+0x14], `mov x0, x21` return).
+- **Entry anomaly:** `execute-process-tree` calls the lambda with the full
+  call shim (`blr x16` — x30 set), so the faulting run did not enter the
+  lambda through the normal dispatch.  The observed entry (x30 = 0, x20 =
+  the process, sp = *kernel-dram-stack* top, zeroed callee-saved regs, no
+  pushed return address) is the process-thread machinery signature:
+  `reset-and-call` (gkernel.gc:495) and `set-to-run-bootstrap`
+  (gkernel.gc:1832) both end in `.jr func` — a tail jump that does not set
+  x30 — and run the callee on the thread's (dram) stack.  A tail-call chain
+  with x30 = 0 into the lambda makes its epilogue `ret` (x30 = 0) fault at
+  pc = 0.
+- **Next probe:** verify the exact tail-call transition (which game
+  function / thread entry leaves x30 = 0 on the dram stack) and fix the
+  entry/return contract.  Do not patch game source.
+- The tool + its CMakeLists target stay in the worktree as source proof
+  tools (canonical patch regenerated below).
