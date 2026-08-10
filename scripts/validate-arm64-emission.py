@@ -238,10 +238,23 @@ def compute_pc_rel_word(off, word, text):
         return base | (sf << 31) | ((bit & 0x3F) << 19) | ((imm & 0x3FFF) << 5) | rt
     if mnem == "adr":
         rd = _reg_num(parts[1])
-        target = _parse_imm(last)
-        if rd is None or target is None:
+        raw = _parse_imm(last)
+        if rd is None or raw is None:
             return False
-        imm = (target - off) >> 2
+        # llvm-objdump prints ADR as the raw 21-bit immediate (e.g. "#0"),
+        # not an absolute target, so the resolved-target subtraction does not
+        # apply.  Pre-link static_addr placeholders print as "#0"; real
+        # intra-segment ADRs print their raw imm too.  Sign-extend and encode;
+        # if the result matches the word, the round trip is consistent.
+        imm = raw & 0x1FFFFF
+        if imm & 0x100000:
+            imm -= 0x200000
+        expected = 0x10000000 | ((imm & 0x3) << 29) | (((imm >> 2) & 0x7FFFF) << 5) | rd
+        if expected == word:
+            return expected
+        # Older toolchains print the resolved absolute target; fall back to
+        # the (target - off) semantics for those.
+        imm = (raw - off) >> 2
         return 0x10000000 | ((imm & 0x3) << 29) | (((imm >> 2) & 0x7FFFF) << 5) | rd
     if mnem == "adrp":
         rd = _reg_num(parts[1])

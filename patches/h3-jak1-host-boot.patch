@@ -892,10 +892,21 @@ index 0731d5272..209a11baa 100644
    ListenerFunction = intern_from_c("*listener-function*");
    kernel_dispatcher = intern_from_c("kernel-dispatcher");
 diff --git a/game/kernel/jak1/kmachine.cpp b/game/kernel/jak1/kmachine.cpp
-index 459a21562..1afcdeaed 100644
+index 459a21562..e7cf3b0a5 100644
 --- a/game/kernel/jak1/kmachine.cpp
 +++ b/game/kernel/jak1/kmachine.cpp
-@@ -170,6 +170,11 @@ void InitParms(int argc, const char* const* argv) {
+@@ -46,6 +46,10 @@
+ 
+ using namespace ee;
+ 
++// Ottsel A1.0 bounded trace (TEMPORARY): recorder backing the goalc
++// IR_FunctionCall shim (see kscheme.cpp).
++extern "C" void ottsel_trace_goal_call(u64, u64);
++
+ namespace jak1 {
+ 
+ /*!
+@@ -170,6 +174,11 @@ void InitParms(int argc, const char* const* argv) {
   * Removed calls to exit(0) if loading modules fails.
   */
  void InitIOP() {
@@ -907,7 +918,7 @@ index 459a21562..1afcdeaed 100644
    // before doing anything with the I/O Processor, we need to set up SIF RPC
    sceSifInitRpc(0);
  
-@@ -330,11 +335,13 @@ int InitMachine() {
+@@ -330,11 +339,13 @@ int InitMachine() {
    }
  
    init_output();    // GOAL input/output buffer setup
@@ -921,7 +932,7 @@ index 459a21562..1afcdeaed 100644
  
    // FlushCache(WRITEBACK_DCACHE);
    // FlushCache(INVALIDATE_ICACHE);
-@@ -344,6 +351,7 @@ int InitMachine() {
+@@ -344,6 +355,7 @@ int InitMachine() {
    //   MsgErr("dkernel: !init pad\n");
    // }
  
@@ -929,7 +940,7 @@ index 459a21562..1afcdeaed 100644
    if (MasterDebug) {  // connect to GOAL compiler
      InitGoalProto();
    } else {
-@@ -355,6 +363,7 @@ int InitMachine() {
+@@ -355,6 +367,7 @@ int InitMachine() {
    InitSound();  // do nothing!
    lg::info("InitRPC");
    InitRPC();       // connect to IOP
@@ -937,7 +948,7 @@ index 459a21562..1afcdeaed 100644
    reset_output();  // reset output buffers
    clear_print();
  
-@@ -368,10 +377,14 @@ int InitMachine() {
+@@ -368,10 +381,14 @@ int InitMachine() {
    g_auto_splitter_block_jak1.pointer_to_symbol =
        (u64)g_ee_main_mem + intern_from_c("*autosplit-info-jak1*")->value;
  
@@ -952,7 +963,7 @@ index 459a21562..1afcdeaed 100644
    Msg(6, "kernel: machine started\n");
    return 0;
  }
-@@ -380,10 +393,12 @@ int InitMachine() {
+@@ -380,10 +397,12 @@ int InitMachine() {
   * Shutdown the runtime.
   */
  int ShutdownMachine() {
@@ -965,7 +976,7 @@ index 459a21562..1afcdeaed 100644
  
    Msg(6, "kernel: machine shutdown\n");
    return 0;
-@@ -420,6 +435,11 @@ void PutDisplayEnv(u32 ptr) {
+@@ -420,6 +439,11 @@ void PutDisplayEnv(u32 ptr) {
  }
  
  void update_discord_rpc(u32 discord_info) {
@@ -977,7 +988,15 @@ index 459a21562..1afcdeaed 100644
    if (gDiscordRpcEnabled) {
      DiscordRichPresence rpc;
      char state[128];
-@@ -610,8 +630,14 @@ void InitMachineScheme() {
+@@ -576,6 +600,7 @@ void InitMachine_PCPort() {
+  * which should prepare the game engine.
+  */
+ void InitMachineScheme() {
++  make_function_symbol_from_c("ottsel-goal-call-trace", (void*)ottsel_trace_goal_call);
+   make_function_symbol_from_c("put-display-env", (void*)PutDisplayEnv);       // used in drawable
+   make_function_symbol_from_c("syncv", (void*)sceGsSyncV);                    // used in drawable
+   make_function_symbol_from_c("sync-path", (void*)sceGsSyncPath);             // used
+@@ -610,8 +635,14 @@ void InitMachineScheme() {
    InitMachine_PCPort();
    InitSoundScheme();
    intern_from_c("*stack-top*")->value = 0x07ffc000;
@@ -993,7 +1012,7 @@ index 459a21562..1afcdeaed 100644
    if (DiskBoot) {
      intern_from_c("*kernel-boot-message*")->value = intern_from_c(DebugBootMessage).offset;
 diff --git a/game/kernel/jak1/kscheme.cpp b/game/kernel/jak1/kscheme.cpp
-index c8287de5a..1810f30e0 100644
+index c8287de5a..7d059717a 100644
 --- a/game/kernel/jak1/kscheme.cpp
 +++ b/game/kernel/jak1/kscheme.cpp
 @@ -1,6 +1,10 @@
@@ -1007,9 +1026,27 @@ index c8287de5a..1810f30e0 100644
  
  #include "common/common_types.h"
  #include "common/log/log.h"
-@@ -26,6 +30,10 @@
+@@ -25,7 +29,28 @@
+ 
  using namespace jak1_symbols;
  
++// Ottsel A1.0 bounded call trace (TEMPORARY diagnostic; preserved as
++// docs/evidence/A1/a1-bounded-call-trace-probe.patch).
++extern "C" {
++constexpr int OTTSEL_CALL_TRACE_N = 256;
++volatile u64 g_ottsel_call_trace[OTTSEL_CALL_TRACE_N];
++volatile u64 g_ottsel_call_idx = 0;
++
++void ottsel_trace_goal_call(u64 target, u64 site, u64 caller_lr) {
++  u64 idx = __atomic_fetch_add(&g_ottsel_call_idx, 1, __ATOMIC_RELAXED);
++  // entry: (site<<32)|target ; the caller's LR is the address the caller
++  // will resume at after the callee returns (identifies the caller frame).
++  g_ottsel_call_trace[(idx * 2) % OTTSEL_CALL_TRACE_N] =
++      ((u64)(site & 0xffffffff) << 32) | (target & 0xffffffff);
++  g_ottsel_call_trace[(idx * 2 + 1) % OTTSEL_CALL_TRACE_N] = caller_lr & 0xffffffffffffffffull;
++}
++}  // extern "C"
++
  namespace jak1 {
 +#ifdef OTTSEL_IOS
 +// Ottsel S1.3: declared by the iOS boot driver (src/shell/ios_boot.cpp).
@@ -1018,7 +1055,7 @@ index c8287de5a..1810f30e0 100644
  // where to put a new symbol for the most recently searched for symbol that wasn't found
  u32 symbol_slot;
  
-@@ -279,11 +287,119 @@ void _arg_call_arm64();
+@@ -279,11 +304,119 @@ void _arg_call_arm64();
  #endif
  }
  
@@ -1138,7 +1175,7 @@ index c8287de5a..1810f30e0 100644
    auto mem = Ptr<u8>(alloc_heap_object(s7.offset + FIX_SYM_GLOBAL_HEAP,
                                         *(s7 + FIX_SYM_FUNCTION_TYPE), 0x40, UNKNOWN_PP));
    auto f = (uint64_t)func;
-@@ -294,10 +410,42 @@ Ptr<Function> make_function_from_c_systemv(void* func, bool arg3_is_pp) {
+@@ -294,10 +427,42 @@ Ptr<Function> make_function_from_c_systemv(void* func, bool arg3_is_pp) {
    auto trampoline_function_addr = _arg_call_arm64;
  #endif
    auto trampoline = (u8*)&trampoline_function_addr;
@@ -1184,7 +1221,7 @@ index c8287de5a..1810f30e0 100644
    mem.c()[offset++] = 0x48;
    mem.c()[offset++] = 0xb8;
    for (int i = 0; i < 8; i++) {
-@@ -327,8 +475,10 @@ Ptr<Function> make_function_from_c_systemv(void* func, bool arg3_is_pp) {
+@@ -327,8 +492,10 @@ Ptr<Function> make_function_from_c_systemv(void* func, bool arg3_is_pp) {
    // the asm function's ret will return to the caller of this (GOAL code) directlyz.
  
    // CacheFlush(mem, 0x34);
@@ -1195,7 +1232,7 @@ index c8287de5a..1810f30e0 100644
  }
  
  /*!
-@@ -417,6 +567,39 @@ void _stack_call_arm64();
+@@ -417,6 +584,39 @@ void _stack_call_arm64();
  }
  
  Ptr<Function> make_stack_arg_function_from_c_systemv(void* func) {
@@ -1235,7 +1272,7 @@ index c8287de5a..1810f30e0 100644
    // allocate a function object on the global heap
    auto mem = Ptr<u8>(alloc_heap_object(s7.offset + FIX_SYM_GLOBAL_HEAP,
                                         *(s7 + FIX_SYM_FUNCTION_TYPE), 0x40, UNKNOWN_PP));
-@@ -454,6 +637,7 @@ Ptr<Function> make_stack_arg_function_from_c_systemv(void* func) {
+@@ -454,6 +654,7 @@ Ptr<Function> make_stack_arg_function_from_c_systemv(void* func) {
    // CacheFlush(mem, 0x34);
  
    return mem.cast<Function>();
@@ -1243,7 +1280,7 @@ index c8287de5a..1810f30e0 100644
  }
  
  #ifdef _WIN32
-@@ -529,6 +713,17 @@ Ptr<Function> make_stack_arg_function_from_c(void* func) {
+@@ -529,6 +730,17 @@ Ptr<Function> make_stack_arg_function_from_c(void* func) {
   * Create a GOAL function which does nothing and immediately returns.
   */
  Ptr<Function> make_nothing_func() {
@@ -1261,7 +1298,7 @@ index c8287de5a..1810f30e0 100644
    auto mem = Ptr<u8>(alloc_heap_object(s7.offset + FIX_SYM_GLOBAL_HEAP,
                                         *(s7 + FIX_SYM_FUNCTION_TYPE), 0x14, UNKNOWN_PP));
  
-@@ -536,12 +731,29 @@ Ptr<Function> make_nothing_func() {
+@@ -536,12 +748,29 @@ Ptr<Function> make_nothing_func() {
    mem.c()[0] = 0xc3;
    // CacheFlush(mem, 8);
    return mem.cast<Function>();
@@ -1291,7 +1328,7 @@ index c8287de5a..1810f30e0 100644
    auto mem = Ptr<u8>(alloc_heap_object(s7.offset + FIX_SYM_GLOBAL_HEAP,
                                         *(s7 + FIX_SYM_FUNCTION_TYPE), 0x14, UNKNOWN_PP));
    // xor eax, eax
-@@ -551,6 +763,7 @@ Ptr<Function> make_zero_func() {
+@@ -551,6 +780,7 @@ Ptr<Function> make_zero_func() {
    mem.c()[2] = 0xc3;
    // CacheFlush(mem, 8);
    return mem.cast<Function>();
@@ -1299,7 +1336,7 @@ index c8287de5a..1810f30e0 100644
  }
  
  /*!
-@@ -719,6 +932,28 @@ Ptr<Symbol> find_symbol_from_c(const char* name) {
+@@ -719,6 +949,28 @@ Ptr<Symbol> find_symbol_from_c(const char* name) {
        return probe;
      }
    }
@@ -1328,7 +1365,7 @@ index c8287de5a..1810f30e0 100644
  }
  
  /*!
-@@ -1744,13 +1979,29 @@ s32 InitHeapAndSymbol() {
+@@ -1744,13 +1996,29 @@ s32 InitHeapAndSymbol() {
    intern_from_c("*boot-video-mode*")->value = 0;  // (u32)BootVideoMode;
  
    lg::info("Initialized GOAL heap in {:.2} ms", heap_init_timer.getMs());
@@ -1358,7 +1395,7 @@ index c8287de5a..1810f30e0 100644
      method_set_symbol->value--;
  
      // check the kernel version!
-@@ -1768,6 +2019,7 @@ s32 InitHeapAndSymbol() {
+@@ -1768,6 +2036,7 @@ s32 InitHeapAndSymbol() {
      }
    }
  
@@ -1366,7 +1403,7 @@ index c8287de5a..1810f30e0 100644
    // setup deci2count for message counter.
    protoBlock.deci2count = intern_from_c("*deci-count*").cast<s32>();
  
-@@ -1779,6 +2031,7 @@ s32 InitHeapAndSymbol() {
+@@ -1779,6 +2048,7 @@ s32 InitHeapAndSymbol() {
  
    // testing stuff:
    make_function_symbol_from_c("test-function", (void*)test_function);
@@ -1878,10 +1915,10 @@ index 4355cb922..c1034ba72 100644
    void load_settings();
    void save_settings();
 diff --git a/goalc/CMakeLists.txt b/goalc/CMakeLists.txt
-index a9b02e7c4..22ab59892 100644
+index a9b02e7c4..6fa0d954d 100644
 --- a/goalc/CMakeLists.txt
 +++ b/goalc/CMakeLists.txt
-@@ -101,3 +101,33 @@ target_link_libraries(goalc common Zydis compiler)
+@@ -101,3 +101,37 @@ target_link_libraries(goalc common Zydis compiler)
  target_link_libraries(goalc-simple common Zydis compiler)
  target_link_libraries(build_level common Zydis compiler)
  target_link_libraries(build_actor common Zydis compiler)
@@ -1894,6 +1931,10 @@ index a9b02e7c4..22ab59892 100644
 +# Ottsel A1.0 semantic regression harness (GOAL codegen -> semantic decode)
 +add_executable(ottsel-a1-sem ../tools/ottsel_a1/semantic_regressions.cpp)
 +target_link_libraries(ottsel-a1-sem common Zydis compiler)
++
++# Ottsel A1.1: real KERNEL.CGO dispatcher slice -> offline-linked Mach-O text.
++add_executable(ottsel-a11-slice ../tools/ottsel_a1_1/a11_slice_emitter.cpp)
++target_link_libraries(ottsel-a11-slice common Zydis compiler)
 +
 +
 +# Ottsel H2 host proof harness (RX-only AOT execution)
@@ -2226,7 +2267,7 @@ index e61c302f7..dab1d9889 100644
    try {
      auto debug_info = &m_debugger.get_debug_info_for_object(env->name());
 diff --git a/goalc/compiler/Compiler.h b/goalc/compiler/Compiler.h
-index 06a8e6475..e85277149 100644
+index 06a8e6475..cd9ea8124 100644
 --- a/goalc/compiler/Compiler.h
 +++ b/goalc/compiler/Compiler.h
 @@ -87,6 +87,9 @@ class Compiler {
@@ -2239,8 +2280,19 @@ index 06a8e6475..e85277149 100644
    listener::Listener& listener() { return m_listener; }
    void poke_target() { m_listener.send_poke(); }
    bool connect_to_target();
+@@ -118,6 +121,10 @@ class Compiler {
+              std::unordered_map<std::string, Docs::FileDocumentation>>
+   generate_per_file_symbol_info();
+ 
++  // Ottsel A1.1: public access to the full object-file codegen (private
++  // codegen_object_file).  Used by the offline slice linker.
++  std::vector<u8> ottsel_codegen_object_file(FileEnv* env) { return codegen_object_file(env); }
++
+  private:
+   GameVersion m_version;
+   emitter::InstructionSet m_instr_set;
 diff --git a/goalc/compiler/IR.cpp b/goalc/compiler/IR.cpp
-index ce4f98f91..d16dae3c9 100644
+index ce4f98f91..73839f1a5 100644
 --- a/goalc/compiler/IR.cpp
 +++ b/goalc/compiler/IR.cpp
 @@ -6,6 +6,7 @@
@@ -2447,18 +2499,73 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  void IR_GotoLabel::resolve(const Label* dest) {
-@@ -508,7 +627,9 @@ void IR_FunctionCall::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -508,7 +627,64 @@ void IR_FunctionCall::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_FunctionCall::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                         const AllocationResult& allocs,
                                         emitter::IR_Record irec) {
 -  throw std::runtime_error("NYI - IR_FunctionCall::do_codegen_arm64");
 +  auto freg = get_reg(m_func, allocs, irec);
++  // Ottsel A1.0 bounded trace (TEMPORARY): record (call-site addr, target)
++  // for every GOAL->GOAL call.  The recorder is a C call: save x0-x15,x16,x17
++  // (it clobbers caller-saved regs incl. the function pointer register).
++#if defined(OTTSEL_TRACE_GOAL_CALLS)
++  gen->add_instr(IGen::push_gpr64(*gen, emitter::X0), irec);
++  gen->add_instr(IGen::push_gpr64(*gen, emitter::X1), irec);
++  gen->add_instr(IGen::push_gpr64(*gen, emitter::X2), irec);
++  gen->add_instr(IGen::push_gpr64(*gen, emitter::X3), irec);
++  gen->add_instr(IGen::push_gpr64(*gen, emitter::X4), irec);
++  gen->add_instr(IGen::push_gpr64(*gen, emitter::X5), irec);
++  gen->add_instr(IGen::push_gpr64(*gen, emitter::X6), irec);
++  gen->add_instr(IGen::push_gpr64(*gen, emitter::X7), irec);
++  gen->add_instr(IGen::push_gpr64(*gen, emitter::X8), irec);
++  gen->add_instr(IGen::push_gpr64(*gen, emitter::X9), irec);
++  gen->add_instr(IGen::push_gpr64(*gen, emitter::X10), irec);
++  gen->add_instr(IGen::push_gpr64(*gen, emitter::X11), irec);
++  gen->add_instr(IGen::push_gpr64(*gen, emitter::X12), irec);
++  gen->add_instr(IGen::push_gpr64(*gen, emitter::X13), irec);
++  gen->add_instr(IGen::push_gpr64(*gen, emitter::X14), irec);
++  gen->add_instr(IGen::push_gpr64(*gen, emitter::X15), irec);
++  gen->add_instr(IGen::push_gpr64(*gen, emitter::X16), irec);
++  gen->add_instr(IGen::push_gpr64(*gen, emitter::X17), irec);
++  gen->add_instr(IGen::mov_gpr64_gpr64(*gen, emitter::X0, freg), irec);  // target GOAL ptr
++  gen->add_instr(IGen::mov_gpr64_gpr64(*gen, emitter::X2, emitter::X30), irec);  // caller LR
++  gen->add_instr(InstructionARM64(emitter::ARM64::Base(0b10000, 8),
++                                  emitter::ARM64::Rd(emitter::X1)),
++                 irec);
++  auto trace_slot = gen->add_symbol_offset_slot(irec.seg, "ottsel-goal-call-trace");
++  auto trace_adr = gen->add_instr(IGen::static_addr(*gen, emitter::X16, 0), irec);
++  gen->link_instruction_static(trace_adr, trace_slot, 0);
++  gen->add_instr(IGen::load32s_gpr64_plus_s32(*gen, emitter::X16, 0, emitter::X16), irec);
++  gen->add_instr(IGen::add_gpr64_gpr64(*gen, emitter::X16, gRegInfo.get_st_reg()), irec);
++  gen->add_instr(IGen::add_gpr64_gpr64(*gen, emitter::X16, gRegInfo.get_offset_reg()), irec);
++  gen->add_instr(IGen::load32s_gpr64_plus_s32(*gen, emitter::X16, 0, emitter::X16), irec);
++  gen->add_instr(IGen::add_gpr64_gpr64(*gen, emitter::X16, gRegInfo.get_offset_reg()), irec);
++  gen->add_instr(IGen::call_r64(*gen, emitter::X16), irec);
++  gen->add_instr(IGen::pop_gpr64(*gen, emitter::X17), irec);
++  gen->add_instr(IGen::pop_gpr64(*gen, emitter::X16), irec);
++  gen->add_instr(IGen::pop_gpr64(*gen, emitter::X15), irec);
++  gen->add_instr(IGen::pop_gpr64(*gen, emitter::X14), irec);
++  gen->add_instr(IGen::pop_gpr64(*gen, emitter::X13), irec);
++  gen->add_instr(IGen::pop_gpr64(*gen, emitter::X12), irec);
++  gen->add_instr(IGen::pop_gpr64(*gen, emitter::X11), irec);
++  gen->add_instr(IGen::pop_gpr64(*gen, emitter::X10), irec);
++  gen->add_instr(IGen::pop_gpr64(*gen, emitter::X9), irec);
++  gen->add_instr(IGen::pop_gpr64(*gen, emitter::X8), irec);
++  gen->add_instr(IGen::pop_gpr64(*gen, emitter::X7), irec);
++  gen->add_instr(IGen::pop_gpr64(*gen, emitter::X6), irec);
++  gen->add_instr(IGen::pop_gpr64(*gen, emitter::X5), irec);
++  gen->add_instr(IGen::pop_gpr64(*gen, emitter::X4), irec);
++  gen->add_instr(IGen::pop_gpr64(*gen, emitter::X3), irec);
++  gen->add_instr(IGen::pop_gpr64(*gen, emitter::X2), irec);
++  gen->add_instr(IGen::pop_gpr64(*gen, emitter::X1), irec);
++  gen->add_instr(IGen::pop_gpr64(*gen, emitter::X0), irec);
++#endif
 +  gen->add_instr(IGen::add_gpr64_gpr64(*gen, freg, emitter::gRegInfo.get_offset_reg()), irec);
 +  gen->add_instr(IGen::call_r64(*gen, freg), irec);
  }
  
  /////////////////////
-@@ -540,9 +661,15 @@ void IR_RegValAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -540,9 +716,15 @@ void IR_RegValAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_RegValAddr::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2477,7 +2584,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  /////////////////////
-@@ -574,7 +701,10 @@ void IR_StaticVarAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -574,7 +756,10 @@ void IR_StaticVarAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_StaticVarAddr::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                          const AllocationResult& allocs,
                                          emitter::IR_Record irec) {
@@ -2489,7 +2596,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  /////////////////////
-@@ -603,9 +733,12 @@ void IR_FunctionAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -603,9 +788,12 @@ void IR_FunctionAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_FunctionAddr::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2505,7 +2612,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  /////////////////////
-@@ -783,7 +916,104 @@ void IR_IntegerMath::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -783,7 +971,104 @@ void IR_IntegerMath::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_IntegerMath::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                        const AllocationResult& allocs,
                                        emitter::IR_Record irec) {
@@ -2611,7 +2718,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  /////////////////////
-@@ -870,7 +1100,44 @@ void IR_FloatMath::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -870,7 +1155,44 @@ void IR_FloatMath::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_FloatMath::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                      const AllocationResult& allocs,
                                      emitter::IR_Record irec) {
@@ -2657,7 +2764,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  /////////////////////
-@@ -918,7 +1185,30 @@ void IR_StaticVarLoad::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -918,7 +1240,30 @@ void IR_StaticVarLoad::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_StaticVarLoad::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                          const AllocationResult& allocs,
                                          emitter::IR_Record irec) {
@@ -2689,7 +2796,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  /////////////////////
-@@ -1026,20 +1316,73 @@ void IR_ConditionalBranch::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1026,20 +1371,73 @@ void IR_ConditionalBranch::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_ConditionalBranch::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2775,7 +2882,7 @@ index ce4f98f91..d16dae3c9 100644
      : IR_Asm(use_coloring), m_dest(dest), m_offset(offset), m_base(base), m_info(info) {}
  
  std::string IR_LoadConstOffset::print() {
-@@ -1081,9 +1424,30 @@ void IR_LoadConstOffset::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1081,9 +1479,30 @@ void IR_LoadConstOffset::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_LoadConstOffset::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2809,7 +2916,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  ///////////////////////
-@@ -1135,9 +1499,30 @@ void IR_StoreConstOffset::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1135,9 +1554,30 @@ void IR_StoreConstOffset::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_StoreConstOffset::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2843,7 +2950,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  ///////////////////////
-@@ -1162,7 +1547,9 @@ void IR_Null::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1162,7 +1602,9 @@ void IR_Null::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_Null::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                 const AllocationResult& allocs,
                                 emitter::IR_Record irec) {
@@ -2854,7 +2961,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  ///////////////////////
-@@ -1191,9 +1578,11 @@ void IR_ValueReset::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1191,9 +1633,11 @@ void IR_ValueReset::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_ValueReset::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2869,7 +2976,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  ///////////////////////
-@@ -1226,7 +1615,11 @@ void IR_FloatToInt::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1226,7 +1670,11 @@ void IR_FloatToInt::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_FloatToInt::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                       const AllocationResult& allocs,
                                       emitter::IR_Record irec) {
@@ -2882,7 +2989,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  ///////////////////////
-@@ -1256,7 +1649,8 @@ void IR_IntToFloat::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1256,7 +1704,8 @@ void IR_IntToFloat::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_IntToFloat::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                       const AllocationResult& allocs,
                                       emitter::IR_Record irec) {
@@ -2892,7 +2999,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  ///////////////////////
-@@ -1295,7 +1689,16 @@ void IR_GetStackAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1295,7 +1744,16 @@ void IR_GetStackAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_GetStackAddr::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                         const AllocationResult& allocs,
                                         emitter::IR_Record irec) {
@@ -2910,7 +3017,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  ///////////////////////
-@@ -1321,7 +1724,8 @@ void IR_Nop::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1321,7 +1779,8 @@ void IR_Nop::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_Nop::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                const AllocationResult& allocs,
                                emitter::IR_Record irec) {
@@ -2920,7 +3027,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  ///////////////////////
-@@ -1360,9 +1764,10 @@ void IR_AsmRet::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1360,9 +1819,19 @@ void IR_AsmRet::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmRet::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2930,11 +3037,20 @@ index ce4f98f91..d16dae3c9 100644
 +                               const AllocationResult& allocs,
 +                               emitter::IR_Record irec) {
 +  (void)allocs;
++  // GOAL asm-func `.ret` follows the x86 convention: the return address is
++  // ON the GOAL stack (return-from-thread / abandon-thread / throw-dispatch /
++  // catch-frame-new all push it there before returning).  A bare ARM64 `ret`
++  // would jump to x30 -- the current function's own return address -- which
++  // is wrong for those functions.  throw-dispatch fault: the catch-frame's ra
++  // was pushed on the switched stack but `ret` returned into `throw`'s
++  // continuation (0x1ed0ac) with the caller-saved regs clobbered, then the
++  // (-> cur type) read SIGSEGV'd.  Pop the return address into x30, then ret.
++  gen->add_instr(IGen::pop_gpr64(*gen, emitter::X30), irec);
 +  gen->add_instr(IGen::ret(*gen), irec);
  }
  
  ///////////////////////
-@@ -1387,9 +1792,10 @@ void IR_AsmFNop::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1387,9 +1856,10 @@ void IR_AsmFNop::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmFNop::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2948,7 +3064,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  ///////////////////////
-@@ -1414,9 +1820,10 @@ void IR_AsmFWait::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1414,9 +1884,10 @@ void IR_AsmFWait::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmFWait::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2962,7 +3078,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  ///////////////////////
-@@ -1448,9 +1855,13 @@ void IR_AsmPush::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1448,9 +1919,13 @@ void IR_AsmPush::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmPush::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2979,7 +3095,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  ///////////////////////
-@@ -1482,9 +1893,13 @@ void IR_AsmPop::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1482,9 +1957,13 @@ void IR_AsmPop::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmPop::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2996,7 +3112,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  ///////////////////////
-@@ -1522,9 +1937,16 @@ void IR_AsmSub::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1522,9 +2001,16 @@ void IR_AsmSub::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmSub::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3016,7 +3132,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  ///////////////////////
-@@ -1562,9 +1984,16 @@ void IR_AsmAdd::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1562,9 +2048,16 @@ void IR_AsmAdd::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmAdd::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3036,7 +3152,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  ///////////////////////
-@@ -1608,10 +2037,34 @@ void IR_GetSymbolValueAsm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1608,10 +2101,56 @@ void IR_GetSymbolValueAsm::do_codegen_x86(emitter::ObjectGenerator* gen,
    }
  }
  
@@ -3049,33 +3165,55 @@ index ce4f98f91..d16dae3c9 100644
 +    const AllocationResult& allocs,
 +    emitter::IR_Record irec) {
 +  auto dst_reg = m_use_coloring ? get_reg(m_dest, allocs, irec) : get_no_color_reg(m_dest);
++  // `sp` (rsp) cannot be a GPR destination in ADRP or in load Rt fields
++  // (register 31 decodes as XZR there, silently discarding the write), so
++  // route the whole symbol-load chain through X16 and finish with
++  // `mov sp, x16` (add sp, x16, #0).  Used by the kernel asm functions'
++  // `.load-sym :sext #f sp *kernel-sp*`.
++  const bool dst_is_sp = dst_reg.id() == emitter::SP;
++  auto compute_reg = dst_is_sp ? emitter::X16 : dst_reg;
 +  // Ottsel H3 no-emit: (sym - s7) in a writable data slot; ADR patched offline.
 +  auto slot = gen->add_symbol_offset_slot(irec.seg, m_sym_name);
-+  auto adr = gen->add_instr(IGen::static_addr(*gen, dst_reg, 0), irec);
++  auto adr = gen->add_instr(IGen::static_addr(*gen, compute_reg, 0), irec);
 +  gen->link_instruction_static(adr, slot, 0);
 +  // slot holds a signed (sym - s7) offset; load 32 bits sign-extended.
-+  gen->add_instr(IGen::load32s_gpr64_plus_s32(*gen, dst_reg, 0, dst_reg), irec);
-+  gen->add_instr(IGen::add_gpr64_gpr64(*gen, dst_reg, gRegInfo.get_st_reg()), irec);
++  gen->add_instr(IGen::load32s_gpr64_plus_s32(*gen, compute_reg, 0, compute_reg), irec);
++  gen->add_instr(IGen::add_gpr64_gpr64(*gen, compute_reg, gRegInfo.get_st_reg()), irec);
 +  // st is the EE-relative symbol-table offset; add the EE base (offset reg)
 +  // so the load targets the absolute host address, matching the x86 pattern
 +  // [st + offset_reg + (sym - s7)].
-+  gen->add_instr(IGen::add_gpr64_gpr64(*gen, dst_reg, gRegInfo.get_offset_reg()), irec);
++  gen->add_instr(IGen::add_gpr64_gpr64(*gen, compute_reg, gRegInfo.get_offset_reg()), irec);
 +  // now dst_reg = address of symbol; load value
 +  gen->add_instr(IGen::xor_gpr64_gpr64(*gen, emitter::X17, emitter::X17), irec);
-+  gen->add_instr(IGen::mov_gpr64_gpr64(*gen, emitter::X16, dst_reg), irec);
-+  if (m_sext) {
-+    gen->add_instr(
-+        IGen::load32s_gpr64_gpr64_plus_gpr64_plus_s32(*gen, dst_reg, emitter::X16, emitter::X17, 0),
-+        irec);
++  if (dst_is_sp) {
++    // compute_reg == X16 already holds the symbol address; load into X16 then
++    // move to sp (add sp, x16, #0) so the final Rt never decodes as XZR.
++    if (m_sext) {
++      gen->add_instr(IGen::load32s_gpr64_gpr64_plus_gpr64_plus_s32(
++                         *gen, emitter::X16, emitter::X16, emitter::X17, 0),
++                     irec);
++    } else {
++      gen->add_instr(IGen::load32u_gpr64_gpr64_plus_gpr64_plus_s32(
++                         *gen, emitter::X16, emitter::X16, emitter::X17, 0),
++                     irec);
++    }
++    gen->add_instr(IGen::mov_gpr64_gpr64(*gen, dst_reg, emitter::X16), irec);
 +  } else {
-+    gen->add_instr(
-+        IGen::load32u_gpr64_gpr64_plus_gpr64_plus_s32(*gen, dst_reg, emitter::X16, emitter::X17, 0),
-+        irec);
++    gen->add_instr(IGen::mov_gpr64_gpr64(*gen, emitter::X16, compute_reg), irec);
++    if (m_sext) {
++      gen->add_instr(IGen::load32s_gpr64_gpr64_plus_gpr64_plus_s32(
++                         *gen, dst_reg, emitter::X16, emitter::X17, 0),
++                     irec);
++    } else {
++      gen->add_instr(IGen::load32u_gpr64_gpr64_plus_gpr64_plus_s32(
++                         *gen, dst_reg, emitter::X16, emitter::X17, 0),
++                     irec);
++    }
 +  }
  }
  
  ///////////////////////
-@@ -1640,9 +2093,10 @@ void IR_JumpReg::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1640,9 +2179,10 @@ void IR_JumpReg::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_JumpReg::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3089,7 +3227,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  ///////////////////////
-@@ -1674,7 +2128,7 @@ void IR_RegSetAsm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1674,7 +2214,7 @@ void IR_RegSetAsm::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_RegSetAsm::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                      const AllocationResult& allocs,
                                      emitter::IR_Record irec) {
@@ -3098,7 +3236,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  ///////////////////////
-@@ -1764,9 +2218,37 @@ void IR_VFMath3Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1764,9 +2304,37 @@ void IR_VFMath3Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_VFMath3Asm::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3139,7 +3277,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  ///////////////////////
-@@ -1942,9 +2424,84 @@ void IR_Int128Math3Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1942,9 +2510,84 @@ void IR_Int128Math3Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_Int128Math3Asm::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3227,7 +3365,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  ///////////////////////
-@@ -1999,9 +2556,21 @@ void IR_VFMath2Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1999,9 +2642,21 @@ void IR_VFMath2Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_VFMath2Asm::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3252,7 +3390,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  ///////////////////////
-@@ -2147,9 +2716,78 @@ void IR_Int128Math2Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -2147,9 +2802,78 @@ void IR_Int128Math2Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_Int128Math2Asm::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3334,7 +3472,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  // ---- Blend VF
-@@ -2188,7 +2826,17 @@ void IR_BlendVF::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -2188,7 +2912,17 @@ void IR_BlendVF::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_BlendVF::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                    const AllocationResult& allocs,
                                    emitter::IR_Record irec) {
@@ -3353,7 +3491,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  // ----- Splat VF
-@@ -2224,7 +2872,9 @@ void IR_SplatVF::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -2224,7 +2958,9 @@ void IR_SplatVF::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_SplatVF::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                    const AllocationResult& allocs,
                                    emitter::IR_Record irec) {
@@ -3364,7 +3502,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  // ---- Swizzle VF
-@@ -2260,7 +2910,40 @@ void IR_SwizzleVF::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -2260,7 +2996,40 @@ void IR_SwizzleVF::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_SwizzleVF::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                      const AllocationResult& allocs,
                                      emitter::IR_Record irec) {
@@ -3406,7 +3544,7 @@ index ce4f98f91..d16dae3c9 100644
  }
  
  // ---- Square Root VF
-@@ -2293,5 +2976,7 @@ void IR_SqrtVF::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -2293,5 +3062,7 @@ void IR_SqrtVF::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_SqrtVF::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                   const AllocationResult& allocs,
                                   emitter::IR_Record irec) {
@@ -3573,10 +3711,30 @@ index 27cbcc8c1..3b0bdf082 100644
   * Divide (idiv, 32 bit)
   */
 diff --git a/goalc/emitter/IGenARM64.cpp b/goalc/emitter/IGenARM64.cpp
-index 1180f722d..1465870ea 100644
+index 1180f722d..2752f8f21 100644
 --- a/goalc/emitter/IGenARM64.cpp
 +++ b/goalc/emitter/IGenARM64.cpp
-@@ -418,7 +418,9 @@ InstructionARM64 store16_gpr64_gpr64_plus_gpr64(Register addr1, Register addr2,
+@@ -90,6 +90,19 @@ InstructionARM64 mov_gpr64_gpr64(Register dst, Register src) {
+   // MOV <Xd>, <Xm>
+   ASSERT(dst.is_gpr(instr_set));
+   ASSERT(src.is_gpr(instr_set));
++  // Register 31 is XZR in ORR (never SP), so a MOV to/from SP must use the
++  // ADD-immediate form: `add sp, xN, #0` / `add xN, sp, #0`.  The kernel asm
++  // functions (`throw-dispatch`, thread-suspend/resume, ...) write to `sp`
++  // (rsp) and previously got `mov xzr, xN` -- a silently discarded write that
++  // left the stack pointer unchanged.
++  if (dst.id() == SP) {
++    // mov sp, src  ==  add sp, src, #0
++    return InstructionARM64(Base(0b100100010, 9), Sh(0), Imm12(0), Rd(SP), Rn(src.id()));
++  }
++  if (src.id() == SP) {
++    // mov dst, sp  ==  add dst, sp, #0
++    return InstructionARM64(Base(0b100100010, 9), Sh(0), Imm12(0), Rd(dst.id()), Rn(SP));
++  }
+   return InstructionARM64(Base(0b10101010000, 11), Rm(src.id()), Rn(0b11111), Rd(dst.id()),
+                           Imm6(0));
+ }
+@@ -418,7 +431,9 @@ InstructionARM64 store16_gpr64_gpr64_plus_gpr64(Register addr1, Register addr2,
    ASSERT(addr1 != addr2);
    ASSERT(addr1 != SP);
    ASSERT(addr2 != SP);
@@ -3587,7 +3745,7 @@ index 1180f722d..1465870ea 100644
                            Rm(addr2.id()));
  }
  
-@@ -561,10 +563,15 @@ InstructionARM64 load16u_gpr64_gpr64_plus_gpr64_plus_s8(Register dst,
+@@ -561,10 +576,15 @@ InstructionARM64 load16u_gpr64_gpr64_plus_gpr64_plus_s8(Register dst,
                // ADD <Xd|SP>, <Xn|SP>, <R><m>{, <extend> {#<amount>}}
                InstructionARM64(Base(0b1000101100100000111000, 22), Rd(X16), Rn(addr1.id()),
                                 Rm(addr2.id())),
@@ -3607,7 +3765,7 @@ index 1180f722d..1465870ea 100644
    } else {
      instrs = {
          // https://www.scs.stanford.edu/~zyedidia/arm64/add_addsub_ext.html
-@@ -766,7 +773,7 @@ InstructionARM64 load32u_gpr64_gpr64_plus_gpr64(Register dst, Register addr1, Re
+@@ -766,7 +786,7 @@ InstructionARM64 load32u_gpr64_gpr64_plus_gpr64(Register dst, Register addr1, Re
    ASSERT(addr1 != addr2);
    ASSERT(addr1 != SP);
    ASSERT(addr2 != SP);
@@ -3616,7 +3774,7 @@ index 1180f722d..1465870ea 100644
                            Rm(addr2.id()));
  }
  
-@@ -818,12 +825,15 @@ InstructionARM64 load32u_gpr64_gpr64_plus_gpr64_plus_s32(Register dst,
+@@ -818,12 +838,15 @@ InstructionARM64 load32u_gpr64_gpr64_plus_gpr64_plus_s32(Register dst,
      const auto add_instrs = construct_multiple_imm12_adds(offset, X16);
      instrs.insert(instrs.end(), add_instrs.begin(), add_instrs.end());
    }
@@ -3635,7 +3793,7 @@ index 1180f722d..1465870ea 100644
    return InstructionARM64(instrs);
  }
  
-@@ -837,7 +847,10 @@ InstructionARM64 load64_gpr64_gpr64_plus_gpr64(Register dst, Register addr1, Reg
+@@ -837,7 +860,10 @@ InstructionARM64 load64_gpr64_gpr64_plus_gpr64(Register dst, Register addr1, Reg
    ASSERT(addr1 != addr2);
    ASSERT(addr1 != SP);
    ASSERT(addr2 != SP);
@@ -3647,7 +3805,7 @@ index 1180f722d..1465870ea 100644
                            Rm(addr2.id()));
  }
  
-@@ -934,12 +947,14 @@ InstructionARM64 load64_gpr64_gpr64_plus_gpr64_plus_s32(Register dst,
+@@ -934,12 +960,14 @@ InstructionARM64 load64_gpr64_gpr64_plus_gpr64_plus_s32(Register dst,
      const auto add_instrs = construct_multiple_imm12_adds(offset, X16);
      instrs.insert(instrs.end(), add_instrs.begin(), add_instrs.end());
    }
@@ -3665,7 +3823,7 @@ index 1180f722d..1465870ea 100644
    return InstructionARM64(instrs);
  }
  
-@@ -978,7 +993,7 @@ InstructionARM64 store64_gpr64_gpr64_plus_gpr64_plus_s32(Register addr1,
+@@ -978,7 +1006,7 @@ InstructionARM64 store64_gpr64_gpr64_plus_gpr64_plus_s32(Register addr1,
  InstructionARM64 load64_gpr64_plus_s32(Register dst_reg, int32_t offset, Register src_reg) {
    ASSERT(dst_reg.is_gpr(instr_set));
    ASSERT(src_reg.is_gpr(instr_set));
@@ -3674,7 +3832,7 @@ index 1180f722d..1465870ea 100644
    ASSERT(offset >= INT32_MIN && offset <= INT32_MAX);
    std::vector<InstructionARM64> instrs = {
        // https://www.scs.stanford.edu/~zyedidia/arm64/add_addsub_imm.html
-@@ -994,19 +1009,52 @@ InstructionARM64 load64_gpr64_plus_s32(Register dst_reg, int32_t offset, Registe
+@@ -994,19 +1022,52 @@ InstructionARM64 load64_gpr64_plus_s32(Register dst_reg, int32_t offset, Registe
      const auto add_instrs = construct_multiple_imm12_adds(offset, X16);
      instrs.insert(instrs.end(), add_instrs.begin(), add_instrs.end());
    }
@@ -3731,7 +3889,7 @@ index 1180f722d..1465870ea 100644
    ASSERT(offset >= INT32_MIN && offset <= INT32_MAX);
    std::vector<InstructionARM64> instrs = {
        // https://www.scs.stanford.edu/~zyedidia/arm64/add_addsub_imm.html
-@@ -1263,8 +1311,10 @@ InstructionARM64 store32_xmm32_gpr64_plus_gpr64(Register addr1,
+@@ -1263,8 +1324,10 @@ InstructionARM64 store32_xmm32_gpr64_plus_gpr64(Register addr1,
    // https://www.scs.stanford.edu/~zyedidia/arm64/str_reg_fpsimd.html
    // 32-bit variant
    // STR <St>, [<Xn|SP>, (<Wm>|<Xm>){, <extend> {<amount>}}]
@@ -3744,7 +3902,43 @@ index 1180f722d..1465870ea 100644
  }
  
  InstructionARM64 load32_xmm32_gpr64_plus_gpr64(Register simd_dest, Register addr1, Register addr2) {
-@@ -1597,7 +1647,7 @@ InstructionARM64 store128_gpr64_simd128_s32(Register gpr_addr, Register xmm_valu
+@@ -1305,7 +1368,7 @@ InstructionARM64 store32_xmm32_gpr64_plus_gpr64_plus_s8(Register addr1,
+   // 32-bit variant
+   // STR <St>, [<Xn|SP>], #<simm>
+   instrs.emplace_back(
+-      InstructionARM64(Base(0b1011110100000000000001, 22), Imm12(0), Rt(xmm_value.id()), Rn(X16)));
++      InstructionARM64(Base(0b1011110100000000000000, 22), Imm12(0), Rt(xmm_value.id()), Rn(X16)));
+   return InstructionARM64(instrs);
+ }
+ 
+@@ -1367,7 +1430,7 @@ InstructionARM64 store32_xmm32_gpr64_plus_gpr64_plus_s32(Register addr1,
+   // 32-bit variant
+   // STR <St>, [<Xn|SP>], #<simm>
+   instrs.emplace_back(
+-      InstructionARM64(Base(0b1011110100000000000001, 22), Imm12(0), Rt(xmm_value.id()), Rn(X16)));
++      InstructionARM64(Base(0b1011110100000000000000, 22), Imm12(0), Rt(xmm_value.id()), Rn(X16)));
+   return InstructionARM64(instrs);
+ }
+ 
+@@ -1394,7 +1457,7 @@ InstructionARM64 store32_xmm32_gpr64_plus_s32(Register base, Register xmm_value,
+   // 32-bit variant
+   // STR <St>, [<Xn|SP>], #<simm>
+   instrs.emplace_back(
+-      InstructionARM64(Base(0b1011110100000000000001, 22), Imm12(0), Rt(xmm_value.id()), Rn(X16)));
++      InstructionARM64(Base(0b1011110100000000000000, 22), Imm12(0), Rt(xmm_value.id()), Rn(X16)));
+   return InstructionARM64(instrs);
+ }
+ 
+@@ -1421,7 +1484,7 @@ InstructionARM64 store32_xmm32_gpr64_plus_s8(Register base, Register xmm_value,
+   // 32-bit variant, unsigned
+   // STR <St>, [<Xn|SP>], #<simm>
+   instrs.emplace_back(
+-      InstructionARM64(Base(0b1011110100000000000001, 22), Imm12(0), Rt(xmm_value.id()), Rn(X16)));
++      InstructionARM64(Base(0b1011110100000000000000, 22), Imm12(0), Rt(xmm_value.id()), Rn(X16)));
+   return InstructionARM64(instrs);
+ }
+ 
+@@ -1597,7 +1660,7 @@ InstructionARM64 store128_gpr64_simd128_s32(Register gpr_addr, Register xmm_valu
    // 128-bit variant, unsigned offset
    // STR <Qt>, [<Xn|SP>{, #<pimm>}]
    instrs.emplace_back(
@@ -3753,7 +3947,7 @@ index 1180f722d..1465870ea 100644
    return InstructionARM64(instrs);
  }
  
-@@ -1626,7 +1676,7 @@ InstructionARM64 store128_gpr64_simd128_s8(Register gpr_addr, Register xmm_value
+@@ -1626,7 +1689,7 @@ InstructionARM64 store128_gpr64_simd128_s8(Register gpr_addr, Register xmm_value
    // 128-bit variant, unsigned offset
    // STR <Qt>, [<Xn|SP>{, #<pimm>}]
    instrs.emplace_back(
@@ -3762,7 +3956,7 @@ index 1180f722d..1465870ea 100644
    return InstructionARM64(instrs);
  }
  
-@@ -1741,43 +1791,42 @@ InstructionARM64 store128_xmm128_reg_offset(Register base, Register xmm_val, s64
+@@ -1741,43 +1804,42 @@ InstructionARM64 store128_xmm128_reg_offset(Register base, Register xmm_val, s64
  
  InstructionARM64 load64_pcRel_s32(Register dest, s64 offset) {
    ASSERT(dest.is_gpr(instr_set));
@@ -3828,7 +4022,7 @@ index 1180f722d..1465870ea 100644
    // ASSERT_MSG(offset >= ARM64_LDR_MIN && offset <= ARM64_LDR_MAX,
    //            "PC Relative offset is too large for ARM64, fix it.");
    return InstructionARM64(
-@@ -1793,8 +1842,6 @@ InstructionARM64 load16s_pcRel_s32(Register dest, s64 offset) {
+@@ -1793,8 +1855,6 @@ InstructionARM64 load16s_pcRel_s32(Register dest, s64 offset) {
    ASSERT(dest.is_gpr(instr_set));
    // NOTE - the offsets passed into these functions are always `0` and then later patched
    // so im not going to worry about properly encoding the offset
@@ -3837,7 +4031,7 @@ index 1180f722d..1465870ea 100644
    // ASSERT_MSG(offset >= ARM64_LDR_MIN && offset <= ARM64_LDR_MAX,
    //            "PC Relative offset is too large for ARM64, fix it.");
    return InstructionARM64(
-@@ -1810,8 +1857,6 @@ InstructionARM64 load8u_pcRel_s32(Register dest, s64 offset) {
+@@ -1810,8 +1870,6 @@ InstructionARM64 load8u_pcRel_s32(Register dest, s64 offset) {
    ASSERT(dest.is_gpr(instr_set));
    // NOTE - the offsets passed into these functions are always `0` and then later patched
    // so im not going to worry about properly encoding the offset
@@ -3846,7 +4040,7 @@ index 1180f722d..1465870ea 100644
    // ASSERT_MSG(offset >= ARM64_LDR_MIN && offset <= ARM64_LDR_MAX,
    //            "PC Relative offset is too large for ARM64, fix it.");
    return InstructionARM64(
-@@ -1827,8 +1872,6 @@ InstructionARM64 load8s_pcRel_s32(Register dest, s64 offset) {
+@@ -1827,8 +1885,6 @@ InstructionARM64 load8s_pcRel_s32(Register dest, s64 offset) {
    ASSERT(dest.is_gpr(instr_set));
    // NOTE - the offsets passed into these functions are always `0` and then later patched
    // so im not going to worry about properly encoding the offset
@@ -3855,7 +4049,7 @@ index 1180f722d..1465870ea 100644
    // ASSERT_MSG(offset >= ARM64_LDR_MIN && offset <= ARM64_LDR_MAX,
    //            "PC Relative offset is too large for ARM64, fix it.");
    return InstructionARM64(
-@@ -1858,13 +1901,13 @@ InstructionARM64 static_load(Register dest, s64 offset, int size, bool sign_exte
+@@ -1858,13 +1914,13 @@ InstructionARM64 static_load(Register dest, s64 offset, int size, bool sign_exte
        break;
      case 4:
        if (sign_extend) {
@@ -3872,7 +4066,7 @@ index 1180f722d..1465870ea 100644
      default:
        ASSERT(false);
    }
-@@ -1874,8 +1917,6 @@ InstructionARM64 static_load(Register dest, s64 offset, int size, bool sign_exte
+@@ -1874,8 +1930,6 @@ InstructionARM64 static_load(Register dest, s64 offset, int size, bool sign_exte
  
  InstructionARM64 store64_pcRel_s32(Register src, s64 offset) {
    ASSERT(src.is_gpr(instr_set));
@@ -3881,7 +4075,7 @@ index 1180f722d..1465870ea 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -1887,8 +1928,6 @@ InstructionARM64 store64_pcRel_s32(Register src, s64 offset) {
+@@ -1887,8 +1941,6 @@ InstructionARM64 store64_pcRel_s32(Register src, s64 offset) {
  
  InstructionARM64 store32_pcRel_s32(Register src, s64 offset) {
    ASSERT(src.is_gpr(instr_set));
@@ -3890,7 +4084,7 @@ index 1180f722d..1465870ea 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -1900,8 +1939,6 @@ InstructionARM64 store32_pcRel_s32(Register src, s64 offset) {
+@@ -1900,8 +1952,6 @@ InstructionARM64 store32_pcRel_s32(Register src, s64 offset) {
  
  InstructionARM64 store16_pcRel_s32(Register src, s64 offset) {
    ASSERT(src.is_gpr(instr_set));
@@ -3899,7 +4093,7 @@ index 1180f722d..1465870ea 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -1913,8 +1950,6 @@ InstructionARM64 store16_pcRel_s32(Register src, s64 offset) {
+@@ -1913,8 +1963,6 @@ InstructionARM64 store16_pcRel_s32(Register src, s64 offset) {
  
  InstructionARM64 store8_pcRel_s32(Register src, s64 offset) {
    ASSERT(src.is_gpr(instr_set));
@@ -3908,7 +4102,7 @@ index 1180f722d..1465870ea 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -1941,26 +1976,47 @@ InstructionARM64 static_store(Register value, s64 offset, int size) {
+@@ -1941,26 +1989,47 @@ InstructionARM64 static_store(Register value, s64 offset, int size) {
  
  InstructionARM64 static_addr(Register dest, s64 offset) {
    ASSERT(dest.is_gpr(instr_set));
@@ -3968,7 +4162,44 @@ index 1180f722d..1465870ea 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -2103,28 +2159,49 @@ InstructionARM64 imul_gpr64_gpr64(Register dst, Register src) {
+@@ -2078,6 +2147,18 @@ InstructionARM64 sub_gpr64_imm(Register reg, int64_t imm) {
+ InstructionARM64 add_gpr64_gpr64(Register dst, Register src) {
+   // https://www.scs.stanford.edu/~zyedidia/arm64/add_addsub_shift.html
+   // ADD <Xd>, <Xn>, <Xm>{, <shift> #<amount>}
++  // The shifted-register form cannot target SP (register 31 decodes as XZR
++  // there).  When either operand is SP, use the extended-register form, which
++  // accepts SP for Rn/Rd: `add sp, sp, xN` (0x8B2063FF | Rm<<16) or, for
++  // dst + sp, the commutative `add dst, sp, dst`.
++  if (dst.id() == SP) {
++    // add sp, sp, src  ==  extended-register ADD (Rn=Rd=SP, Rm=src)
++    return InstructionARM64(0x8B2063FF | (src.id() << 16));
++  }
++  if (src.id() == SP) {
++    // dst = dst + sp == sp + dst : add dst, sp, dst
++    return InstructionARM64(0x8B2063E0 | (dst.id() << 16) | dst.id());
++  }
+   return InstructionARM64(Base(0b10001011000, 11), Rd(dst.id()), Imm6(0), Rn(dst.id()),
+                           Rm(src.id()));
+ }
+@@ -2085,6 +2166,17 @@ InstructionARM64 add_gpr64_gpr64(Register dst, Register src) {
+ InstructionARM64 sub_gpr64_gpr64(Register dst, Register src) {
+   // https://www.scs.stanford.edu/~zyedidia/arm64/sub_addsub_shift.html
+   // SUB <Xd>, <Xn>, <Xm>{, <shift> #<amount>}
++  // Same SP caveat as ADD: use the extended-register form for `sub sp, sp, xN`
++  // (0xCB2063FF | Rm<<16).  `xd - sp` has no single SP-encoding (SP is only
++  // valid as the first operand), so it is rejected rather than silently
++  // decoding register 31 as XZR.
++  if (dst.id() == SP) {
++    ASSERT(src.id() != SP);
++    return InstructionARM64(0xCB2063FF | (src.id() << 16));
++  }
++  if (src.id() == SP) {
++    ASSERT_MSG(false, "sub xd, xd, sp has no single ARM64 encoding");
++  }
+   return InstructionARM64(Base(0b11001011000, 11), Rd(dst.id()), Imm6(0), Rn(dst.id()),
+                           Rm(src.id()));
+ }
+@@ -2103,28 +2195,49 @@ InstructionARM64 imul_gpr64_gpr64(Register dst, Register src) {
                            Rm(src.id()));
  }
  
@@ -4031,7 +4262,7 @@ index 1180f722d..1465870ea 100644
  }
  
  InstructionARM64 movsx_r64_r32(Register dst, Register src) {
-@@ -2134,9 +2211,12 @@ InstructionARM64 movsx_r64_r32(Register dst, Register src) {
+@@ -2134,9 +2247,12 @@ InstructionARM64 movsx_r64_r32(Register dst, Register src) {
  }
  
  InstructionARM64 cmp_gpr64_gpr64(Register a, Register b) {
@@ -4047,7 +4278,7 @@ index 1180f722d..1465870ea 100644
  }
  
  //;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-@@ -2210,7 +2290,7 @@ InstructionARM64 sar_gpr64_reg(Register reg, Register shift_reg) {
+@@ -2210,7 +2326,7 @@ InstructionARM64 sar_gpr64_reg(Register reg, Register shift_reg) {
  InstructionARM64 shl_gpr64_u8(Register reg, uint8_t sa) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/lsl_ubfm.html
    // LSL <Xd>, <Xn>, #<shift>
@@ -4056,7 +4287,7 @@ index 1180f722d..1465870ea 100644
    ASSERT(reg.is_gpr(instr_set));
    return InstructionARM64(Base(0b1101001101, 10), Rd(reg.id()), Rn(reg.id()), Immr((64 - sa) & 63),
                            Imms(63 - sa));
-@@ -2220,7 +2300,7 @@ InstructionARM64 shr_gpr64_u8(Register reg, uint8_t sa) {
+@@ -2220,7 +2336,7 @@ InstructionARM64 shr_gpr64_u8(Register reg, uint8_t sa) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/lsr_ubfm.html
    // LSR <Xd>, <Xn>, #<shift>
    // sf	1	0	1	0	0	1	1	0	N
@@ -4065,7 +4296,7 @@ index 1180f722d..1465870ea 100644
    ASSERT(reg.is_gpr(instr_set));
    return InstructionARM64(Base(0b1101001101000000111111, 22), Rd(reg.id()), Rn(reg.id()), Immr(sa));
  }
-@@ -2228,7 +2308,7 @@ InstructionARM64 shr_gpr64_u8(Register reg, uint8_t sa) {
+@@ -2228,7 +2344,7 @@ InstructionARM64 shr_gpr64_u8(Register reg, uint8_t sa) {
  InstructionARM64 sar_gpr64_u8(Register reg, uint8_t sa) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/asr_sbfm.html
    // ASR <Xd>, <Xn>, #<shift>
@@ -4074,7 +4305,7 @@ index 1180f722d..1465870ea 100644
    ASSERT(reg.is_gpr(instr_set));
    return InstructionARM64(Base(0b1001001101000000111111, 22), Rd(reg.id()), Rn(reg.id()), Immr(sa));
  }
-@@ -2253,7 +2333,11 @@ InstructionARM64 sar_gpr64_u8(Register reg, uint8_t sa) {
+@@ -2253,7 +2369,11 @@ InstructionARM64 sar_gpr64_u8(Register reg, uint8_t sa) {
  InstructionARM64 jmp_imm() {
    // https://www.scs.stanford.edu/~zyedidia/arm64/b_uncond.html
    // B <label>
@@ -4087,7 +4318,7 @@ index 1180f722d..1465870ea 100644
  }
  
  // Now these instructions in ARM are even more limiting, conditional
-@@ -2274,71 +2358,101 @@ InstructionARM64 jmp_imm() {
+@@ -2274,71 +2394,101 @@ InstructionARM64 jmp_imm() {
  InstructionARM64 je_imm() {
    // https://www.scs.stanford.edu/~zyedidia/arm64/b_cond.html
    // B.<cond> <label>
@@ -4209,7 +4440,7 @@ index 1180f722d..1465870ea 100644
  }
  
  //;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-@@ -2472,17 +2586,17 @@ InstructionARM64 loadvf_gpr64_plus_gpr64(Register dst, Register addr1, Register
+@@ -2472,17 +2622,17 @@ InstructionARM64 loadvf_gpr64_plus_gpr64(Register dst, Register addr1, Register
    ASSERT(addr1 != addr2);
    ASSERT(addr1 != SP);
    ASSERT(addr2 != SP);
@@ -4232,7 +4463,7 @@ index 1180f722d..1465870ea 100644
    ASSERT(dst.is_128bit_simd(instr_set));
    ASSERT(addr1.is_gpr(instr_set));
    ASSERT(addr2.is_gpr(instr_set));
-@@ -2490,8 +2604,28 @@ InstructionARM64 loadvf_gpr64_plus_gpr64_plus_s8(Register dst,
+@@ -2490,8 +2640,28 @@ InstructionARM64 loadvf_gpr64_plus_gpr64_plus_s8(Register dst,
    ASSERT(addr1 != SP);
    ASSERT(addr2 != SP);
    ASSERT(offset >= INT8_MIN && offset <= INT8_MAX);
@@ -4263,7 +4494,7 @@ index 1180f722d..1465870ea 100644
  }
  
  InstructionARM64 loadvf_gpr64_plus_gpr64_plus_s32(Register dst,
-@@ -2537,7 +2671,9 @@ InstructionARM64 storevf_gpr64_plus_gpr64(Register value, Register addr1, Regist
+@@ -2537,7 +2707,9 @@ InstructionARM64 storevf_gpr64_plus_gpr64(Register value, Register addr1, Regist
    ASSERT(addr2 != SP);
    // https://www.scs.stanford.edu/~zyedidia/arm64/str_reg_fpsimd.html
    // STR <Qt>, [<Xn|SP>, (<Wm>|<Xm>){, <extend> {<amount>}}]
@@ -4274,7 +4505,7 @@ index 1180f722d..1465870ea 100644
                            Rm(addr2.id()));
  }
  
-@@ -2609,8 +2745,6 @@ InstructionARM64 storevf_gpr64_plus_gpr64_plus_s32(Register value,
+@@ -2609,8 +2781,6 @@ InstructionARM64 storevf_gpr64_plus_gpr64_plus_s32(Register value,
  
  InstructionARM64 loadvf_rip_plus_s32(Register dest, s64 offset) {
    ASSERT(dest.is_128bit_simd(instr_set));
@@ -4283,7 +4514,7 @@ index 1180f722d..1465870ea 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -2635,19 +2769,80 @@ InstructionARM64 shuffle_vf(Register dst, Register src, u8 dx, u8 dy, u8 dz, u8
+@@ -2635,19 +2805,80 @@ InstructionARM64 shuffle_vf(Register dst, Register src, u8 dx, u8 dy, u8 dz, u8
    return InstructionARM64(0b0);
  }
  
@@ -4368,7 +4599,7 @@ index 1180f722d..1465870ea 100644
        break;
      default:
        ASSERT(false);
-@@ -2739,8 +2934,9 @@ InstructionARM64 pw_sra(Register dst, Register src, u8 imm) {
+@@ -2739,8 +2970,9 @@ InstructionARM64 pw_sra(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/sshr_advsimd.html
    // - vector, 4S
    // SSHR <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -4379,7 +4610,7 @@ index 1180f722d..1465870ea 100644
  }
  
  // - logical_shift_right_32bit_vf
-@@ -2748,8 +2944,9 @@ InstructionARM64 pw_srl(Register dst, Register src, u8 imm) {
+@@ -2748,8 +2980,9 @@ InstructionARM64 pw_srl(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/ushr_advsimd.html
    // - vector, 4S
    // USHR <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -4390,7 +4621,7 @@ index 1180f722d..1465870ea 100644
  }
  
  // - logical_shift_left_32bit_vf
-@@ -2757,8 +2954,9 @@ InstructionARM64 pw_sll(Register dst, Register src, u8 imm) {
+@@ -2757,8 +2990,9 @@ InstructionARM64 pw_sll(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/shl_advsimd.html
    // - vector, 4S
    // SHL <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -4401,7 +4632,7 @@ index 1180f722d..1465870ea 100644
  }
  
  // - logical_shift_right_16bit_vf
-@@ -2766,8 +2964,9 @@ InstructionARM64 ph_srl(Register dst, Register src, u8 imm) {
+@@ -2766,8 +3000,9 @@ InstructionARM64 ph_srl(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/ushr_advsimd.html
    // - vector, 8H
    // USHR <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -4412,7 +4643,7 @@ index 1180f722d..1465870ea 100644
  }
  
  // - logical_shift_left_16bit_vf
-@@ -2775,8 +2974,9 @@ InstructionARM64 ph_sll(Register dst, Register src, u8 imm) {
+@@ -2775,8 +3010,9 @@ InstructionARM64 ph_sll(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/shl_advsimd.html
    // - vector, 8H
    // SHL <Vd>.<T>, <Vn>.<T>, #<shift>

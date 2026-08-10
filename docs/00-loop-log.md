@@ -1041,3 +1041,55 @@
 - **Decisive next step:** a runtime jump/return tracer that records the last
   N executed blr/br/ret targets + LR (a goalc emitter hook or a watchpoint
   on the EE base page) to capture the exact jumping instruction.
+
+## 2026-08-09 — S2.1: asm-func `.ret` stack-return bug fixed (throw-dispatch returned into throw)
+
+### Iteration — boot advanced past the throw path; next fault: process-spawn func=#t
+- **Regenerated KERNEL/GAME CGOs with the SP-aware emitter** (clean regen; the
+  previous obj/iso saved to /tmp/ottsel-jak1-old/regensave-20260809-spfix/).
+  gkernel.o verified: `mov sp,x0` (0x9100001f) x3, `add sp,sp,x22`
+  (0x8b3663ff) x6, `sub sp,sp,x22` (0xcb3663ff) x3, zero xzr-dest words.
+- **Fixed the emission validator's ADR round-trip false positive:** llvm-objdump
+  prints ADR as the raw 21-bit immediate (e.g. `adr x1, #0`), not an absolute
+  target; `compute_pc_rel_word` subtracted `off` and produced garbage expected
+  words (0x70fffe61) for every pre-link ADR placeholder.  ADR now uses
+  raw-immediate encoding with a resolved-target fallback.  KERNEL (110,592) +
+  GAME (5,091,328) words validate PASS with the fix.
+- **A1.0 harness:** re-ran PASS incl. the new a1-spops SP tests.
+- **New boot fault (object 207 time-of-day now links + top-level runs):**
+  `signal 11 at pc=0x70001ed0b0` inside `throw`'s catch-frame walk — cur
+  (x24) = 0x1044e67b4 (4GB in).  Throw-dispatch had been called (trace) but
+  control resumed in throw's continuation.
+- **Root cause: `IR_AsmRet::do_codegen_arm64` emitted a bare `ret` (jumps to
+  x30).**  GOAL asm-func `.ret` follows the x86 convention: the return address
+  sits ON the GOAL stack (return-from-thread / abandon-thread / throw-dispatch
+  / catch-frame-new all push it there before returning).  throw-dispatch
+  pushed the catch-frame's ra on the switched stack and `ret`-ed to x30
+  (throw's continuation at 0x1ed0a4) with the caller-saved regs clobbered.
+- **Fix:** `IR_AsmRet` emits `pop_gpr64(X30)` + `ret` (ldr x30,[sp],#16; ret).
+- **A1.0 regression test 11 (a1-asmret):** an asm-func ending in `.ret` must
+  pop the return address BEFORE the ret.  Fails before the fix, passes after.
+- **Rebuilt goalc + regenerated CGOs + app.**  Boot: throw-dispatch now
+  transfers to the catch correctly — the boot advanced past the throw path.
+- **Next fault (deterministic):** `signal 10 at pc=0x700018fe0c` (executing the
+  #t symbol value).  The chain: time-of-day top-level -> (start-time-of-day) ->
+  (process-spawn time-of-day-proc :init init-time-of-day) ->
+  run-function-in-process -> catch-frame-new -> func call -> 0x18fe0c (SIGILL).
+- **Analysis of the func=#t fault (in progress):** the time-of-day caller's
+  func slot [0x237c2b0] = 0xf9e8 (correct symlink) and the init-time-of-day
+  symbol value [0x19f7ec] = 0x2378e74 (CORRECT, verified by probe + lldb).
+  Yet run-function-in-process receives x1 = 0x18fe0c (#t) — a runtime-only
+  arg-register corruption in the multi-arg call chain
+  (x1 -> x8 -> x3 -> x24).  The A1.0 trace recorder shim was tested and
+  excluded (func still #t with it disabled); the recorder is now #if'd out
+  (BOT6 cleanup: strip the A1.0 probe at the next checkpoint).
+  Also noted: `freg` (function register) is allocated x2 at this call site,
+  colliding with the a0 arg slot — the fn value lands in a0.
+- **Files changed (worktree):** goalc/compiler/IR.cpp (IR_AsmRet pop+ret; trace
+  recorder #if OTTSEL_TRACE_GOAL_CALLS), tools/ottsel_a1/semantic_regressions.cpp
+  (test 11), goalc/emitter/IGenARM64.cpp (SP fixes, prior session); repo
+  scripts/validate-arm64-emission.py (ADR round-trip fix),
+  src/shell/ios_boot.cpp (fault-dump regs x6/x7/x24-x27 + func-slot probe).
+- **Next:** pin the func=#t arg corruption (candidate: freg/arg-register
+  collision in IR_FunctionCall codegen for multi-arg calls, or a
+  recorder-less shim arg clobber); add an A1.0 regression; regenerate; boot.

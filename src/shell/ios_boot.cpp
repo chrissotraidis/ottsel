@@ -144,9 +144,33 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
          (unsigned long)uc->uc_mcontext->__ss.__x[14], (unsigned long)uc->uc_mcontext->__ss.__x[15],
          (unsigned long)uc->uc_mcontext->__ss.__x[17], (unsigned long)uc->uc_mcontext->__ss.__x[19],
          (unsigned long)uc->uc_mcontext->__ss.__x[20], (unsigned long)uc->uc_mcontext->__ss.__x[23]);
+  // S2.1 debug (TEMPORARY): the catch-frame func call path uses x6/x7/x24/x25.
+  rawlog("OTTSEL_IOS: regs x6=0x%lx x7=0x%lx x24=0x%lx x25=0x%lx x26=0x%lx x27=0x%lx\n",
+         (unsigned long)uc->uc_mcontext->__ss.__x[6], (unsigned long)uc->uc_mcontext->__ss.__x[7],
+         (unsigned long)uc->uc_mcontext->__ss.__x[24], (unsigned long)uc->uc_mcontext->__ss.__x[25],
+         (unsigned long)uc->uc_mcontext->__ss.__x[26], (unsigned long)uc->uc_mcontext->__ss.__x[27]);
   rawlog("OTTSEL_IOS: fault lr=0x%lx x21(st)=0x%lx x22(offset)=0x%lx x16=0x%lx\n",
          (unsigned long)lr, (unsigned long)uc->uc_mcontext->__ss.__x[21],
          (unsigned long)uc->uc_mcontext->__ss.__x[22], (unsigned long)uc->uc_mcontext->__ss.__x[16]);
+  // S2.1 debug (TEMPORARY): dump the process-spawn func-slot chain so the
+  // func=#t regression can be traced without lldb (which cannot read these
+  // pages reliably).
+  {
+    const uintptr_t ee = (uintptr_t)g_ee_main_mem;
+    u32 slot = 0, sym_val = 0, sym_hash = 0, sym_str = 0;
+    rawlog("OTTSEL probe: ee=%p\n", g_ee_main_mem);
+    if (safe_read_u32((volatile u32*)(ee + 0x237c2b0), &slot)) {
+      rawlog("OTTSEL probe: time-of-day func slot@0x237c2b0 = 0x%08x\n", slot);
+      if (safe_read_u32((volatile u32*)(ee + 0x18fe04 + slot), &sym_val) &&
+          safe_read_u32((volatile u32*)(ee + 0x18fe04 + slot + 4), &sym_hash) &&
+          safe_read_u32((volatile u32*)(ee + 0x18fe04 + slot + 8), &sym_str)) {
+        rawlog("OTTSEL probe: sym@0x%lx value=0x%08x hash=0x%08x str=0x%08x\n",
+               (unsigned long)(0x18fe04 + slot), sym_val, sym_hash, sym_str);
+      }
+    } else {
+      rawlog("OTTSEL probe: func slot read FAILED\n");
+    }
+  }
   // A1.0 bounded trace: last 48 GOAL->GOAL calls + the last target's code.
   {
     u64 idx = g_ottsel_call_idx;
@@ -190,7 +214,12 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
     safe_read_u32((volatile u32*)(pc + i * 4), &fw[i]);
   }
   rawlog("OTTSEL_IOS: faulting words: 0x%08x 0x%08x 0x%08x 0x%08x\n", fw[0], fw[1], fw[2], fw[3]);
-  _exit(1);
+  // S2.1 debug: hold the process alive at the fault so lldb can attach and
+  // unwind the faulting thread (the jump source is one step behind pc).
+  rawlog("OTTSEL_IOS: HELD AT FAULT for lldb attach (pid %d)\n", (int)getpid());
+  for (;;) {
+    sleep(3600);
+  }
 }
 
 
