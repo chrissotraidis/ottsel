@@ -1135,3 +1135,37 @@
 - **Next:** trace the pp-register corruption (candidates: the C-export
   trampoline path or an unmodeled x20 write in the launch-control chain);
   keep every fix through the A1.0 harness.
+
+## 2026-08-09 — S2.1: GOAL call now pushes x30 (asm-func stack-return contract); catch-frame never registered
+
+### Iteration — x30-push fix + the pp-register corruption is the deep root
+- **Fix: the ARM64 GOAL->GOAL call shim now pushes x30 around the blr**
+  (matching x86 `call`, which pushes the return address).  GOAL asm-funcs
+  (catch-frame-new's entry `(.pop temp)`) expect the return address ON the
+  stack; without the push, the catch-frame's ra was whatever sat on the
+  stack.  A1.0 test 14 (a1-callpush) fails before / passes after; the emitted
+  call site is `str x30,[sp,#-16]!; add x16; blr x16; ldr x30,[sp],#16`.
+- **Boot evidence:** throw-dispatch now returns to run-function-in-process's
+  REAL continuation (lr = 0x1f2850 = the x30-pop after the catch-frame-new
+  call); the old "second invocation with func=#t" is gone.
+- **Next fault (characterized):** the process's stack-frame-top is still `#f`
+  (probe: pp=0x24783b catch-frame=0x18fe04 — the INITIAL value from
+  process-new).  The catch-frame-new's `(set! (-> pp stack-frame-top) this)`
+  write never landed on the real process, so throw's catch-frame walk runs
+  through the symbol table and eventually jumps to the process object
+  (pc = 0x700024783b — `blr x16` with x16 = pp+off).
+- **Deep root (still open): the pp register (x20) is corrupted during
+  init-time-of-day's chain** — the kmalloc still reports
+  "!alloc mem ... #<process @ #x4f00afc>" (pp = the alloc_heap_object stub)
+  despite the arg3_is_pp stub fix (which reads x20, so x20 itself = the stub
+  at that moment).  The catch-frame-new's pp write therefore went to the
+  wrong address.
+- **Files changed (worktree):** goalc/compiler/IR.cpp (push/pop x30 around
+  GOAL calls), tools/ottsel_a1/semantic_regressions.cpp (test 14); repo
+  src/shell/ios_boot.cpp (fault pc print + catch-frame probe).  CGOs
+  regenerated; A1.0 all 14 tests PASS; KERNEL 86,016 + GAME 3,895,296 words
+  validate.
+- **Next:** find the x20 (pp) corruption in the init-time-of-day chain
+  (candidates: the C-export trampoline path, an unmodeled x20 write in the
+  launch-control code, or a wrong-width store into the process object that
+  happens to alias the pp register's stack save).

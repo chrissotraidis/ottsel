@@ -1928,10 +1928,20 @@ index 4355cb922..c1034ba72 100644
    void load_settings();
    void save_settings();
 diff --git a/goalc/CMakeLists.txt b/goalc/CMakeLists.txt
-index a9b02e7c4..6fa0d954d 100644
+index a9b02e7c4..cc477cfa0 100644
 --- a/goalc/CMakeLists.txt
 +++ b/goalc/CMakeLists.txt
-@@ -101,3 +101,37 @@ target_link_libraries(goalc common Zydis compiler)
+@@ -91,6 +91,9 @@ if (WIN32)
+     target_link_libraries(compiler mman)
+ endif ()
+ 
++# Ottsel S2.1 debug (TEMPORARY): enable the A1.0 GOAL->GOAL call tracer shim.
++target_compile_definitions(compiler PRIVATE OTTSEL_TRACE_GOAL_CALLS)
++
+ add_executable(goalc main.cpp)
+ add_executable(goalc-simple simple_main.cpp)
+ 
+@@ -101,3 +104,37 @@ target_link_libraries(goalc common Zydis compiler)
  target_link_libraries(goalc-simple common Zydis compiler)
  target_link_libraries(build_level common Zydis compiler)
  target_link_libraries(build_actor common Zydis compiler)
@@ -2305,7 +2315,7 @@ index 06a8e6475..cd9ea8124 100644
    GameVersion m_version;
    emitter::InstructionSet m_instr_set;
 diff --git a/goalc/compiler/IR.cpp b/goalc/compiler/IR.cpp
-index ce4f98f91..0db1d5090 100644
+index ce4f98f91..a1249f936 100644
 --- a/goalc/compiler/IR.cpp
 +++ b/goalc/compiler/IR.cpp
 @@ -6,6 +6,7 @@
@@ -2535,7 +2545,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  void IR_FunctionCall::do_codegen_x86(emitter::ObjectGenerator* gen,
-@@ -508,7 +643,64 @@ void IR_FunctionCall::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -508,7 +643,74 @@ void IR_FunctionCall::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_FunctionCall::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                         const AllocationResult& allocs,
                                         emitter::IR_Record irec) {
@@ -2596,12 +2606,22 @@ index ce4f98f91..0db1d5090 100644
 +  gen->add_instr(IGen::pop_gpr64(*gen, emitter::X1), irec);
 +  gen->add_instr(IGen::pop_gpr64(*gen, emitter::X0), irec);
 +#endif
++  // Ottsel S2.1: x86 `call` pushes the return address, and GOAL asm-funcs
++  // expect it ON the stack (catch-frame-new's entry `(.pop temp)`, and the
++  // `.ret` fix in IR_AsmRet).  ARM64 `blr` only sets x30, so the catch-frame
++  // "return address" was whatever happened to be on the stack (the
++  // run-function-in-process local frame), and throw-dispatch later returned
++  // to garbage.  Push x30 around the call like x86's call instruction; the
++  // pop after the call restores the caller's x30 for normal functions, and
++  // asm-funcs consume the pushed value themselves and never return.
++  gen->add_instr(IGen::push_gpr64(*gen, emitter::X30), irec);
 +  gen->add_instr(IGen::add_gpr64_gpr64(*gen, freg, emitter::gRegInfo.get_offset_reg()), irec);
 +  gen->add_instr(IGen::call_r64(*gen, freg), irec);
++  gen->add_instr(IGen::pop_gpr64(*gen, emitter::X30), irec);
  }
  
  /////////////////////
-@@ -540,9 +732,15 @@ void IR_RegValAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -540,9 +742,15 @@ void IR_RegValAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_RegValAddr::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2620,7 +2640,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  /////////////////////
-@@ -574,7 +772,10 @@ void IR_StaticVarAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -574,7 +782,10 @@ void IR_StaticVarAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_StaticVarAddr::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                          const AllocationResult& allocs,
                                          emitter::IR_Record irec) {
@@ -2632,7 +2652,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  /////////////////////
-@@ -603,9 +804,12 @@ void IR_FunctionAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -603,9 +814,12 @@ void IR_FunctionAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_FunctionAddr::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2648,7 +2668,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  /////////////////////
-@@ -783,7 +987,104 @@ void IR_IntegerMath::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -783,7 +997,104 @@ void IR_IntegerMath::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_IntegerMath::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                        const AllocationResult& allocs,
                                        emitter::IR_Record irec) {
@@ -2754,7 +2774,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  /////////////////////
-@@ -870,7 +1171,44 @@ void IR_FloatMath::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -870,7 +1181,44 @@ void IR_FloatMath::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_FloatMath::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                      const AllocationResult& allocs,
                                      emitter::IR_Record irec) {
@@ -2800,7 +2820,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  /////////////////////
-@@ -918,7 +1256,30 @@ void IR_StaticVarLoad::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -918,7 +1266,30 @@ void IR_StaticVarLoad::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_StaticVarLoad::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                          const AllocationResult& allocs,
                                          emitter::IR_Record irec) {
@@ -2832,7 +2852,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  /////////////////////
-@@ -1026,14 +1387,67 @@ void IR_ConditionalBranch::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1026,14 +1397,67 @@ void IR_ConditionalBranch::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_ConditionalBranch::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2907,7 +2927,7 @@ index ce4f98f91..0db1d5090 100644
  
  IR_LoadConstOffset::IR_LoadConstOffset(const RegVal* dest,
                                         int offset,
-@@ -1081,9 +1495,30 @@ void IR_LoadConstOffset::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1081,9 +1505,30 @@ void IR_LoadConstOffset::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_LoadConstOffset::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2941,7 +2961,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  ///////////////////////
-@@ -1135,9 +1570,30 @@ void IR_StoreConstOffset::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1135,9 +1580,30 @@ void IR_StoreConstOffset::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_StoreConstOffset::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -2975,7 +2995,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  ///////////////////////
-@@ -1162,7 +1618,9 @@ void IR_Null::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1162,7 +1628,9 @@ void IR_Null::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_Null::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                 const AllocationResult& allocs,
                                 emitter::IR_Record irec) {
@@ -2986,7 +3006,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  ///////////////////////
-@@ -1191,9 +1649,11 @@ void IR_ValueReset::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1191,9 +1659,11 @@ void IR_ValueReset::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_ValueReset::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3001,7 +3021,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  ///////////////////////
-@@ -1226,7 +1686,11 @@ void IR_FloatToInt::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1226,7 +1696,11 @@ void IR_FloatToInt::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_FloatToInt::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                       const AllocationResult& allocs,
                                       emitter::IR_Record irec) {
@@ -3014,7 +3034,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  ///////////////////////
-@@ -1256,7 +1720,8 @@ void IR_IntToFloat::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1256,7 +1730,8 @@ void IR_IntToFloat::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_IntToFloat::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                       const AllocationResult& allocs,
                                       emitter::IR_Record irec) {
@@ -3024,7 +3044,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  ///////////////////////
-@@ -1295,7 +1760,16 @@ void IR_GetStackAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1295,7 +1770,16 @@ void IR_GetStackAddr::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_GetStackAddr::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                         const AllocationResult& allocs,
                                         emitter::IR_Record irec) {
@@ -3042,7 +3062,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  ///////////////////////
-@@ -1321,7 +1795,8 @@ void IR_Nop::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1321,7 +1805,8 @@ void IR_Nop::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_Nop::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                const AllocationResult& allocs,
                                emitter::IR_Record irec) {
@@ -3052,7 +3072,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  ///////////////////////
-@@ -1360,9 +1835,19 @@ void IR_AsmRet::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1360,9 +1845,19 @@ void IR_AsmRet::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmRet::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3075,7 +3095,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  ///////////////////////
-@@ -1387,9 +1872,10 @@ void IR_AsmFNop::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1387,9 +1882,10 @@ void IR_AsmFNop::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmFNop::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3089,7 +3109,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  ///////////////////////
-@@ -1414,9 +1900,10 @@ void IR_AsmFWait::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1414,9 +1910,10 @@ void IR_AsmFWait::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmFWait::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3103,7 +3123,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  ///////////////////////
-@@ -1448,9 +1935,13 @@ void IR_AsmPush::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1448,9 +1945,13 @@ void IR_AsmPush::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmPush::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3120,7 +3140,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  ///////////////////////
-@@ -1482,9 +1973,13 @@ void IR_AsmPop::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1482,9 +1983,13 @@ void IR_AsmPop::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmPop::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3137,7 +3157,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  ///////////////////////
-@@ -1522,9 +2017,16 @@ void IR_AsmSub::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1522,9 +2027,16 @@ void IR_AsmSub::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmSub::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3157,7 +3177,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  ///////////////////////
-@@ -1562,9 +2064,16 @@ void IR_AsmAdd::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1562,9 +2074,16 @@ void IR_AsmAdd::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmAdd::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3177,7 +3197,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  ///////////////////////
-@@ -1608,10 +2117,56 @@ void IR_GetSymbolValueAsm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1608,10 +2127,56 @@ void IR_GetSymbolValueAsm::do_codegen_x86(emitter::ObjectGenerator* gen,
    }
  }
  
@@ -3238,7 +3258,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  ///////////////////////
-@@ -1640,9 +2195,10 @@ void IR_JumpReg::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1640,9 +2205,10 @@ void IR_JumpReg::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_JumpReg::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3252,7 +3272,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  ///////////////////////
-@@ -1674,7 +2230,7 @@ void IR_RegSetAsm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1674,7 +2240,7 @@ void IR_RegSetAsm::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_RegSetAsm::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                      const AllocationResult& allocs,
                                      emitter::IR_Record irec) {
@@ -3261,7 +3281,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  ///////////////////////
-@@ -1764,9 +2320,37 @@ void IR_VFMath3Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1764,9 +2330,37 @@ void IR_VFMath3Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_VFMath3Asm::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3302,7 +3322,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  ///////////////////////
-@@ -1942,9 +2526,84 @@ void IR_Int128Math3Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1942,9 +2536,84 @@ void IR_Int128Math3Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_Int128Math3Asm::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3390,7 +3410,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  ///////////////////////
-@@ -1999,9 +2658,21 @@ void IR_VFMath2Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1999,9 +2668,21 @@ void IR_VFMath2Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_VFMath2Asm::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3415,7 +3435,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  ///////////////////////
-@@ -2147,9 +2818,78 @@ void IR_Int128Math2Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -2147,9 +2828,78 @@ void IR_Int128Math2Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_Int128Math2Asm::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3497,7 +3517,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  // ---- Blend VF
-@@ -2188,7 +2928,17 @@ void IR_BlendVF::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -2188,7 +2938,17 @@ void IR_BlendVF::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_BlendVF::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                    const AllocationResult& allocs,
                                    emitter::IR_Record irec) {
@@ -3516,7 +3536,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  // ----- Splat VF
-@@ -2224,7 +2974,9 @@ void IR_SplatVF::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -2224,7 +2984,9 @@ void IR_SplatVF::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_SplatVF::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                    const AllocationResult& allocs,
                                    emitter::IR_Record irec) {
@@ -3527,7 +3547,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  // ---- Swizzle VF
-@@ -2260,7 +3012,40 @@ void IR_SwizzleVF::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -2260,7 +3022,40 @@ void IR_SwizzleVF::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_SwizzleVF::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                      const AllocationResult& allocs,
                                      emitter::IR_Record irec) {
@@ -3569,7 +3589,7 @@ index ce4f98f91..0db1d5090 100644
  }
  
  // ---- Square Root VF
-@@ -2293,5 +3078,7 @@ void IR_SqrtVF::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -2293,5 +3088,7 @@ void IR_SqrtVF::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_SqrtVF::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                   const AllocationResult& allocs,
                                   emitter::IR_Record irec) {

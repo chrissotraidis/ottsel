@@ -101,6 +101,7 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
   pc = uc->uc_mcontext->__ss.__pc;
   uintptr_t lr = uc->uc_mcontext->__ss.__lr;
   uintptr_t sp = uc->uc_mcontext->__ss.__sp;
+  rawlog("OTTSEL_IOS: fault pc=0x%lx lr=0x%lx\n", (unsigned long)pc, (unsigned long)lr);
   rawlog("OTTSEL_IOS: fault sp=0x%lx\n", (unsigned long)sp);
   // S2.1 debug: RAW stack slots (no address filter) so saved x30/x22 values
   // near the faulting frame are visible (the GOAL-relative filter hides
@@ -193,6 +194,18 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
         safe_read_u32((volatile u32*)(ee + par + 16), &p2)) {
       rawlog("OTTSEL probe: param-block@0x%lx = 0x%08x 0x%08x 0x%08x\n",
              (unsigned long)par, p0, p1, p2);
+    }
+    // The catch-frame chain: pp (x20) -> stack-frame-top (+0x58) -> the
+    // catch-frame; dump its ra (+0xc) and sp (+8) fields.
+    uintptr_t ppv = (uintptr_t)uc->uc_mcontext->__ss.__x[20];
+    u32 cfr = 0;
+    if (safe_read_u32((volatile u32*)(ee + ppv + 0x58), &cfr)) {
+      u32 ra = 0, sp8 = 0, nm = 0;
+      safe_read_u32((volatile u32*)(ee + cfr + 0x0), &nm);
+      safe_read_u32((volatile u32*)(ee + cfr + 0x8), &sp8);
+      safe_read_u32((volatile u32*)(ee + cfr + 0xc), &ra);
+      rawlog("OTTSEL probe: pp=0x%lx catch-frame=0x%08x name=0x%08x sp=0x%08x ra=0x%08x\n",
+             (unsigned long)ppv, cfr, nm, sp8, ra);
     }
   }
   // A1.0 bounded trace: last 48 GOAL->GOAL calls + the last target's code.
