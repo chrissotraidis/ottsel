@@ -1670,3 +1670,12 @@ return address, not the call-site continuation
 - Next: determine whether the game's type objects are missing/corrupt (the
   type at 0x2381704 should be a game Type) or a memory overlap placed code
   over the type region.
+
+## 2026-08-10 (BOT9 cont 9) — active-pool located; node is a genuine tree node with a game-code type tag
+
+- *active-pool* = 0x1982c4; the faulting node 0x22f9f4 sits ~620KB above it
+  with real pool/neighbor pointers - a genuine process-tree node whose type
+  tag is the game-code address 0x2381704 (contents are code words).
+- Next probe: trace the node's creation and the type-tag write; check
+  whether the game's Type objects exist (a missing/corrupt game type table
+  would resolve type pointers to code).

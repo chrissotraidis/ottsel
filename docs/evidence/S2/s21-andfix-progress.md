@@ -347,6 +347,15 @@ whether the game's deftype/type objects are missing/corrupt (the type at
 0x2381704 should be a game Type, but its symbol field reads as code), or
 whether a memory overlap placed game code over the type region.
 
+The *active-pool* symbol's value = 0x1982c4 (kernel heap); the faulting
+node 0x22f9f4 is ~620 KB above it, with real pool/neighbor pointers - a
+genuine process-tree node in the pool region whose type tag is the
+game-code address 0x2381704.  The probe for the next iteration: trace the
+node's creation (the pool's process spawn / `(new 'process-tree ...)`) and
+the write of its type tag, and check whether the game's Type objects exist
+at all (a missing/corrupt game type table would resolve type pointers to
+code).
+
 ## Honest status
 
 S2.1 is NOT PASS: there is no stable renderer-ready boundary and no Jak
