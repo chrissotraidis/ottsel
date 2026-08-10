@@ -1365,3 +1365,25 @@
   continuation - the two candidate "return to" sites for the process chain.
 - Keep the trace4 probe build (s21-trace4-boot.log is the current evidence);
   the ios_boot.cpp probe changes stay active.
+
+### Additional finding (same session): the call shim pushes the CALLER's
+return address, not the call-site continuation
+- rfn's code (offline 0x1b2df4) shows the `new 'stack 'catch-frame` call goes
+  through IR_FunctionCall's ARM64 shim: `push x30; add freg,freg,x22; blr
+  freg; pop x30` (IR.cpp). The pushed value = rfn's x30 = 0x0244a6c0 = rfn's
+  RETURN address (the trampoline continuation). catch-frame-new computes
+  `ra = (popped value) - off` -> the rfn catch-frame's ra = 0x0244a6c0.
+- On x86, `call catch-frame-new` pushes the address AFTER the call (rfn's
+  continuation, where the status-case statement lives). The ARM64 shim pushes
+  the caller's return address instead - semantically wrong for asm-funcs that
+  consume the pushed value as their return address (catch-frame-new,
+  return-from-thread, set-to-run-bootstrap). Fix candidate: push the
+  post-blr continuation (adr-based) instead of the pre-blr x30; normal
+  functions are unaffected (the shim pop still restores the caller's x30).
+- CAVEAT: this explains why the rfn catch-frame's ra = 0x0244a6c0 (wrong
+  target: the trampoline continuation, not rfn's continuation), but the
+  observed FAULT is a ret to RAW 0x001f2df4 - which neither this ra nor
+  throw-dispatch's tail can produce (u32 ra + 0x7000000000 can never yield
+  0x001f2df4). So the shim semantics are a real defect to fix, but the
+  faulting instruction still needs runtime identification (lldb) before
+  changing the emitter.
