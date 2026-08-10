@@ -1679,3 +1679,13 @@ return address, not the call-site continuation
 - Next probe: trace the node's creation and the type-tag write; check
   whether the game's Type objects exist (a missing/corrupt game type table
   would resolve type pointers to code).
+
+## 2026-08-10 (BOT9 cont 10) — code/data overlap identified: the node's type is time-of-day's code
+
+- The node's type tag 0x2381704 falls inside the **time-of-day** object's
+  main code segment (0x2380000-0x2388434).  The game's code placements sit
+  inside the global heap range, so the deftype top-levels' Type allocations
+  can land in the code region - a code/data overlap that turns Type objects
+  into code words.
+- Next: verify the overlap (Type allocation addresses vs code placements)
+  and fix the loader placement so code and heap allocations do not collide.

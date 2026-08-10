@@ -356,6 +356,24 @@ the write of its type tag, and check whether the game's Type objects exist
 at all (a missing/corrupt game type table would resolve type pointers to
 code).
 
+## Code/data overlap identified (2026-08-10)
+
+The type tag 0x2381704 falls inside the **`time-of-day` object's main code
+segment** (0x2380000-0x2388434, from the boot log's per-object main-seg
+layout).  The node's type pointer therefore points at game code, and the
+run-logic? method read returns a code word.
+
+The game's code placements (cumulative, ~0x574000-0x248xxxx) sit INSIDE the
+global heap range (0x13fd20-0x3eb82e0), so runtime heap allocations (the
+game's Type objects, created by the deftype top-levels during the link) can
+land in the same region the code later occupies - a code/data overlap that
+turns Type objects into code words.  The kernel's small data footprint
+never collided; the game's larger allocations reach the code region.
+
+Next probe: verify the overlap by comparing the game's heap allocation
+addresses (the Type objects) against the code placements, then fix the
+loader/link placement so code and heap allocations do not collide.
+
 ## Honest status
 
 S2.1 is NOT PASS: there is no stable renderer-ready boundary and no Jak
