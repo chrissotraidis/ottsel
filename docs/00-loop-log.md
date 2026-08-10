@@ -1647,3 +1647,14 @@ return address, not the call-site continuation
   (0x8b36e010) and the call faults at pc = 0x7008b36e010.
 - Next probe: identify 0x22f9f4 (which process/object) and why its type tag
   is a code address.
+
+## 2026-08-10 (BOT9 cont 7) — offline link confirms the dispatch function; object/type are runtime state
+
+- Extended the host offline CGO link dump (game/ottsel_cgolink_dump.cpp)
+  with the fault regions: the faulting dispatch function at sim 0x1e53e0
+  matches byte-for-byte (0x1e5450 = 0x8b36e010 = the code word used as the
+  method pointer).  The object 0x22f9f4 and its "type" 0x2381704 are
+  runtime-created (zeros in the host-linked image).
+- The fault is a runtime process-tree object whose type tag is a game-code
+  address; next probe: identify the object's role (pool/parent vs
+  *active-pool*) and what writes its type tag.

@@ -307,6 +307,26 @@ table read therefore returns a code word and the call faults.  Next probe:
 identify which object/process 0x22f9f4 is and why its type tag is a code
 address (corrupt object or wrong `this` in the process-tree iteration).
 
+## Offline-link confirmation (2026-08-10)
+
+The host-side offline link (`game/ottsel_cgolink_dump.cpp`, extended with
+the fault-region dumps; `s21-cgolink-dump.log`) links KERNEL.CGO + GAME.CGO
+with the same runtime linker and confirms:
+
+- The faulting dispatch function at sim 0x1e53e0 matches the live
+  disassembly byte-for-byte (the word at sim 0x1e5450 is exactly
+  `0x8b36e010` = `add x16,x0,x22,sxtx`, the value that became the fault's
+  method pointer).
+- The object 0x22f9f4 and the "type" 0x2381704 are RUNTIME state (the
+  host-linked image holds zeros there) - both are created during the
+  Simulator boot (the process-tree / game process setup), not in the static
+  link.
+
+So the fault is a runtime process-tree object whose type tag was set to (or
+overwritten with) a game-code address.  The next probe is to identify the
+object's role (its pool/parent fields, vs *active-pool*) and which code
+writes its type tag.
+
 ## Honest status
 
 S2.1 is NOT PASS: there is no stable renderer-ready boundary and no Jak
