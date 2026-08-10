@@ -233,6 +233,31 @@ this.
   thread/process function chain) remains the next probe; the fix must make
   the entry set x30 (or make the epilogue not depend on the entry x30).
 
+## Sky-process identification + ABI mechanism refinement (2026-08-10)
+
+- The trace's "game process code" (sites 0x2474xxx -> targets 0x060cxxx) is
+  the **sky** object's code (sky-tng is the caller; the targets are
+  `trigonometry`), so the process being processed by the faulting lambda is
+  the sky background process (pp = 0x24b844).  The sky code calls
+  trigonometry helpers in a loop, then the lambda's profiler-end runs and
+  the epilogue rets to pc = 0.
+- The ARM64 GOAL asm `.ret` convention (A1.0 test 11) loads x30 from [sp]
+  WITHOUT post-index, and the caller's post-call pops the pushed
+  continuation + its own x30 - so the thread-suspend/return-from-thread
+  return path is internally consistent.  The lambda's x30 = 0 at its
+  profiler-end therefore reflects its ENTRY x30 = 0 (a tail-call / .jr
+  entry), not a mid-body corruption.
+- The below-sp dump shows 0x1e5fec (a gkernel code address) in the slot
+  region below the frame - consistent with a pushed return/trampoline
+  value being present but the entry x30 (the actual return register) being
+  0, so the epilogue rets to pc = 0 instead of the pushed value.
+- Remaining probe: identify the exact tail-call/.jr entry into the lambda
+  (reset-and-call sets pp = the process, matching the observed pp; the
+  trampoline slot value needs one more in-process read to confirm which
+  entry pushed it).  The fix: ensure the entry sets x30 (or the GOAL
+  epilogue returns via the pushed stack return like the asm .ret), then
+  re-verify the full boot.
+
 ## Honest status
 
 S2.1 is NOT PASS: there is no stable renderer-ready boundary and no Jak

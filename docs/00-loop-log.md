@@ -1600,3 +1600,19 @@ return address, not the call-site continuation
   x30 = 0 restores x30 = 0 in its epilogue and rets to pc = 0.  The exact
   br source and the fix (set x30 at the entry, or make the epilogue not
   depend on entry x30) remain the next probe.
+
+## 2026-08-10 (BOT9 cont 4) — sky process identified; ABI return convention verified
+
+- The trace's "game loop" (0x2474xxx -> 0x060cxxx) maps to the **sky**
+  object's code (caller sky-tng, targets trigonometry): the faulting
+  lambda's process is the sky background process (pp = 0x24b844).
+- The ARM64 asm `.ret` convention (no post-index; the caller's post-call
+  pops the continuation + its own x30) is internally consistent, so the
+  lambda's x30 = 0 at its profiler-end reflects its ENTRY x30 = 0 (a
+  tail-call/.jr entry), not mid-body corruption.  The below-sp region shows
+  0x1e5fec (gkernel code - a pushed return/trampoline value) while the
+  entry x30 was 0.
+- Remaining probe: confirm which process-thread entry (reset-and-call sets
+  pp = the process, matching the observed pp) and then fix the entry so x30
+  is set (or the GOAL epilogue returns via the pushed stack return),
+  re-verify the boot.
