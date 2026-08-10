@@ -207,6 +207,32 @@ fix the entry contract so a GOAL function entered with x30 = 0 cannot return
 through a zeroed x30 on a fresh stack.  Do not patch game source around
 this.
 
+## pc-prof event resolution + entry-chain confirmation (2026-08-10)
+
+- `pc-prof-event` (`goal_src/jak1/kernel-defs.gc:603`) is `begin=0, end=1,
+  instant=2`.  The faulting pc-prof call emits `x1 = 1` = the profiler-END
+  event - which runs AFTER the lambda's process execution, fully consistent
+  with the trace order (game process code first, then the lambda's
+  profiler-end calls).
+- The trace's caller-lr values that looked like EE addresses in the
+  5.3 MB/84 MB range (e.g. 0x50e2cd4) are the LOW 32 BITS of native
+  addresses: the recorder stores `(caller_lr & 0xffffffff)` and the
+  bridge's post-blr is native 0x1050e2cd4-ish.  The dispatcher was entered
+  normally by the bridge; there is no dispatcher-entry anomaly.
+- A below-sp fault dump (`s21-pc0-belowsp-fault.log`) shows the lambda's
+  frame slots at sp-0x40..sp are all zero (entered with zeroed callee-saved
+  registers), and the pc-prof call chain's pushes sit below the frame with
+  `[sp-0x10] = 0` (the shim's saved x30 = 0) and `[sp-0x20] = 0x1e5fec`
+  (the post-call continuation in the product gkernel code).  The lambda
+  ran its ENTIRE body on the fresh zeroed stack at sp = 0x70001f4be0 with
+  x30 = 0 and no pushed return trampoline - a plain tail-call (`br`) entry
+  from a context with x30 = 0.
+- The defect is the ARM64 GOAL call/return fragility exposed by the
+  process-thread tail jumps: a function entered with x30 = 0 restores x30 =
+  0 in its epilogue and `ret`s to pc = 0.  The exact `br` source (which
+  thread/process function chain) remains the next probe; the fix must make
+  the entry set x30 (or make the epilogue not depend on the entry x30).
+
 ## Honest status
 
 S2.1 is NOT PASS: there is no stable renderer-ready boundary and no Jak

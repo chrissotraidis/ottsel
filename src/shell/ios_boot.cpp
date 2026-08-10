@@ -178,6 +178,26 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
       raw_write_lit("\n");
     }
   }
+  // S2.1 (2026-08-10, pc=0 entry-chain probe): also dump BELOW the fault sp
+  // (the callee pushes / a pushed return trampoline from the thread-entry
+  // machinery would sit at sp-0x..sp for a function entered via
+  // reset-and-call / set-to-run-bootstrap).
+  for (int i = 1; i <= 64; i++) {
+    uintptr_t addr = sp - i * 16;
+    u32 w = 0, w2 = 0;
+    if (safe_read_u32((volatile u32*)addr, &w) &&
+        safe_read_u32((volatile u32*)(addr + 8), &w2)) {
+      raw_write_lit("OTTSEL_IOS: below[-");
+      raw_write_dec((unsigned)i);
+      raw_write_lit("] @0x");
+      raw_write_hex(addr);
+      raw_write_lit(" = 0x");
+      raw_write_hex(w);
+      raw_write_lit(" 0x");
+      raw_write_hex(w2);
+      raw_write_lit("\n");
+    }
+  }
   // S2.1 (2026-08-10, dispatcher pc=0 probe): the runtime keeps a bounded
   // GOAL->GOAL call ring ('ottsel-goal-call-trace'); dump the last entries so
   // the pc-prof C-export caller is identified without lldb (which cannot read

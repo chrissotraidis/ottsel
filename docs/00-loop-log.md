@@ -1581,3 +1581,22 @@ return address, not the call-site continuation
   entry/return contract.  Do not patch game source.
 - The tool + its CMakeLists target stay in the worktree as source proof
   tools (canonical patch regenerated below).
+
+## 2026-08-10 (BOT9 cont 3) — pc-prof-event resolved; entry-chain confirmed on the dram stack
+
+- `pc-prof-event` = begin 0 / end 1 / instant 2: the faulting pc-prof
+  (x1 = 1) is the lambda's profiler-END, consistent with the trace order.
+- The trace's odd caller-lr values (0x50e2cd4 etc.) are the low 32 bits of
+  native addresses (the recorder truncates caller_lr); the dispatcher entry
+  via the bridge is normal - no dispatcher-entry anomaly.
+- Below-sp fault dump (`docs/evidence/S2/s21-pc0-belowsp-fault.log`):
+  the lambda's frame slots are all zero (entered with zeroed callee-saved
+  regs), the pc-prof chain's pushes are below the frame ([sp-0x10] = 0 =
+  saved x30; [sp-0x20] = 0x1e5fec = the post-call continuation in gkernel).
+  The lambda ran its whole body on the fresh zeroed stack (sp =
+  0x70001f4be0) with x30 = 0 and no pushed trampoline - a plain tail-call
+  (br) entry from an x30 = 0 context.
+- Defect class: ARM64 GOAL call/return fragility - a function entered with
+  x30 = 0 restores x30 = 0 in its epilogue and rets to pc = 0.  The exact
+  br source and the fix (set x30 at the entry, or make the epilogue not
+  depend on entry x30) remain the next probe.
