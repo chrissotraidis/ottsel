@@ -1634,3 +1634,16 @@ return address, not the call-site continuation
   through the trampoline; the kernel-stack return slot alignment is the next
   layer of the process-thread return ABI issue.
 - Canonical patch needs regeneration (gkernel.gc changed).
+
+## 2026-08-10 (BOT9 cont 6) — dispatcher loop milestone: 10,482 iterations; next fault is a corrupt object type
+
+- The x30 thread-entry fix unblocked the kernel dispatcher: the boot now
+  runs `call_goal_on_stack(kernel-dispatcher)` 10,482 times (clean returns,
+  `s21-dispatch-loop-x30fix.log`) - the first dispatcher loop on the
+  Simulator with GAME.CGO loaded.
+- New fault: a method dispatch (`[type+0x40]` -> `blr`) on object 0x22f9f4
+  whose type tag = 0x2381704 (a game code address - in-process reads show
+  code words there), so the method slot returns a code word
+  (0x8b36e010) and the call faults at pc = 0x7008b36e010.
+- Next probe: identify 0x22f9f4 (which process/object) and why its type tag
+  is a code address.

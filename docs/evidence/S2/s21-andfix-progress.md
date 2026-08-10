@@ -284,6 +284,29 @@ function pointer in the kernel-stack return path.  This is the next layer
 of the same process-thread return ABI issue; the x30 fix stays (it is
 proven to move the boot forward).
 
+## Dispatch-loop milestone + next fault (2026-08-10)
+
+The x30 fix unblocked the kernel dispatcher: the boot now runs
+`call_goal_on_stack(kernel-dispatcher)` **10,482 times** (the dispatcher
+loop iterates and returns cleanly; `s21-dispatch-loop-x30fix.log`).  This
+is the first time the dispatcher has ever looped on the Simulator with
+GAME.CGO loaded - a significant S2.1 milestone (still not a game frame).
+
+The new fault (`s21-dispatch-loop-x30fix-fault.log`) is a method dispatch in
+the process-tree path:
+
+```text
+signal 11 at pc=0x000000708b36e010 fault addr=0x000000708b36e010
+lr=0x70001e5470 x16=0x7008b36e010 x1=0x8b36e010 (a code word)
+```
+
+The dispatch (`ldur w1,[type+0x40]; add x16,x1,x22; blr x16`) runs on an
+object at 0x22f9f4 whose type tag at [obj-4] = 0x2381704 - a GAME CODE
+address, not a Type (in-process reads show code words there).  The method
+table read therefore returns a code word and the call faults.  Next probe:
+identify which object/process 0x22f9f4 is and why its type tag is a code
+address (corrupt object or wrong `this` in the process-tree iteration).
+
 ## Honest status
 
 S2.1 is NOT PASS: there is no stable renderer-ready boundary and no Jak
