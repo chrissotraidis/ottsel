@@ -258,6 +258,32 @@ this.
   epilogue returns via the pushed stack return like the asm .ret), then
   re-verify the full boot.
 
+## Thread-entry x30 fix applied; the fault moved (2026-08-10)
+
+The ARM64 GOAL function epilogue returns via its ENTRY x30 (the caller's
+blr value).  The process-thread tail jumps (`reset-and-call`'s `.jr func`,
+`set-to-run-bootstrap`'s `.jr s0`) leave x30 unset, so the entered function
+returns to a stale/zero x30 -> pc = 0.  Fix applied in
+`goal_src/jak1/kernel/gkernel.gc` (both functions): bind `lr :reg x30` in
+the rlet and add `.mov lr temp` after pushing the return trampoline, so the
+entered function's epilogue returns to return-from-thread /
+return-from-thread-dead like the x86 model.
+
+Result (verified boot): **the pc=0 dram-stack fault is gone**.  The new
+fault (`s21-pc0-x30fix-fault.log`) is on the kernel GOAL stack
+(sp = 0x7007fffdf0, lr = 0x70001e5470, x20 = 0):
+
+```text
+signal 11 at pc=0x000000708b36e010 fault addr=0x000000708b36e010
+x1=0x8b36e010 x16=0x7008b36e010   ; a code word (add x16,x0,x22,sxtx) as a target
+```
+
+The thread now returns through the trampoline, but the return-from-thread
+kernel-stack return slot is misaligned: a code word is popped/used as a
+function pointer in the kernel-stack return path.  This is the next layer
+of the same process-thread return ABI issue; the x30 fix stays (it is
+proven to move the boot forward).
+
 ## Honest status
 
 S2.1 is NOT PASS: there is no stable renderer-ready boundary and no Jak

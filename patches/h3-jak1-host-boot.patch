@@ -2544,6 +2544,50 @@ index 4355cb922..c1034ba72 100644
  
    void load_settings();
    void save_settings();
+diff --git a/goal_src/jak1/kernel/gkernel.gc b/goal_src/jak1/kernel/gkernel.gc
+index 73a056e45..b5d9073dd 100644
+--- a/goal_src/jak1/kernel/gkernel.gc
++++ b/goal_src/jak1/kernel/gkernel.gc
+@@ -507,7 +507,8 @@
+          (s2 :reg r10 :type uint)
+          (s3 :reg r11 :type uint)
+          (s4 :reg r12 :type uint)
+-         (temp :reg rax :type uint))
++         (temp :reg rax :type uint)
++         (lr :reg x30 :type uint))
+     ;; set up the process pointer
+     (set! pp (-> this process))
+     ;; mark the process as running and set its top thread
+@@ -530,6 +531,12 @@
+     (set! temp (the uint return-from-thread))
+     (.add temp off)
+     (.push temp) ;; stack now 16 + 8 aligned
++    ;; Ottsel ARM64 (S2.1): a GOAL function's epilogue returns via its ENTRY
++    ;; x30 (the caller's blr value).  A tail jump (.jr) does not set x30, so
++    ;; the entered function would restore a stale/zero x30 and ret to pc=0.
++    ;; Set x30 to the pushed return trampoline so the entered function
++    ;; returns to return-from-thread, matching the x86 model.
++    (.mov lr temp)
+     ;; and call the function!
+     (.add func off)
+     (.jr func)))
+@@ -1845,10 +1852,15 @@
+          (off :reg r15 :type uint)
+          (a4 :reg r8 :type uint)
+          (a5 :reg r9 :type uint)
+-         (temp :reg rax))
++         (temp :reg rax)
++         (lr :reg x30 :type uint))
+     (.mov temp return-from-thread-dead)
+     (.add temp off)
+     (.push temp)
++    ;; Ottsel ARM64 (S2.1): see reset-and-call - the tail jump must leave
++    ;; x30 = the pushed trampoline so the entered main code returns to
++    ;; return-from-thread-dead instead of a stale/zero x30.
++    (.mov lr temp)
+     ;; stack is 16 + 8 aligned now
+     (.mov :color #f a0 s1)
+     (.mov :color #f a1 s2)
 diff --git a/goalc/CMakeLists.txt b/goalc/CMakeLists.txt
 index a9b02e7c4..979107cb3 100644
 --- a/goalc/CMakeLists.txt

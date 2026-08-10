@@ -1616,3 +1616,21 @@ return address, not the call-site continuation
   pp = the process, matching the observed pp) and then fix the entry so x30
   is set (or the GOAL epilogue returns via the pushed stack return),
   re-verify the boot.
+
+## 2026-08-10 (BOT9 cont 5) — thread-entry x30 fix applied; pc=0 dram-stack fault moved
+
+- **Fix:** the ARM64 GOAL function epilogue returns via its ENTRY x30 (the
+  caller's blr).  The process-thread tail jumps (`reset-and-call`,
+  `set-to-run-bootstrap`) leave x30 unset, so the entered function returned
+  to a stale/zero x30 -> pc = 0.  Added `(lr :reg x30)` rlet bindings and
+  `.mov lr temp` after pushing the return trampoline in both functions
+  (gkernel.gc) so the entered code returns to return-from-thread /
+  return-from-thread-dead.
+- **Verified:** the pc=0 dram-stack fault is GONE.  The new fault
+  (`s21-pc0-x30fix-fault.log`) is on the kernel GOAL stack (sp =
+  0x7007fffdf0, lr = 0x70001e5470, x20 = 0): `pc = 0x7008b36e010` - a code
+  word (`add x16,x0,x22,sxtx`) used as a function pointer in the
+  return-from-thread kernel-stack return slot.  The thread now returns
+  through the trampoline; the kernel-stack return slot alignment is the next
+  layer of the process-thread return ABI issue.
+- Canonical patch needs regeneration (gkernel.gc changed).
