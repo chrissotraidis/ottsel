@@ -327,6 +327,26 @@ overwritten with) a game-code address.  The next probe is to identify the
 object's role (its pool/parent fields, vs *active-pool*) and which code
 writes its type tag.
 
+## Faulting function identified: execute-process-tree's run-logic? dispatch
+
+The kernel-fn-dump tool now flags every compiled function whose emitted code
+contains the dispatch pattern (`ldur w0,[x16,#-4]; add x16,x0,x22,sxtx;
+ldur w1,[x16,#0x40]`).  It matches **`execute-process-tree`** - the
+`(run-logic? this)` method call on the iterated tree node.  So the fault is
+execute-process-tree dispatching the run-logic? method on a tree node whose
+type tag is a game-code address.
+
+In-process node reads (`s21-node-fields.txt`): the node at 0x22f9f4 has
+real pool/neighbor pointers (0x232b7c, 0x230a7c, 0x22f94c, 0x22f934, st),
+so it is a genuine heap-allocated tree node - but its type tag at [obj-4] =
+0x2381704 is a game-code address whose contents are code words, so the
+run-logic? method read returns a code word and the dispatch faults.
+
+Next probe: determine why the node's type tag is a game-code address -
+whether the game's deftype/type objects are missing/corrupt (the type at
+0x2381704 should be a game Type, but its symbol field reads as code), or
+whether a memory overlap placed game code over the type region.
+
 ## Honest status
 
 S2.1 is NOT PASS: there is no stable renderer-ready boundary and no Jak

@@ -1658,3 +1658,15 @@ return address, not the call-site continuation
 - The fault is a runtime process-tree object whose type tag is a game-code
   address; next probe: identify the object's role (pool/parent vs
   *active-pool*) and what writes its type tag.
+
+## 2026-08-10 (BOT9 cont 8) — faulting function identified: execute-process-tree's run-logic? dispatch on a corrupt node
+
+- kernel-fn-dump now flags the dispatch pattern
+  (`ldur w0,[x16,#-4]; add x16,x0,x22,sxtx; ldur w1,[x16,#0x40]`); it
+  matches **execute-process-tree** - the `(run-logic? this)` method call.
+- The iterated node (0x22f9f4) has real pool/neighbor pointers but its type
+  tag = 0x2381704 (a game-code address whose contents are code words), so
+  run-logic? reads a code word and faults.
+- Next: determine whether the game's type objects are missing/corrupt (the
+  type at 0x2381704 should be a game Type) or a memory overlap placed code
+  over the type region.
