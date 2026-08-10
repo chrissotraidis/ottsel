@@ -1689,3 +1689,11 @@ return address, not the call-site continuation
   into code words.
 - Next: verify the overlap (Type allocation addresses vs code placements)
   and fix the loader placement so code and heap allocations do not collide.
+
+## 2026-08-10 (BOT9 cont 11) — overlap verified: the type at 0x2381704 is a code word (ADD imm)
+
+- In-process read: the "type" 0x2381704 = 0x910b4210 (an ADD-immediate code
+  word), consistent with the time-of-day code segment covering it.
+- Fix direction: keep the game code placements out of the global heap's
+  allocation range (or allocate runtime Type objects above the code region)
+  so deftype-created Types are not overwritten by code.

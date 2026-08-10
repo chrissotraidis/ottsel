@@ -374,6 +374,16 @@ Next probe: verify the overlap by comparing the game's heap allocation
 addresses (the Type objects) against the code placements, then fix the
 loader/link placement so code and heap allocations do not collide.
 
+Verification (in-process, `s21-overlap-boot.log`): the "type" at 0x2381704
+reads as 0x910b4210 (an ADD-immediate code word), consistent with the
+time-of-day code segment covering it.  The earlier trace's sky-process
+addresses differ per boot (heap state), so a single-boot pointer check is
+not conclusive, but the type-at-code-address pattern is confirmed.  The
+fix direction is the loader/link placement: keep the game code placements
+out of the global heap's allocation range (or allocate the runtime Type
+objects above the code region) so deftype-created Types are not overwritten
+by code.
+
 ## Honest status
 
 S2.1 is NOT PASS: there is no stable renderer-ready boundary and no Jak
