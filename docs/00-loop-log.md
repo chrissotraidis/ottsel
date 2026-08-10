@@ -1513,3 +1513,44 @@ return address, not the call-site continuation
   tests 24-25 (excludes `gkernel-disasm.txt` scratch); clean-apply on a
   fresh pin checkout verified, reverse-apply against the live worktree
   verified.
+
+## 2026-08-10 (BOT9 cont) — bounded trace pins the pc=0 fault to the process-thread call context; crash reports analyzed
+
+- **Bounded trace (one diagnostic build, `OTTSEL_TRACE_GOAL_CALLS`):** the
+  last GOAL->GOAL calls before the pc=0 fault are
+  `site=0x2475014 target=0x060c8b4 caller-lr=0x2480a9c pp=0x24b844`
+  (game process code) then
+  `site=0x1f0ca4 target=0x1e4774 caller-lr=0x00000000 pp=0x24b844` then
+  `site=0x1f0f80 target=0x04f02fd4 caller-lr=0x00000000 pp=0x24b844`
+  (the pc-prof C-export stub - LAST).  Evidence:
+  `docs/evidence/S2/s21-trace-pc0-boot.log`, `s21-trace-pc0-fault.log`.
+- **Proven:** the pc-prof stub is correct (embedded target = native
+  `pc_prof`; trampoline = `_arg_call_arm64`, verified in-process); the
+  faulting function is a **gkernel** function (kernel main code
+  0x1e4000-0x1f9328; the profiler-calling `kernel-dispatcher` lambda family);
+  it was entered with x30 = 0 and zeroed callee-saved registers on a fresh
+  all-zero stack (fault sp 0x2004be0 with the tracer / 0x1f4be0 product; all
+  saved-register slots zero, no pushed return address); its body ran
+  completely and the epilogue `ret` (x30 = 0) faults at pc = 0.  The pp
+  context is a game process (0x24b844) - entered from the game process code
+  via a tail call (`br`) with x30 = 0, the signature of the process-thread
+  start machinery (`reset-and-call`, `gkernel.gc:495`, ends in `.jr func`).
+- **Root-cause boundary (honest):** the defect is the process-thread
+  execution contract (a kernel/thread function entered on a fresh zeroed
+  stack with x30 = 0 and no pushed return address).  The exact caller
+  transition is not yet proven; the next probe is static (name the functions
+  at 0x1f0xxx / 0x2475014 / 0x2480a9c via the object debug info, then read
+  the GOAL source of the transition).  Do not patch game source around this.
+- **Diagnostic hygiene:** the tracer was reverted (goalc/CMakeLists.txt),
+  product KERNEL.CGO/GAME.CGO regenerated (22,795,344 / 403,920 bytes),
+  app rebuilt, one product boot re-captured (`s21-pc0-product-boot.log`):
+  the pc=0 fault reproduces (sp=0x70001f4be0).
+- **Crash reports analyzed** (Simulator DiagnosticReports):
+  - 13:57:10 pid 52224 SIGABRT = the pre-resize `eichar` stage-slot abort
+    (faulting x25 = 0x1495a0 = 1,349,024); fixed by the committed 2 MB
+    STAGE_SLOT; current app no longer aborts there.
+  - 14:22:08 pid 54744 SIGABRT = `private_assert_failed` in
+    `jak1::method_set` called via the C-export trampoline from a GOAL
+    top-level during a link `jak1_finish`; non-deterministic (only one boot),
+    consistent with the same broken GOAL-call-context class as the pc=0
+    fault; evidence `docs/evidence/S2/s21-crash-*.ips`.

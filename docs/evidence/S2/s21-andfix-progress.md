@@ -89,6 +89,80 @@ context `pp=0x23b844` / `x3=0x239c004` points at the game process tree) and
 verify the fresh-stack / x30=0 entry contract.  Do not patch `merc.gc` or
 game source around this; it is a runtime/ABI integration defect.
 
+## Bounded call trace (2026-08-10): the pc-prof caller is identified
+
+Re-enabled the goalc call-recorder shim (`OTTSEL_TRACE_GOAL_CALLS`) for one
+diagnostic build and re-booted.  The last GOAL->GOAL calls before the fault
+(`docs/evidence/S2/s21-trace-pc0-fault.log`) are:
+
+```text
+site=0x2475014 target=0x060c8b4 caller-lr=0x2480a9c pp=0x24b844   ; game process code
+site=0x1f0ca4  target=0x1e4774  caller-lr=0x00000000 pp=0x24b844  ; gkernel fn
+site=0x1f0f80  target=0x04f02fd4 caller-lr=0x00000000 pp=0x24b844 ; pc-prof stub (LAST)
+```
+
+Proven facts from the trace + in-process reads:
+
+- The pc-prof C-export stub at EE+0x04F02FD4 is correct: its embedded target
+  is the native `pc_prof` address and its trampoline is `_arg_call_arm64`
+  (`stp x29,x30; ldr x8,[sp,#16]; ...; blr x8`), verified in-process.  The
+  whole C-export path (shim -> stub -> trampoline -> pc_prof -> return) is
+  sound.
+- The faulting function is a **gkernel** function (kernel main code
+  0x1e4000-0x1f9328, per the boot log's per-object `main seg 0` offsets):
+  the profiler-calling family (`kernel-dispatcher` / its
+  `execute-process-tree` lambda at `goal_src/jak1/kernel/gkernel.gc:1334`).
+- The function was **entered with x30 = 0 and zeroed callee-saved registers
+  on a fresh, all-zero stack** (fault sp = 0x2004be0 with the tracer build /
+  0x1f4be0 product; the 4 saved-register slots at sp-0x40..sp and the
+  tracer's pushed slots below are 0/EE-garbage, no pushed return address).
+- Its body ran completely (the pc-prof call was recorded), and the fault is
+  the function's epilogue `ldr x30,[sp]; ret` returning through the saved
+  x30 = 0 -> pc = 0, lr = 0.  The caller-lr = 0 recorded for BOTH of the
+  function's last calls confirms x30 was already 0 during its body.
+- The pp context (x20 = 0x24b844) is a game process; the immediately
+  preceding recorded calls are that process's code (game-object sites
+  0x2474xxx -> 0x060cxxx), so the kernel function was entered from the game
+  process execution context via a tail call (`br`) with x30 = 0 - the
+  signature of the process-thread start machinery (`reset-and-call`,
+  `gkernel.gc:495`, ends in `.jr func` - a tail jump that does not set x30,
+  running the callee on the thread's fresh stack).
+
+Root-cause boundary (honest): the defect is in the process-thread execution
+contract - a kernel/thread function is entered on a fresh zeroed stack with
+x30 = 0 and no pushed return address, so its epilogue returns to pc = 0.
+The exact caller transition (which game function tail-calls the gkernel
+function) is not yet proven.  The next probe is static: name the functions
+at 0x1f0xxx and 0x2475014/0x2480a9c via the object debug info, then read the
+GOAL source of the transition.  Do not patch game source around this.
+
+Diagnostic hygiene: the tracer was reverted (goalc/CMakeLists.txt), the
+product KERNEL.CGO/GAME.CGO were regenerated (22,795,344 / 403,920 bytes)
+and revalidated, the app rebuilt, and one product boot re-captured
+(`s21-pc0-product-boot.log`): the same pc=0 fault reproduces
+(sp=0x70001f4be0).  The fault handler keeps a bounded trace dump (reads the
+always-compiled recorder ring; harmless with the tracer disabled).
+
+## Crash reports (Simulator DiagnosticReports)
+
+`s21-crash-eichar-stageslot-135713.ips` (13:57:10, pid 52224) is the SIGABRT
+of the FIRST boot after the AND-fix CGOs: `gated_fail` from
+`ottsel_ios_link_cgo_from_bundle` with the faulting thread's x25 =
+0x1495a0 = 1,349,024 - exactly `eichar`'s blob size exceeding the old
+512 KB stage slot ("object blob larger than the reusable stage slot").
+This is the failure the STAGE_SLOT resize (512 KB -> 2 MB, committed in
+`cf2fe37`) fixes; the current app reaches the pc=0 dispatcher fault instead
+of aborting here.
+
+`s21-crash-methodset-assert-142208.ips` (14:22:08, pid 54744) is a separate,
+non-deterministic failure on the same binary: `private_assert_failed` inside
+`jak1::method_set` called through the C-export trampoline
+(`arg_call_arm64`) from a GOAL top-level (EE ~0x3ab0004) during a link
+`jak1_finish`.  Only one boot hit it; the others reached the pc=0 fault.
+It is consistent with the same broken GOAL-call-context class as the pc=0
+fault (a GOAL call into a C export carrying corrupted state), and it is
+recorded here as evidence, not yet root-caused.
+
 ## Honest status
 
 S2.1 is NOT PASS: there is no stable renderer-ready boundary and no Jak

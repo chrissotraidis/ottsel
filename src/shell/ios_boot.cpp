@@ -178,6 +178,33 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
       raw_write_lit("\n");
     }
   }
+  // S2.1 (2026-08-10, dispatcher pc=0 probe): the runtime keeps a bounded
+  // GOAL->GOAL call ring ('ottsel-goal-call-trace'); dump the last entries so
+  // the pc-prof C-export caller is identified without lldb (which cannot read
+  // the EE mapping reliably).  Ring slot 2n: (site<<32)|target; 2n+1:
+  // (caller_lr & 0xffffffff) | (pp << 32).
+  {
+    u64 idx = g_ottsel_call_idx;
+    raw_write_lit("OTTSEL_IOS: trace-count=");
+    raw_write_dec((unsigned)idx);
+    raw_write_lit(" last 40 calls:\n");
+    u64 first = idx > 40 ? idx - 40 : 0;
+    for (u64 i = first; i < idx; i++) {
+      u64 v = g_ottsel_call_trace[(i * 2) & 255];
+      u64 lr = g_ottsel_call_trace[(i * 2 + 1) & 255];
+      if (v || lr) {
+        raw_write_lit("  site=0x");
+        raw_write_hex(v >> 32);
+        raw_write_lit(" target=0x");
+        raw_write_hex(v & 0xffffffffu);
+        raw_write_lit(" caller-lr=0x");
+        raw_write_hex(lr & 0xffffffffu);
+        raw_write_lit(" pp=0x");
+        raw_write_hex(lr >> 32);
+        raw_write_lit("\n");
+      }
+    }
+  }
   // These broad stack/probe dumps were useful during the earlier rfn fault,
   // but are not async-signal-safe enough for arbitrary later faults.
 #if 0
