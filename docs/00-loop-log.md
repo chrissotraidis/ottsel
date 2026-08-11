@@ -1781,3 +1781,17 @@ return address, not the call-site continuation
   log the thread sp at first resume / trace the stack arg through
   activate -> cpu-thread new.  Do not patch game source.
 - Evidence: docs/evidence/S2/s21-stack-source-*.
+
+## 2026-08-10 (BOT9 cont 17) — camera stack base vs sp; active pool at 0x4f44d4
+
+- The process `stack` field offset = 0x6c; the camera's stack =
+  [0x2066f0, 0x2076f0) (4KB); its saved sp = 0x206690 = stack_base - 0x60
+  (a 0x60 overflow; frames also pass through its own thread at 0x207090).
+- The pattern region [0x202000..0x207000) is a ~20KB stack overlapping the
+  whole *debug-dead-pool* + processes - not just the camera's 4KB stack.
+- *active-pool* = 0x4f44d4 (heap pool); the camera's parent (0x20980c) has
+  type = itself (broad same-class corruption).
+- Honest: the ~20KB stack overwriting the pool region is not tied to a
+  specific thread yet.  Next probe: dump the listener/default-pool threads'
+  sp/stack-top and the kernel-context current-process at the fault.
+- Evidence: docs/evidence/S2/s21-activepool-*.

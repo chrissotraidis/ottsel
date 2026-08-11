@@ -243,6 +243,53 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
     raw_write_lit("\n");
     // Skip the PROT_NONE low-EE guard region (first 512KB of the mapping).
       if (node >= (uintptr_t)g_ee_main_mem + 0x80000) {
+        // The *active-pool* symbol (0x4f44d4 per the boot debug) and its
+        // memory: is the pool a real process-tree or garbage?
+        {
+          u32 ap = 0;
+          if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + 0x4f44d4), &ap)) {
+            raw_write_lit("OTTSEL_IOS:   [0x4f44d4]=0x");
+            raw_write_hex(ap);
+            raw_write_lit("\n");
+          }
+          u32 ap2 = 0;
+          if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + 0x4f44d0), &ap2)) {
+            raw_write_lit("OTTSEL_IOS:   [0x4f44d0]=0x");
+            raw_write_hex(ap2);
+            raw_write_lit("\n");
+          }
+          // the camera's parent (0x20980c) - dump its header
+          {
+            raw_write_lit("OTTSEL_IOS:   parent 0x20980c hdr:");
+            for (int i = -4; i <= 0x1c; i += 4) {
+              u32 w = 0;
+              if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + 0x20980c + i), &w)) {
+                raw_write_lit(" ");
+                raw_write_hex(w);
+              }
+            }
+            raw_write_lit("\n");
+          }
+        }
+        // Camera thread full header: name(0) process(4) previous(8)
+        // suspend-hook(C) resume-hook(10) pc(14) sp(18) stack-top(1c) size(20)
+        {
+          u32 mt = 0;
+          if (safe_read_u32((volatile u32*)(node + 0x28), &mt) && mt &&
+              mt < 0x08000000) {
+            raw_write_lit("OTTSEL_IOS:   cam-thread hdr@0x");
+            raw_write_hex(mt);
+            raw_write_lit(":");
+            for (int i = 0; i <= 0x24; i += 4) {
+              u32 w = 0;
+              if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + mt + i), &w)) {
+                raw_write_lit(" ");
+                raw_write_hex(w);
+              }
+            }
+            raw_write_lit("\n");
+          }
+        }
         // Camera thread details: pc(+0x14), sp(+0x18), stack-top(+0x1c),
         // stack-size(+0x20) -- does the camera's stack cover the pattern
         // region [0x202000..0x207000)?

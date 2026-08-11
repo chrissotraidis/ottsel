@@ -6791,10 +6791,10 @@ index f5b031f1a..52ba45e49 100644
        }
 diff --git a/tools/ottsel_a1/kernel_fn_dump.cpp b/tools/ottsel_a1/kernel_fn_dump.cpp
 new file mode 100644
-index 000000000..997f1d099
+index 000000000..2612f9ccf
 --- /dev/null
 +++ b/tools/ottsel_a1/kernel_fn_dump.cpp
-@@ -0,0 +1,206 @@
+@@ -0,0 +1,207 @@
 +// Ottsel S2.1 diagnostic: name the gkernel function that calls the pc-prof
 +// C export (the pc=0 fault site).  Compiles the real kernel GOAL sources
 +// through the ARM64 goalc and prints every function name + code size, then
@@ -6969,7 +6969,8 @@ index 000000000..997f1d099
 +      }
 +      if (f->name().find("thread-suspend") != std::string::npos ||
 +          f->name().find("thread-resume") != std::string::npos ||
-+          f->name().find("run-now-in-process") != std::string::npos) {
++          f->name().find("run-now-in-process") != std::string::npos ||
++          f->name().find("activate") != std::string::npos) {
 +        debug->clear();
 +        CodeGenerator gen2(target_fe, debug, GameVersion::Jak1, InstructionSet::ARM64);
 +        auto bytes2 = gen2.emit_function_machine_code(f, 0);

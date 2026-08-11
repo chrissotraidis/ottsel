@@ -564,3 +564,24 @@ Honest status: S2.1 NOT PASS.  This is a process-thread/stack issue, not a
 compiler encoding bug and not a code/heap overlap.  Next probe: find why the
 camera's thread sp = 0x206690 (log the thread sp field at first resume /
 trace the stack arg through activate -> cpu-thread new).
+
+## Sp source narrowing: the camera's stack base vs sp; active pool at 0x4f44d4 (2026-08-10, BOT9 cont 17)
+
+- The process's `stack` field offset = 0x6c (compiled `new process`:
+  heap-base = heap-cur = this+0x6c; heap-top = this+0x6c+allocated-length).
+  The camera's stack = [0x2066f0, 0x2076f0) (4KB).  Its saved sp =
+  0x206690 = stack_base - 0x60 (a 0x60 stack overflow; frames
+  [0x206690, 0x2076f0) also pass through the camera's own thread at
+  0x207090).
+- The region [0x202000..0x207000) filled with the {valid?-continuation,
+  0x70, 0, 0} frame pattern is a ~20KB stack that overlaps the whole
+  *debug-dead-pool* + its processes - not just the camera's 4KB stack.
+- *active-pool* symbol value = 0x4f44d4 (a heap pool, ~5.2MB - the game
+  init grew the global heap into that range); [0x4f44d4] = 0x1982c4.  The
+  camera's parent (0x20980c) has its own type tag = itself (another corrupt
+  tag in the same class).
+- Honest: the ~20KB stack that overwrites the pool region has not been tied
+  to a specific process/thread yet.  Next probe: identify which thread's
+  execution fills [0x202000..0x207000) (dump the *listener-process* and
+  *default-dead-pool* process threads' sp/stack-top, and the
+  *kernel-context* current-process at the fault).
