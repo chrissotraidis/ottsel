@@ -1862,3 +1862,15 @@ return address, not the call-site continuation
 - Files: goalc/compiler/IR.h, IR.cpp (IR_AsmLoadSp), Atoms.cpp + Asm.cpp
   (`.load`), Compiler.h, goal_src/jak1/kernel/gkernel.gc (thread-suspend
   `.load temp`), tools/ottsel_a1/semantic_regressions.cpp (test 26).
+
+## 2026-08-11 (BOT9 cont 19b) — product-path verification: tracer removed, camera sp stable, no fault
+
+- Removed the TEMPORARY OTTSEL_TRACE_GOAL_CALLS define; rebuilt goalc
+  (full A1.0 suite still PASS), regenerated product KERNEL.CGO + GAME.CGO
+  (403,920 / 22,795,344 B), rebuilt the app.
+- Product boot: camera thread sp = 0x1d7fc0 constant (iters 0-200), zero
+  REGION-CHANGE, 164,479 dispatcher iterations with no fault.  The
+  +0x10/dispatch camera stack climb into the debug-dead-pool region is
+  fixed on the product path.  S2.1 remains ACTIVE (no renderer-ready
+  boundary / no Jak frame; ROM-safe subtitle-load spin).
+- Evidence: docs/evidence/S2/s21-fix-product-spstable-runtime.log.

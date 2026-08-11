@@ -2783,7 +2783,7 @@ index 73a056e45..96a03cb9f 100644
      (.mov :color #f a0 s1)
      (.mov :color #f a1 s2)
 diff --git a/goalc/CMakeLists.txt b/goalc/CMakeLists.txt
-index a9b02e7c4..e3cee9c66 100644
+index a9b02e7c4..979107cb3 100644
 --- a/goalc/CMakeLists.txt
 +++ b/goalc/CMakeLists.txt
 @@ -91,6 +91,9 @@ if (WIN32)
@@ -2796,7 +2796,7 @@ index a9b02e7c4..e3cee9c66 100644
  add_executable(goalc main.cpp)
  add_executable(goalc-simple simple_main.cpp)
  
-@@ -101,3 +104,51 @@ target_link_libraries(goalc common Zydis compiler)
+@@ -101,3 +104,46 @@ target_link_libraries(goalc common Zydis compiler)
  target_link_libraries(goalc-simple common Zydis compiler)
  target_link_libraries(build_level common Zydis compiler)
  target_link_libraries(build_actor common Zydis compiler)
@@ -2843,11 +2843,6 @@ index a9b02e7c4..e3cee9c66 100644
 +# Ottsel H2.5: Mach-O packaging path proof (AOT bytes -> .s -> clang -> native object)
 +add_executable(ottsel-h25-proof ../tools/ottsel_h2/h2_5_macho_packaging_proof.cpp)
 +target_link_libraries(ottsel-h25-proof common Zydis compiler)
-+
-+# Ottsel S2.1 diagnostic (TEMPORARY): emit the GOAL->GOAL call recorder shim so
-+# the runtime can dump the last calls at the region-corruption point.  Rebuild
-+# goalc AND regenerate KERNEL.CGO/GAME.CGO with this on; remove for product.
-+target_compile_definitions(compiler PRIVATE OTTSEL_TRACE_GOAL_CALLS)
 diff --git a/goalc/compiler/CodeGenerator.cpp b/goalc/compiler/CodeGenerator.cpp
 index 3866e884b..b1c566b04 100644
 --- a/goalc/compiler/CodeGenerator.cpp

@@ -653,3 +653,19 @@ s21-tracer-writersp2-fault.log.
   data, expected ROM-safe boundary) and no renderer-ready boundary or Jak
   frame exists yet.  But the camera stack-corruption fault mechanism is
   fixed at its root.
+
+## Product-path verification: camera stack leak fixed without the tracer shim (2026-08-11, BOT9 cont 19b)
+
+- Removed the TEMPORARY `OTTSEL_TRACE_GOAL_CALLS` define (the recorder shim
+  is a diagnostic; the product path must not carry it).  Rebuilt goalc,
+  regenerated KERNEL.CGO (403,920 B) + GAME.CGO (22,795,344 B) without the
+  tracer, rebuilt the app.
+- Boot verified (one Simulator, Windowed, zero stale processes): camera
+  thread sp = 0x1d7fc0 CONSTANT at iters 0,1,2,5,10,50,200 (was climbing
+  +0x10/dispatch); zero REGION-CHANGE firings; 164,479 subtitle-load
+  dispatcher iterations with NO fault (old fault at iter ~10755 / ~42s).
+  Evidence: docs/evidence/S2/s21-fix-product-spstable-runtime.log.
+- S2.1 remains ACTIVE: no renderer-ready boundary and no Jak frame; the
+  boot spins on `load-subtitle-text-info` (no ISO data, expected ROM-safe
+  boundary).  The camera stack-corruption fault mechanism is fixed at its
+  root on both the tracer and product paths.
