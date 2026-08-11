@@ -243,6 +243,103 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
     raw_write_lit("\n");
     // Skip the PROT_NONE low-EE guard region (first 512KB of the mapping).
       if (node >= (uintptr_t)g_ee_main_mem + 0x80000) {
+        // Camera thread details: pc(+0x14), sp(+0x18), stack-top(+0x1c),
+        // stack-size(+0x20) -- does the camera's stack cover the pattern
+        // region [0x202000..0x207000)?
+        {
+          u32 mt = 0;
+          if (safe_read_u32((volatile u32*)(node + 0x28), &mt) && mt &&
+              mt < 0x08000000) {
+            u32 pc = 0, sp = 0, stop = 0, ssz = 0;
+            safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + mt + 0x14), &pc);
+            safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + mt + 0x18), &sp);
+            safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + mt + 0x1c), &stop);
+            safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + mt + 0x20), &ssz);
+            raw_write_lit("OTTSEL_IOS:   cam-thread pc=0x");
+            raw_write_hex(pc);
+            raw_write_lit(" sp=0x");
+            raw_write_hex(sp);
+            raw_write_lit(" stack-top=0x");
+            raw_write_hex(stop);
+            raw_write_lit(" size=0x");
+            raw_write_hex(ssz);
+            raw_write_lit("\n");
+          }
+        }
+        // Pattern extent: sample 0x202000..0x209000 every 0x1000 to see where
+        // the {valid?,0x70,0,0} pattern ends.
+        {
+          raw_write_lit("OTTSEL_IOS:   pattern-extent:");
+          for (u32 a = 0x202000; a < 0x20a000; a += 0x1000) {
+            u32 w = 0;
+            if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + a), &w)) {
+              raw_write_lit(" ");
+              raw_write_hex(a);
+              raw_write_lit("=");
+              raw_write_hex(w);
+            }
+          }
+          raw_write_lit("\n");
+        }
+        // The camera's type = the time-of-day continuation.  The suspend
+        // stores its continuation at [pp+0x14].  Find the time-of-day process
+        // (via the *time-of-day-proc* static slot 0x2d8 in time-of-day's data)
+        // and dump its top-thread + thread pc.
+        {
+          u32 td_sym_off = 0;
+          if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + 0x43cc2d8), &td_sym_off) &&
+              td_sym_off < 0x8000000) {
+            u32 tod_proc = 0;
+            if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + 0x18fe04 + td_sym_off),
+                              &tod_proc)) {
+              raw_write_lit("OTTSEL_IOS:   tod-proc=0x");
+              raw_write_hex(tod_proc);
+              raw_write_lit("\n");
+              if (tod_proc < 0x08000000) {
+                raw_write_lit("OTTSEL_IOS:   tod fields:");
+                for (int i = 0x1c; i <= 0x58; i += 4) {
+                  u32 w = 0;
+                  if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + tod_proc + i),
+                                    &w)) {
+                    raw_write_lit(" ");
+                    raw_write_hex(w);
+                  }
+                }
+                raw_write_lit("\n");
+              }
+              if (tod_proc >= 0x80000 && tod_proc < 0x08000000) {
+                raw_write_lit("OTTSEL_IOS:   tod-thread-region 0x20b880:");
+                for (int i = 0; i < 0x60; i += 4) {
+                  u32 w = 0;
+                  if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + 0x20b880 + i),
+                                    &w)) {
+                    raw_write_lit(" ");
+                    raw_write_hex(w);
+                  }
+                }
+                raw_write_lit("\n");
+              }
+              u32 tod_top = 0, tod_main = 0;
+              if (tod_proc < 0x08000000) {
+                if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + tod_proc + 0x2c),
+                                  &tod_top)) {
+                  raw_write_lit("OTTSEL_IOS:   tod top-thread=0x");
+                  raw_write_hex(tod_top);
+                  raw_write_lit("\n");
+                  if (tod_top < 0x08000000) {
+                    u32 pc = 0;
+                    if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + tod_top + 0x14),
+                                      &pc)) {
+                      raw_write_lit("OTTSEL_IOS:   tod thread pc=0x");
+                      raw_write_hex(pc);
+                      raw_write_lit("\n");
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
         // Confirm what the corrupt type-tag values are in the runtime: dump
         // the code words at 0x3ec0634 and 0x43c4f84 (are they continuations?).
         {

@@ -513,3 +513,31 @@ allocated into a region that a `valid?` call chain also writes) or a GOAL
 write loop with a wrong base.  Next probe: trace the `valid?` callers during
 the kernel link and identify the structure at 0x202000-0x207000; do not patch
 game source around it.
+
+## Root mechanism: the camera process's execution stack overlaps the dead-pool region (2026-08-10, BOT9 cont 15)
+
+The corrupt type tags are GOAL call continuations pushed by the CAMERA process's
+own execution onto a WRONG stack:
+
+- The camera-combiner thread's saved sp = **0x206690** - 0x10 ABOVE its own
+  type tag (0x206680).  Its first frame push (the call shim's `str x30,
+  [sp,#-16]!`) overwrote the type tag with a continuation (0x43c4f84 = the
+  time-of-day-tick behavior's suspend continuation - a value that also flows
+  through this stack region).
+- The camera's execution filled [0x202000..0x207000) - the *debug-dead-pool*
+  + its processes (allocated during gkernel's top-level, allocator hook:
+  type 0x1c2a34 pool / 0x1c04b4 processes, all CORRECT) - with a repeating
+  16-byte frame pattern {0x3ec0634 (the gcommon `valid?` continuation), 0x70,
+  0, 0} at every 16 bytes.  The spare pool processes' first 16 bytes ARE that
+  pattern; the region samples confirm it appears mid-dispatcher (first at
+  iteration 10755, [0x202000]=0x044bc360, then the full pattern by the fault)
+  while the process types were still CORRECT at dispatcher iteration 0.
+- The camera thread's stack-top field = 0x1d8000 (the fake scratchpad), but
+  the saved sp = 0x206690 - the execution ran on the wrong stack (inside the
+  pool region) instead of the fake scratchpad.
+
+Honest boundary: the exact source of the wrong sp (0x206690) is not yet
+proven - candidates: the thread-resume sp restoration, the process-start
+stack setup (catch-frame/run-now-in-process), or a corrupted thread sp field.
+Next probe: trace the camera's first-resume sp source; do not patch game
+source around it.

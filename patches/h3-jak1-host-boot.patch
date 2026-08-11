@@ -863,7 +863,7 @@ index cf6042eca..ce8ebf9dd 100644
 \ No newline at end of file
 +}
 diff --git a/game/kernel/jak1/kboot.cpp b/game/kernel/jak1/kboot.cpp
-index 859b7e13a..90f6e8b7e 100644
+index 859b7e13a..41ffb2323 100644
 --- a/game/kernel/jak1/kboot.cpp
 +++ b/game/kernel/jak1/kboot.cpp
 @@ -23,6 +23,8 @@
@@ -907,7 +907,7 @@ index 859b7e13a..90f6e8b7e 100644
  
    while (MasterExit == RuntimeExitStatus::RUNNING) {
      // try to get a message from the listener, and process it if needed
-@@ -123,8 +141,66 @@ void KernelCheckAndDispatch() {
+@@ -123,8 +141,89 @@ void KernelCheckAndDispatch() {
      Timer kernel_dispatch_timer;
      if (MasterUseKernel) {
        // use the GOAL kernel.
@@ -967,6 +967,29 @@ index 859b7e13a..90f6e8b7e 100644
                           g_ee_main_mem);
 +#ifdef OTTSEL_IOS
 +      static u64 ios_dispatch_count = 0;
++      {
++        static bool region_clean = true;
++        u32 r0 = *(volatile u32*)(g_ee_main_mem + 0x202000);
++        if (region_clean && r0 != 0) {
++          region_clean = false;
++          lg::info("OTTSEL_REGION-CHANGE iter {}: 0x202000=0x{:08x} 0x202080=0x{:08x} "
++                   "0x2024c0=0x{:08x} 0x206680=0x{:08x}",
++                   ios_dispatch_count, r0, *(volatile u32*)(g_ee_main_mem + 0x202080),
++                   *(volatile u32*)(g_ee_main_mem + 0x2024c0),
++                   *(volatile u32*)(g_ee_main_mem + 0x206680));
++        }
++      }
++      if (ios_dispatch_count == 0 || ios_dispatch_count == 1 || ios_dispatch_count == 2 ||
++          ios_dispatch_count == 5 || ios_dispatch_count == 10 || ios_dispatch_count == 50 ||
++          ios_dispatch_count == 200) {
++        u32 r0 = *(volatile u32*)(g_ee_main_mem + 0x202000);
++        u32 r1 = *(volatile u32*)(g_ee_main_mem + 0x202080);
++        u32 r2 = *(volatile u32*)(g_ee_main_mem + 0x2024c0);
++        u32 r3 = *(volatile u32*)(g_ee_main_mem + 0x206680);
++        lg::info("OTTSEL_REGION iter {}: 0x202000=0x{:08x} 0x202080=0x{:08x} "
++                 "0x2024c0=0x{:08x} 0x206680=0x{:08x}",
++                 ios_dispatch_count, r0, r1, r2, r3);
++      }
 +      if ((++ios_dispatch_count % 200) == 0) {
 +        lg::info("OTTSEL_IOS: GOAL kernel dispatcher iteration {} (running)", ios_dispatch_count);
 +      }
@@ -975,7 +998,7 @@ index 859b7e13a..90f6e8b7e 100644
        // use a hack to just run the listener function if there's no GOAL kernel.
        if (ListenerFunction->value != s7.offset) {
 diff --git a/game/kernel/jak1/klink.cpp b/game/kernel/jak1/klink.cpp
-index fd7199959..e4d06b2b0 100644
+index fd7199959..1593b5380 100644
 --- a/game/kernel/jak1/klink.cpp
 +++ b/game/kernel/jak1/klink.cpp
 @@ -14,7 +14,34 @@
@@ -1192,7 +1215,7 @@ index fd7199959..e4d06b2b0 100644
    if (ofh->object_file_version == 3) {
      // todo check function type of entry
  
-@@ -540,12 +681,91 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
+@@ -540,12 +681,104 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
  
      // execute top level!
      if (m_entry.offset && (m_flags & LINK_FLAG_EXECUTE)) {
@@ -1262,6 +1285,19 @@ index fd7199959..e4d06b2b0 100644
 +        printf("OTTSEL link: executing top-level of %s entry=0x%x stack=0x%llx st=0x%x\n",
 +               m_object_name, m_entry.offset, (unsigned long long)goal_stack, s7.offset);
          call_goal_on_stack(m_entry.cast<Function>(), goal_stack, s7.offset, g_ee_main_mem);
++#ifdef OTTSEL_IOS
++        // S2.1 diagnostic: sample the region [0x202000..0x202100) after each
++        // top-level to find WHEN the repeating {valid?-continuation,0x70,0,0}
++        // pattern appears (the camera pool + processes live there).
++        {
++          extern u8* g_ee_main_mem;
++          u32 w0 = *(volatile u32*)(g_ee_main_mem + 0x202000);
++          u32 w1 = *(volatile u32*)(g_ee_main_mem + 0x202010);
++          u32 w2 = *(volatile u32*)(g_ee_main_mem + 0x202080);
++          lg::info("OTTSEL_REGION after {}: 0x202000=0x{:08x} 0x202010=0x{:08x} 0x202080=0x{:08x}",
++                   m_object_name, w0, w1, w2);
++        }
++#endif
 +        printf("OTTSEL link: top-level of %s returned\n", m_object_name);
        } else {
 +        printf("OTTSEL link: executing top-level (no stack switch) of %s\n", m_object_name);

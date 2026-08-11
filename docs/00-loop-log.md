@@ -1749,3 +1749,19 @@ return address, not the call-site continuation
   probe: trace `valid?` callers during the kernel link and identify the
   structure at 0x202000-0x207000.  Do not patch game source around it.
 - Evidence: docs/evidence/S2/s21-valid-region-*.
+
+## 2026-08-10 (BOT9 cont 15) — camera process executes on a stack overlapping the dead-pool region; frames overwrite its own type tag
+
+- The camera-combiner thread's saved sp = 0x206690 (0x10 above its own type
+  tag); its first frame push overwrote the type tag with a continuation
+  (0x43c4f84).  The execution filled [0x202000..0x207000) - the
+  *debug-dead-pool* + processes (allocated correctly during gkernel's
+  top-level) - with a repeating {valid?-continuation, 0x70, 0, 0} frame
+  pattern; region samples show the types still correct at dispatcher
+  iteration 0 and the corruption appearing mid-dispatcher (first at 10755).
+- The camera thread's stack-top = 0x1d8000 (fake scratchpad) but the saved sp
+  = 0x206690 - execution ran on the wrong stack inside the pool region.
+- Honest: the wrong-sp source is not yet proven (resume sp restoration,
+  process-start stack setup, or a corrupted sp field).  Next probe: trace the
+  camera's first-resume sp.  Do not patch game source around it.
+- Evidence: docs/evidence/S2/s21-stack-overflow-*.
