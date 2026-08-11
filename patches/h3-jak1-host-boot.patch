@@ -2722,7 +2722,7 @@ index 4355cb922..c1034ba72 100644
    void load_settings();
    void save_settings();
 diff --git a/goal_src/jak1/kernel/gkernel.gc b/goal_src/jak1/kernel/gkernel.gc
-index 73a056e45..b5d9073dd 100644
+index 73a056e45..96a03cb9f 100644
 --- a/goal_src/jak1/kernel/gkernel.gc
 +++ b/goal_src/jak1/kernel/gkernel.gc
 @@ -507,7 +507,8 @@
@@ -2748,7 +2748,24 @@ index 73a056e45..b5d9073dd 100644
      ;; and call the function!
      (.add func off)
      (.jr func)))
-@@ -1845,10 +1852,15 @@
+@@ -564,7 +571,15 @@
+          (xmm14 :reg xmm14 :class fpr)
+          (xmm15 :reg xmm15 :class fpr))
+     ;; get the return address pushed by "call" in the suspend.
+-    (.pop temp)
++    ;; Ottsel ARM64: read [sp] WITHOUT advancing.  The call shim pushed two
++    ;; 16-byte slots (the incoming x30 and the synthetic post-blr
++    ;; continuation); the saved sp must point at the synthetic slot so the
++    ;; resume's post-blr pops BOTH slots (restoring the caller's x30 and sp).
++    ;; An advancing pop double-pops on resume: sp climbs +16 per dispatch,
++    ;; the observed camera stack climb into the debug-dead-pool region
++    ;; (S2.1 cont 18).  On x86, .load is a plain pop (the x86 shim has no
++    ;; synthetic slot).
++    (.load temp)
+     ;; convert to a GOAL address
+     (.sub temp off)
+     ;; store return address in thread
+@@ -1845,10 +1860,15 @@
           (off :reg r15 :type uint)
           (a4 :reg r8 :type uint)
           (a5 :reg r9 :type uint)
@@ -3142,7 +3159,7 @@ index e61c302f7..dab1d9889 100644
    try {
      auto debug_info = &m_debugger.get_debug_info_for_object(env->name());
 diff --git a/goalc/compiler/Compiler.h b/goalc/compiler/Compiler.h
-index 06a8e6475..cd9ea8124 100644
+index 06a8e6475..226b203c2 100644
 --- a/goalc/compiler/Compiler.h
 +++ b/goalc/compiler/Compiler.h
 @@ -87,6 +87,9 @@ class Compiler {
@@ -3166,8 +3183,16 @@ index 06a8e6475..cd9ea8124 100644
   private:
    GameVersion m_version;
    emitter::InstructionSet m_instr_set;
+@@ -505,6 +512,7 @@ class Compiler {
+   Val* compile_asm_ret(const goos::Object& form, const goos::Object& rest, Env* env);
+   Val* compile_asm_push(const goos::Object& form, const goos::Object& rest, Env* env);
+   Val* compile_asm_pop(const goos::Object& form, const goos::Object& rest, Env* env);
++  Val* compile_asm_load(const goos::Object& form, const goos::Object& rest, Env* env);
+   Val* compile_asm_sub(const goos::Object& form, const goos::Object& rest, Env* env);
+   Val* compile_asm_add(const goos::Object& form, const goos::Object& rest, Env* env);
+   Val* compile_asm_load_sym(const goos::Object& form, const goos::Object& rest, Env* env);
 diff --git a/goalc/compiler/IR.cpp b/goalc/compiler/IR.cpp
-index ce4f98f91..ad3e6acb7 100644
+index ce4f98f91..41354cdfd 100644
 --- a/goalc/compiler/IR.cpp
 +++ b/goalc/compiler/IR.cpp
 @@ -6,6 +6,7 @@
@@ -3941,7 +3966,7 @@ index ce4f98f91..ad3e6acb7 100644
  }
  
  ///////////////////////
-@@ -1360,9 +1862,24 @@ void IR_AsmRet::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1360,9 +1862,73 @@ void IR_AsmRet::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmRet::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3966,10 +3991,59 @@ index ce4f98f91..ad3e6acb7 100644
 +  // ret-to-pp in the throw-dispatch return path).
 +  gen->add_instr(IGen::load_gpr64_sp(*gen, emitter::X30), irec);
 +  gen->add_instr(IGen::ret(*gen), irec);
++}
++
++///////////////////////
++// AsmLoadSp
++///////////////////////
++
++IR_AsmLoadSp::IR_AsmLoadSp(bool use_coloring, const RegVal* dst)
++    : IR_Asm(use_coloring), m_dst(dst) {}
++
++std::string IR_AsmLoadSp::print() {
++  return fmt::format(".load{} {}", get_color_suffix_string(), m_dst->print());
++}
++
++RegAllocInstr IR_AsmLoadSp::to_rai() {
++  RegAllocInstr rai;
++  if (m_use_coloring) {
++    rai.write.push_back(m_dst->ireg());
++  }
++  return rai;
++}
++
++void IR_AsmLoadSp::do_codegen_x86(emitter::ObjectGenerator* gen,
++                                  const AllocationResult& allocs,
++                                  emitter::IR_Record irec) {
++  // x86 thread-suspend pops the return address pushed by `call` (which
++  // advances the stack by 8).  The x86 shim does not have the ARM64
++  // synthetic-continuation slot, so this is a plain pop.
++  if (m_use_coloring) {
++    gen->add_instr(IGen::pop_gpr64(*gen, get_reg(m_dst, allocs, irec)), irec);
++  } else {
++    gen->add_instr(IGen::pop_gpr64(*gen, get_no_color_reg(m_dst)), irec);
++  }
++}
++
++void IR_AsmLoadSp::do_codegen_arm64(emitter::ObjectGenerator* gen,
++                                    const AllocationResult& allocs,
++                                    emitter::IR_Record irec) {
++  // ARM64 thread-suspend: read the synthetic post-blr continuation from [sp]
++  // WITHOUT advancing sp.  The call shim pushed two slots (the incoming x30
++  // and the synthetic continuation); the suspend saves pc = the continuation
++  // and sp = the synthetic slot, so on resume the shim's post-blr pops BOTH
++  // slots (restoring the caller's x30 and sp).  An advancing pop here
++  // double-pops on resume: sp climbs +16 per dispatch, which is the observed
++  // camera stack climb into the debug-dead-pool region (S2.1 cont 18).
++  if (m_use_coloring) {
++    gen->add_instr(IGen::load_gpr64_sp(*gen, get_reg(m_dst, allocs, irec)), irec);
++  } else {
++    gen->add_instr(IGen::load_gpr64_sp(*gen, get_no_color_reg(m_dst)), irec);
++  }
  }
  
  ///////////////////////
-@@ -1387,9 +1904,10 @@ void IR_AsmFNop::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1387,9 +1953,10 @@ void IR_AsmFNop::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmFNop::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3983,7 +4057,7 @@ index ce4f98f91..ad3e6acb7 100644
  }
  
  ///////////////////////
-@@ -1414,9 +1932,10 @@ void IR_AsmFWait::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1414,9 +1981,10 @@ void IR_AsmFWait::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmFWait::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -3997,7 +4071,7 @@ index ce4f98f91..ad3e6acb7 100644
  }
  
  ///////////////////////
-@@ -1448,9 +1967,13 @@ void IR_AsmPush::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1448,9 +2016,13 @@ void IR_AsmPush::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmPush::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -4014,7 +4088,7 @@ index ce4f98f91..ad3e6acb7 100644
  }
  
  ///////////////////////
-@@ -1482,9 +2005,13 @@ void IR_AsmPop::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1482,9 +2054,13 @@ void IR_AsmPop::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmPop::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -4031,7 +4105,7 @@ index ce4f98f91..ad3e6acb7 100644
  }
  
  ///////////////////////
-@@ -1522,9 +2049,16 @@ void IR_AsmSub::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1522,9 +2098,16 @@ void IR_AsmSub::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmSub::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -4051,7 +4125,7 @@ index ce4f98f91..ad3e6acb7 100644
  }
  
  ///////////////////////
-@@ -1562,9 +2096,16 @@ void IR_AsmAdd::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1562,9 +2145,16 @@ void IR_AsmAdd::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_AsmAdd::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -4071,7 +4145,7 @@ index ce4f98f91..ad3e6acb7 100644
  }
  
  ///////////////////////
-@@ -1608,10 +2149,56 @@ void IR_GetSymbolValueAsm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1608,10 +2198,56 @@ void IR_GetSymbolValueAsm::do_codegen_x86(emitter::ObjectGenerator* gen,
    }
  }
  
@@ -4132,7 +4206,7 @@ index ce4f98f91..ad3e6acb7 100644
  }
  
  ///////////////////////
-@@ -1640,9 +2227,10 @@ void IR_JumpReg::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1640,9 +2276,10 @@ void IR_JumpReg::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_JumpReg::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -4146,7 +4220,7 @@ index ce4f98f91..ad3e6acb7 100644
  }
  
  ///////////////////////
-@@ -1674,7 +2262,7 @@ void IR_RegSetAsm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1674,7 +2311,7 @@ void IR_RegSetAsm::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_RegSetAsm::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                      const AllocationResult& allocs,
                                      emitter::IR_Record irec) {
@@ -4155,7 +4229,7 @@ index ce4f98f91..ad3e6acb7 100644
  }
  
  ///////////////////////
-@@ -1764,9 +2352,37 @@ void IR_VFMath3Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1764,9 +2401,37 @@ void IR_VFMath3Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_VFMath3Asm::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -4196,7 +4270,7 @@ index ce4f98f91..ad3e6acb7 100644
  }
  
  ///////////////////////
-@@ -1942,9 +2558,84 @@ void IR_Int128Math3Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1942,9 +2607,84 @@ void IR_Int128Math3Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_Int128Math3Asm::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -4284,7 +4358,7 @@ index ce4f98f91..ad3e6acb7 100644
  }
  
  ///////////////////////
-@@ -1999,9 +2690,21 @@ void IR_VFMath2Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -1999,9 +2739,21 @@ void IR_VFMath2Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_VFMath2Asm::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -4309,7 +4383,7 @@ index ce4f98f91..ad3e6acb7 100644
  }
  
  ///////////////////////
-@@ -2147,9 +2850,78 @@ void IR_Int128Math2Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -2147,9 +2899,78 @@ void IR_Int128Math2Asm::do_codegen_x86(emitter::ObjectGenerator* gen,
  }
  
  void IR_Int128Math2Asm::do_codegen_arm64(emitter::ObjectGenerator* gen,
@@ -4391,7 +4465,7 @@ index ce4f98f91..ad3e6acb7 100644
  }
  
  // ---- Blend VF
-@@ -2188,7 +2960,17 @@ void IR_BlendVF::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -2188,7 +3009,17 @@ void IR_BlendVF::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_BlendVF::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                    const AllocationResult& allocs,
                                    emitter::IR_Record irec) {
@@ -4410,7 +4484,7 @@ index ce4f98f91..ad3e6acb7 100644
  }
  
  // ----- Splat VF
-@@ -2224,7 +3006,9 @@ void IR_SplatVF::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -2224,7 +3055,9 @@ void IR_SplatVF::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_SplatVF::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                    const AllocationResult& allocs,
                                    emitter::IR_Record irec) {
@@ -4421,7 +4495,7 @@ index ce4f98f91..ad3e6acb7 100644
  }
  
  // ---- Swizzle VF
-@@ -2260,7 +3044,40 @@ void IR_SwizzleVF::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -2260,7 +3093,40 @@ void IR_SwizzleVF::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_SwizzleVF::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                      const AllocationResult& allocs,
                                      emitter::IR_Record irec) {
@@ -4463,7 +4537,7 @@ index ce4f98f91..ad3e6acb7 100644
  }
  
  // ---- Square Root VF
-@@ -2293,5 +3110,7 @@ void IR_SqrtVF::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -2293,5 +3159,7 @@ void IR_SqrtVF::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_SqrtVF::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                   const AllocationResult& allocs,
                                   emitter::IR_Record irec) {
@@ -4473,7 +4547,7 @@ index ce4f98f91..ad3e6acb7 100644
 +  gen->add_instr(IGen::sqrt_vf(*gen, dst, src), irec);
  }
 diff --git a/goalc/compiler/IR.h b/goalc/compiler/IR.h
-index 9a098864e..2ce026f0a 100644
+index 9a098864e..454328e5d 100644
 --- a/goalc/compiler/IR.h
 +++ b/goalc/compiler/IR.h
 @@ -139,6 +139,7 @@ class IR_FunctionCall : public IR {
@@ -4492,8 +4566,31 @@ index 9a098864e..2ce026f0a 100644
  };
  
  class IR_RegValAddr : public IR {
+@@ -500,6 +502,22 @@ class IR_AsmRet : public IR_Asm {
+                         emitter::IR_Record irec) override;
+ };
+ 
++class IR_AsmLoadSp : public IR_Asm {
++ public:
++  IR_AsmLoadSp(bool use_coloring, const RegVal* dst);
++  std::string print() override;
++  RegAllocInstr to_rai() override;
++  void do_codegen_x86(emitter::ObjectGenerator* gen,
++                      const AllocationResult& allocs,
++                      emitter::IR_Record irec) override;
++  void do_codegen_arm64(emitter::ObjectGenerator* gen,
++                        const AllocationResult& allocs,
++                        emitter::IR_Record irec) override;
++
++ private:
++  const RegVal* m_dst = nullptr;
++};
++
+ class IR_AsmPush : public IR_Asm {
+  public:
+   IR_AsmPush(bool use_coloring, const RegVal* src);
 diff --git a/goalc/compiler/compilation/Asm.cpp b/goalc/compiler/compilation/Asm.cpp
-index afc959481..a044b12f2 100644
+index afc959481..2ca3016f0 100644
 --- a/goalc/compiler/compilation/Asm.cpp
 +++ b/goalc/compiler/compilation/Asm.cpp
 @@ -15,6 +15,62 @@ emitter::Register Compiler::parse_register(const goos::Object& code) {
@@ -4559,6 +4656,40 @@ index afc959481..a044b12f2 100644
    for (int i = 0; i < 32; i++) {
      if (std::string_view(nas.name_ptr) == reg_names[i]) {
        return emitter::Register(i);
+@@ -169,6 +225,21 @@ Val* Compiler::compile_asm_pop(const goos::Object& form, const goos::Object& res
+   return get_none();
+ }
+ 
++Val* Compiler::compile_asm_load(const goos::Object& form, const goos::Object& rest, Env* env) {
++  auto args = get_va(form, rest);
++  va_check(form, args, {{}}, {{"color", {false, goos::ObjectType::SYMBOL}}});
++  bool color = true;
++  if (args.has_named("color")) {
++    color = get_true_or_false(form, args.named.at("color"));
++  }
++  auto load_dest = compile_error_guard(args.unnamed.at(0), env)->to_gpr(form, env);
++  if (!load_dest->settable()) {
++    throw_compiler_error(form, "Cannot .load into this destination. Got a {}.", load_dest->print());
++  }
++  env->emit_ir<IR_AsmLoadSp>(form, color, load_dest);
++  return get_none();
++}
++
+ Val* Compiler::compile_asm_push(const goos::Object& form, const goos::Object& rest, Env* env) {
+   auto args = get_va(form, rest);
+   va_check(form, args, {{}}, {{"color", {false, goos::ObjectType::SYMBOL}}});
+diff --git a/goalc/compiler/compilation/Atoms.cpp b/goalc/compiler/compilation/Atoms.cpp
+index 25a584f50..afdc49ce8 100644
+--- a/goalc/compiler/compilation/Atoms.cpp
++++ b/goalc/compiler/compilation/Atoms.cpp
+@@ -18,6 +18,7 @@ const std::unordered_map<std::string, GoalCompilerForm> g_goal_forms = {
+     {".ret", {.form_function = &Compiler::compile_asm_ret}},
+     {".push", {.form_function = &Compiler::compile_asm_push}},
+     {".pop", {.form_function = &Compiler::compile_asm_pop}},
++    {".load", {.form_function = &Compiler::compile_asm_load}},
+     {"rlet", {.form_function = &Compiler::compile_rlet}},
+     {".jr", {.form_function = &Compiler::compile_asm_jr}},
+     {".sub", {.form_function = &Compiler::compile_asm_sub}},
 diff --git a/goalc/compiler/compilation/Function.cpp b/goalc/compiler/compilation/Function.cpp
 index b3c703c2a..e9d469e23 100644
 --- a/goalc/compiler/compilation/Function.cpp
@@ -6881,10 +7012,10 @@ index f5b031f1a..52ba45e49 100644
        }
 diff --git a/tools/ottsel_a1/kernel_fn_dump.cpp b/tools/ottsel_a1/kernel_fn_dump.cpp
 new file mode 100644
-index 000000000..2612f9ccf
+index 000000000..4ab428bfa
 --- /dev/null
 +++ b/tools/ottsel_a1/kernel_fn_dump.cpp
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,210 @@
 +// Ottsel S2.1 diagnostic: name the gkernel function that calls the pc-prof
 +// C export (the pc=0 fault site).  Compiles the real kernel GOAL sources
 +// through the ARM64 goalc and prints every function name + code size, then
@@ -6970,6 +7101,7 @@ index 000000000..2612f9ccf
 +
 +    auto* debug = &compiler.get_debugger().get_debug_info_for_object("gkernel");
 +
++    u32 off = 0;
 +    for (auto* f : target_fns) {
 +      debug->clear();
 +      bool calls_pc_prof = false;
@@ -7003,6 +7135,8 @@ index 000000000..2612f9ccf
 +      }
 +      std::cout << (calls_pc_prof ? "PC_PROF: " : dispatch_pattern ? "DISPATCH: " : "        ")
 +                << f->name() << "  code=" << code_size << " bytes\n";
++      std::cout << "GK_OFF " << std::hex << off << std::dec << " " << f->name() << " size=" << code_size << "\n";
++      off += code_size;
 +      if (f->name().find("anon-function-5") != std::string::npos) {
 +        for (auto& ir : f->code()) {
 +          auto* call = dynamic_cast<IR_FunctionCall*>(ir.get());
@@ -7094,10 +7228,10 @@ index 000000000..2612f9ccf
 +}
 diff --git a/tools/ottsel_a1/semantic_regressions.cpp b/tools/ottsel_a1/semantic_regressions.cpp
 new file mode 100644
-index 000000000..1edfaa655
+index 000000000..052c757ff
 --- /dev/null
 +++ b/tools/ottsel_a1/semantic_regressions.cpp
-@@ -0,0 +1,885 @@
+@@ -0,0 +1,932 @@
 +// Ottsel A1.0 semantic ARM64 regression harness.
 +//
 +// The emission validator proves only that words decode as legal A64
@@ -7955,6 +8089,53 @@ index 000000000..1edfaa655
 +    }
 +  } catch (const std::exception& e) {
 +    check(false, (std::string("logand compile: ") + e.what()).c_str());
++  }
++
++  // 26. GOAL asm-func `.load <reg>` (thread-suspend's continuation read)
++  //     must emit the NON-advancing `ldr reg, [sp]` on ARM64.  The call shim
++  //     pushed TWO 16-byte slots (incoming x30 + synthetic post-blr
++  //     continuation); thread-suspend saves sp pointing at the synthetic
++  //     slot so the resume's post-blr pops BOTH slots (restoring the
++  //     caller's x30 and sp).  An advancing pop (`ldr reg, [sp], #16`)
++  //     double-pops on resume: sp climbs +16 per dispatch, the observed
++  //     camera stack climb into the debug-dead-pool region (S2.1 cont 18).
++  try {
++    auto bytes = emit_function(compiler, "a1-loadsp",
++                               "(define-extern *kernel-sp* pointer)"
++                               "(defun ottsel-a1-loadsp ()"
++                               "  (declare (asm-func none))"
++                               "  (rlet ((temp :reg rax :type uint)"
++                               "         (sp :reg rsp :type uint)"
++                               "         (off :reg r15 :type uint))"
++                               "    (.load temp)"
++                               "    (.sub temp off)"
++                               "    (.sub sp off)"
++                               "    (.load-sym :sext #f sp *kernel-sp*)"
++                               "    (.add sp off)"
++                               "    (.ret))"
++                               "  (none))",
++                               "ottsel-a1-loadsp");
++    bool has_nonadv = false;  // ldr x0, [sp]          = 0xf94003e0
++    bool has_adv = false;     // ldr x0, [sp], #16     = 0xf84107e0
++    for (size_t i = 0; i + 4 <= bytes.size(); i += 4) {
++      u32 w;
++      std::memcpy(&w, bytes.data() + i, 4);
++      if (w == 0xf94003e0) has_nonadv = true;
++      if (w == 0xf84107e0) has_adv = true;
++    }
++    check(has_nonadv, ".load emits non-advancing ldr x0, [sp] (0xf94003e0)");
++    check(!has_adv, ".load never emits advancing ldr x0, [sp], #16 (0xf84107e0)");
++    if (!has_nonadv || has_adv) {
++      std::cout << "    loadsp bytes (" << bytes.size() << "):";
++      for (size_t i = 0; i < bytes.size(); i += 4) {
++        u32 w;
++        std::memcpy(&w, bytes.data() + i, 4);
++        std::cout << " " << std::hex << w << std::dec;
++      }
++      std::cout << "\n";
++    }
++  } catch (const std::exception& e) {
++    check(false, (std::string("loadsp compile: ") + e.what()).c_str());
 +  }
 +}
 +

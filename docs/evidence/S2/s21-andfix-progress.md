@@ -617,3 +617,39 @@ are now all trace-proven.  S2.1 remains ACTIVE.  Evidence:
 docs/evidence/S2/s21-tracer-regionchange-iter10755.log,
 s21-tracer-regionchange-fault.log, s21-tracer-writersp2-regionchange.log,
 s21-tracer-writersp2-fault.log.
+
+## Root cause fixed: thread-suspend read the shim continuation with an advancing pop; resume's post-blr double-popped (+0x10/dispatch sp climb) (2026-08-10/11, BOT9 cont 19)
+
+- **Proven root cause (disassembly + trace):** the ARM64 GOAL call shim
+  (`IR_FunctionCall`) pushes TWO 16-byte slots before `blr` (the incoming
+  x30 and a synthetic post-blr continuation).  `thread-suspend` (an asm-func
+  entered through that shim via the suspend-hook) did `.pop temp` — an
+  ADVANCING pop that consumed only the synthetic continuation and saved
+  `sp` = the slot above it (still pointing at the x30 slot).  On resume,
+  `thread-resume` restored that saved sp and jumped to `pc` = the post-blr
+  continuation, whose `pop x17; pop x30` popped BOTH remaining slots — a
+  net +16 bytes per suspend/resume cycle.  This is the exact
+  +0x10/dispatch climb measured by OTTSEL_WRITER-SP (0x1d7fd0 -> 0x202000
+  over 10755 iterations), which drove the camera thread's stack into the
+  debug-dead-pool region.
+- **Fix (regression-first):** new `.load` asm form = `IR_AsmLoadSp`
+  (`ldr reg, [sp]`, no post-index) on ARM64; `thread-suspend` now reads the
+  continuation WITHOUT advancing sp, so the saved sp points at the synthetic
+  slot and the resume's post-blr pops both slots (restoring the caller's x30
+  and sp) — balanced.  On x86 `.load` is a plain pop (the x86 shim has no
+  synthetic slot).
+- **A1.0 test 26 (`a1-loadsp`):** compiles a real asm-func with `.load temp`
+  and asserts the ARM64 word is 0xf94003e0 (`ldr x0, [sp]`) and never
+  0xf84107e0 (`ldr x0, [sp], #16`).  PASS with the fix.
+- **Emitted kernel verified:** `thread-suspend` now starts
+  `ldr x0, [sp]` (0xf94003e0) instead of `ldr x0, [sp], #0x10`.
+- **Boot verified (one Simulator, Windowed, zero stale processes):**
+  OTTSEL_WRITER-SP shows sp = 0x1d7fc0 CONSTANT at iters 0,1,2,5,10,50,200
+  (was climbing); zero REGION-CHANGE firings; the app ran 213,938
+  subtitle-load iterations without the dispatcher fault (the old fault hit
+  at iter ~10755 / ~42s).  Evidence:
+  docs/evidence/S2/s21-fix-spstable-runtime.log.
+- S2.1 remains ACTIVE: the boot spins on load-subtitle-text-info (no ISO
+  data, expected ROM-safe boundary) and no renderer-ready boundary or Jak
+  frame exists yet.  But the camera stack-corruption fault mechanism is
+  fixed at its root.

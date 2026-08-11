@@ -1834,3 +1834,31 @@ return address, not the call-site continuation
 - Evidence: docs/evidence/S2/s21-tracer-regionchange-iter10755.log,
   s21-tracer-regionchange-fault.log, s21-tracer-writersp2-regionchange.log,
   s21-tracer-writersp2-fault.log.
+
+## 2026-08-10/11 (BOT9 cont 19) — ROOT CAUSE FIXED: thread-suspend's advancing continuation pop double-pops on resume (+0x10/dispatch sp climb); camera stack corruption gone
+
+- **Root cause proven (disassembly + trace):** the ARM64 GOAL call shim
+  pushes TWO 16-byte slots before blr (incoming x30 + synthetic post-blr
+  continuation).  `thread-suspend` (entered via the suspend-hook GOAL call
+  through that shim) did `.pop temp` — an ADVANCING pop consuming only the
+  synthetic continuation, then saved sp pointing at the x30 slot.  On
+  resume, thread-resume restored that sp and jumped to the post-blr
+  continuation, which pops BOTH remaining slots — net +16 per
+  suspend/resume cycle.  This is exactly the OTTSEL_WRITER-SP measured
+  +0x10/dispatch climb (0x1d7fd0 -> 0x202000 over 10755 iterations) that
+  drove the camera thread's stack into the debug-dead-pool region and
+  corrupted the pool/process type tags.
+- **Fix (regression-first):** new `.load` asm form = `IR_AsmLoadSp`
+  (`ldr reg, [sp]`, no post-index) on ARM64; `thread-suspend` reads the
+  continuation WITHOUT advancing sp so the resume's post-blr pops both slots
+  (balanced).  A1.0 test 26 (`a1-loadsp`) asserts 0xf94003e0 and rejects
+  0xf84107e0; full semantic suite PASS.  Emitted kernel verified:
+  thread-suspend starts `ldr x0, [sp]`.
+- **Boot verified:** sp = 0x1d7fc0 CONSTANT at iters 0..200; zero
+  REGION-CHANGE; app ran 213,938 subtitle-load iterations with no dispatcher
+  fault (old fault at iter ~10755).  S2.1 remains ACTIVE (no renderer-ready
+  boundary / no Jak frame; boot spins on load-subtitle-text-info, expected
+  ROM-safe boundary).  Evidence: s21-fix-spstable-runtime.log.
+- Files: goalc/compiler/IR.h, IR.cpp (IR_AsmLoadSp), Atoms.cpp + Asm.cpp
+  (`.load`), Compiler.h, goal_src/jak1/kernel/gkernel.gc (thread-suspend
+  `.load temp`), tools/ottsel_a1/semantic_regressions.cpp (test 26).
