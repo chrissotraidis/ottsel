@@ -1730,3 +1730,22 @@ return address, not the call-site continuation
 - Next bounded probe: identify the exact writer of [proc-4] (C-side trace of
   get-process/activate stores or a watchpoint); do not patch game source.
 - Evidence: docs/evidence/S2/s21-coderegion-* (boot21 = full probes).
+
+## 2026-08-10 (BOT9 cont 14) — corrupt type tags are GOAL call continuations; a heap region is filled with a repeating {valid?-continuation,0x70,0,0} pattern
+
+- Identified the faulting process as the camera-combiner (mask camera|progress|
+  pause; thread pc/state in cam-states-dbg code).  Its type tag 0x43c4f84 and
+  the camera pool's tag 0x3ec0634 are both CONFIRMED GOAL call continuations
+  (post-`blr` words): 0x3ec0634 is inside `valid?` (gcommon+0x3b1c, call site
+  +0xb14); 0x43c4f84 is the time-of-day-tick behavior's suspend continuation.
+- The allocator hook (alloc_heap_object diagnostic) proves the pool + all five
+  pool processes were allocated with CORRECT heap types (0x1c2a34 / 0x1c04b4)
+  during gkernel's top-level; the corrupt tags are post-allocation overwrites.
+- The region [0x202000..0x207000) is filled with a repeating 16-byte pattern
+  {0x3ec0634, 0x70, 0, 0}; the spare pool processes' first 16 bytes ARE that
+  pattern; the activated camera-combiner has sane fields with only its type
+  tag overwritten (0x43c4f84).
+- Honest: the writer of the continuation pattern is not yet proven.  Next
+  probe: trace `valid?` callers during the kernel link and identify the
+  structure at 0x202000-0x207000.  Do not patch game source around it.
+- Evidence: docs/evidence/S2/s21-valid-region-*.

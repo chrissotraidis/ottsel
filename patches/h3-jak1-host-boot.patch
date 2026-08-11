@@ -1441,7 +1441,7 @@ index 459a21562..e7cf3b0a5 100644
    if (DiskBoot) {
      intern_from_c("*kernel-boot-message*")->value = intern_from_c(DebugBootMessage).offset;
 diff --git a/game/kernel/jak1/kscheme.cpp b/game/kernel/jak1/kscheme.cpp
-index c8287de5a..030b45f94 100644
+index c8287de5a..2a13bc996 100644
 --- a/game/kernel/jak1/kscheme.cpp
 +++ b/game/kernel/jak1/kscheme.cpp
 @@ -1,6 +1,10 @@
@@ -1485,7 +1485,28 @@ index c8287de5a..030b45f94 100644
  // where to put a new symbol for the most recently searched for symbol that wasn't found
  u32 symbol_slot;
  
-@@ -279,11 +305,127 @@ void _arg_call_arm64();
+@@ -150,6 +176,20 @@ u64 alloc_heap_object(u32 heap, u32 type, u32 size, u32 pp) {
+     return 0;
+   }
+ 
++#if defined(OTTSEL_IOS) && defined(OTTSEL_NO_EMIT)
++  // S2.1 diagnostic (2026-08-10): the faulting process's type tag is a
++  // time-of-day code address (0x43c4f84); its pool (0x2024a4) also has a
++  // code-address type tag (0x3ec0634).  Log every allocation whose type is a
++  // code-region address (dedicated 0x3ebc000-0x4ee0000 or time-of-day
++  // 0x43c4000-0x43cc000), or whose object lands in the pool/process region
++  // (0x202000-0x207000), to see whether the ALLOCATOR wrote the corrupt tag.
++  if ((type >= 0x3ebc000 && type <= 0x4ee0000) ||
++      (type >= 0x43c4000 && type <= 0x43cc000) || (mem >= 0x202000 && mem <= 0x207000)) {
++    lg::info("OTTSEL_ALLOC obj_base=0x{:x} type=0x{:x} size={} heap=0x{:x} pp=0x{:x}", mem, type,
++             size, heap, pp);
++  }
++#endif
++
+   *Ptr<u32>(mem) = type;
+   return mem + BASIC_OFFSET;
+ }
+@@ -279,11 +319,127 @@ void _arg_call_arm64();
  #endif
  }
  
@@ -1613,7 +1634,7 @@ index c8287de5a..030b45f94 100644
    auto mem = Ptr<u8>(alloc_heap_object(s7.offset + FIX_SYM_GLOBAL_HEAP,
                                         *(s7 + FIX_SYM_FUNCTION_TYPE), 0x40, UNKNOWN_PP));
    auto f = (uint64_t)func;
-@@ -294,10 +436,45 @@ Ptr<Function> make_function_from_c_systemv(void* func, bool arg3_is_pp) {
+@@ -294,10 +450,45 @@ Ptr<Function> make_function_from_c_systemv(void* func, bool arg3_is_pp) {
    auto trampoline_function_addr = _arg_call_arm64;
  #endif
    auto trampoline = (u8*)&trampoline_function_addr;
@@ -1662,7 +1683,7 @@ index c8287de5a..030b45f94 100644
    mem.c()[offset++] = 0x48;
    mem.c()[offset++] = 0xb8;
    for (int i = 0; i < 8; i++) {
-@@ -327,8 +504,10 @@ Ptr<Function> make_function_from_c_systemv(void* func, bool arg3_is_pp) {
+@@ -327,8 +518,10 @@ Ptr<Function> make_function_from_c_systemv(void* func, bool arg3_is_pp) {
    // the asm function's ret will return to the caller of this (GOAL code) directlyz.
  
    // CacheFlush(mem, 0x34);
@@ -1673,7 +1694,7 @@ index c8287de5a..030b45f94 100644
  }
  
  /*!
-@@ -417,6 +596,39 @@ void _stack_call_arm64();
+@@ -417,6 +610,39 @@ void _stack_call_arm64();
  }
  
  Ptr<Function> make_stack_arg_function_from_c_systemv(void* func) {
@@ -1713,7 +1734,7 @@ index c8287de5a..030b45f94 100644
    // allocate a function object on the global heap
    auto mem = Ptr<u8>(alloc_heap_object(s7.offset + FIX_SYM_GLOBAL_HEAP,
                                         *(s7 + FIX_SYM_FUNCTION_TYPE), 0x40, UNKNOWN_PP));
-@@ -454,6 +666,7 @@ Ptr<Function> make_stack_arg_function_from_c_systemv(void* func) {
+@@ -454,6 +680,7 @@ Ptr<Function> make_stack_arg_function_from_c_systemv(void* func) {
    // CacheFlush(mem, 0x34);
  
    return mem.cast<Function>();
@@ -1721,7 +1742,7 @@ index c8287de5a..030b45f94 100644
  }
  
  #ifdef _WIN32
-@@ -529,6 +742,17 @@ Ptr<Function> make_stack_arg_function_from_c(void* func) {
+@@ -529,6 +756,17 @@ Ptr<Function> make_stack_arg_function_from_c(void* func) {
   * Create a GOAL function which does nothing and immediately returns.
   */
  Ptr<Function> make_nothing_func() {
@@ -1739,7 +1760,7 @@ index c8287de5a..030b45f94 100644
    auto mem = Ptr<u8>(alloc_heap_object(s7.offset + FIX_SYM_GLOBAL_HEAP,
                                         *(s7 + FIX_SYM_FUNCTION_TYPE), 0x14, UNKNOWN_PP));
  
-@@ -536,12 +760,29 @@ Ptr<Function> make_nothing_func() {
+@@ -536,12 +774,29 @@ Ptr<Function> make_nothing_func() {
    mem.c()[0] = 0xc3;
    // CacheFlush(mem, 8);
    return mem.cast<Function>();
@@ -1769,7 +1790,7 @@ index c8287de5a..030b45f94 100644
    auto mem = Ptr<u8>(alloc_heap_object(s7.offset + FIX_SYM_GLOBAL_HEAP,
                                         *(s7 + FIX_SYM_FUNCTION_TYPE), 0x14, UNKNOWN_PP));
    // xor eax, eax
-@@ -551,6 +792,7 @@ Ptr<Function> make_zero_func() {
+@@ -551,6 +806,7 @@ Ptr<Function> make_zero_func() {
    mem.c()[2] = 0xc3;
    // CacheFlush(mem, 8);
    return mem.cast<Function>();
@@ -1777,7 +1798,7 @@ index c8287de5a..030b45f94 100644
  }
  
  /*!
-@@ -719,6 +961,28 @@ Ptr<Symbol> find_symbol_from_c(const char* name) {
+@@ -719,6 +975,28 @@ Ptr<Symbol> find_symbol_from_c(const char* name) {
        return probe;
      }
    }
@@ -1806,7 +1827,7 @@ index c8287de5a..030b45f94 100644
  }
  
  /*!
-@@ -969,6 +1233,10 @@ u64 type_typep(Ptr<Type> t1, Ptr<Type> t2) {
+@@ -969,6 +1247,10 @@ u64 type_typep(Ptr<Type> t1, Ptr<Type> t2) {
   */
  u64 method_set(u32 type_, u32 method_id, u32 method) {
    Ptr<Type> type(type_);
@@ -1817,7 +1838,7 @@ index c8287de5a..030b45f94 100644
    if (method_id > 127)
      printf("[METHOD SET ERROR] tried to set method %d\n", method_id);
  
-@@ -1744,13 +2012,29 @@ s32 InitHeapAndSymbol() {
+@@ -1744,13 +2026,29 @@ s32 InitHeapAndSymbol() {
    intern_from_c("*boot-video-mode*")->value = 0;  // (u32)BootVideoMode;
  
    lg::info("Initialized GOAL heap in {:.2} ms", heap_init_timer.getMs());
@@ -1847,7 +1868,7 @@ index c8287de5a..030b45f94 100644
      method_set_symbol->value--;
  
      // check the kernel version!
-@@ -1768,6 +2052,7 @@ s32 InitHeapAndSymbol() {
+@@ -1768,6 +2066,7 @@ s32 InitHeapAndSymbol() {
      }
    }
  
@@ -1855,7 +1876,7 @@ index c8287de5a..030b45f94 100644
    // setup deci2count for message counter.
    protoBlock.deci2count = intern_from_c("*deci-count*").cast<s32>();
  
-@@ -1779,6 +2064,7 @@ s32 InitHeapAndSymbol() {
+@@ -1779,6 +2078,7 @@ s32 InitHeapAndSymbol() {
  
    // testing stuff:
    make_function_symbol_from_c("test-function", (void*)test_function);
@@ -6734,10 +6755,10 @@ index f5b031f1a..52ba45e49 100644
        }
 diff --git a/tools/ottsel_a1/kernel_fn_dump.cpp b/tools/ottsel_a1/kernel_fn_dump.cpp
 new file mode 100644
-index 000000000..87814ba5e
+index 000000000..997f1d099
 --- /dev/null
 +++ b/tools/ottsel_a1/kernel_fn_dump.cpp
-@@ -0,0 +1,188 @@
+@@ -0,0 +1,206 @@
 +// Ottsel S2.1 diagnostic: name the gkernel function that calls the pc-prof
 +// C export (the pc=0 fault site).  Compiles the real kernel GOAL sources
 +// through the ARM64 goalc and prints every function name + code size, then
@@ -6795,6 +6816,24 @@ index 000000000..87814ba5e
 +      auto obj = compiler.get_goos().reader.read_from_file({file});
 +      auto* fe = compiler.compile_object_file(obj_name, obj, true);
 +      compiler.color_only_for_proof(fe);
++      if (std::string(file) == "goal_src/jak1/kernel/gcommon.gc") {
++        u32 off = 0;
++        auto* gdbg = &compiler.get_debugger().get_debug_info_for_object("gcommon");
++        for (auto& f : fe->functions()) {
++          try {
++            gdbg->clear();
++            CodeGenerator gen_gc(fe, gdbg, GameVersion::Jak1,
++                                 InstructionSet::ARM64);
++            auto bytes_gc = gen_gc.emit_function_machine_code(f.get(), 0);
++            std::cout << "GCOMMON 0x" << std::hex << off << std::dec << "  " << f->name()
++                      << "  code=" << bytes_gc.size() << "\n";
++            off += (u32)bytes_gc.size();
++          } catch (const std::exception&) {
++            std::cout << "GCOMMON 0x" << std::hex << off << std::dec << "  " << f->name()
++                      << "  code=0\n";
++          }
++        }
++      }
 +      if (std::string(file) == target) {
 +        target_fe = fe;
 +        for (auto& f : fe->functions()) {

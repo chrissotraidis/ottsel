@@ -483,3 +483,33 @@ S2.1 is NOT PASS.  The dedicated-code-region fix is verified (code no longer
 lives in the heap; the old overlap address reads 0), but the dispatcher fault
 persists with a newly-characterized mechanism (process type tag = a behavior
 continuation).  A1.0/A1.1/A1.2 remain PASS.
+
+## The corrupt type tags are GOAL call continuations; a region is filled with a repeating call-frame pattern (2026-08-10, BOT9 cont 14)
+
+The process at 0x206684 is the **camera-combiner** process (mask 0x40014 =
+camera|progress|pause; its thread pc/state point into cam-states-dbg).  Its
+type tag 0x43c4f84 and the camera pool's type tag 0x3ec0634 are both CONFIRMED
+to be GOAL call continuations (the word right after a `blr x16`):
+- code@0x3ec0630 = `blr x16`; 0x3ec0634 = the continuation (in `valid?`,
+  gcommon+0x3b1c, at its method-call site +0xb14).
+- code@0x43c4f80 = `blr x16`; 0x43c4f84 = the continuation (the
+  time-of-day-tick behavior's suspend-hook call).
+
+The allocator hook proves the pool (0x2024a4, type 0x1c2a34) and all five
+processes (0x2024c4..0x206684, type 0x1c04b4 = 'process) were allocated with
+CORRECT heap types during gkernel's top-level (kernel link); the corrupt tags
+are post-allocation overwrites.
+
+The region [0x202000..0x207000) is filled with a repeating 16-byte pattern
+{0x3ec0634, 0x70, 0, 0} (the `valid?` continuation + 0x70 + zeros) across the
+whole range; the spare pool processes' first 16 bytes ARE this pattern (their
+type tags AND name/mask/parent fields), while the activated camera-combiner
+has sane fields with only its type tag overwritten (0x43c4f84, a different
+continuation).
+
+Honest boundary: what writes the continuation pattern over the region is not
+yet proven.  Prime suspects: a heap/stack overlap (the processes were
+allocated into a region that a `valid?` call chain also writes) or a GOAL
+write loop with a wrong base.  Next probe: trace the `valid?` callers during
+the kernel link and identify the structure at 0x202000-0x207000; do not patch
+game source around it.

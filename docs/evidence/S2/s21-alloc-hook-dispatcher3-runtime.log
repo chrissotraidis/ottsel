@@ -1,0 +1,220 @@
+[22:09] [debug] OTTSEL_IOS: EE main memory mapped at 0x0000007000000000
+[22:09] [info] gkernel: global heap 0x0013fd20 to 0x03eb82e0 (size 61.470 MB)
+[22:09] [info] Initialized GOAL heap in 0.41 ms
+[22:09] [warn] OTTSEL_NO_EMIT: listener code receive is disabled
+[22:09] [info] OTTSEL_IOS: reading KERNEL.CGO from /Users/chrissotraidis/Library/Developer/CoreSimulator/Devices/08636791-2675-4675-8335-EF72EF954DCF/data/Containers/Bundle/Application/2B3F390E-D6D5-4409-AF26-429D00FC6104/OttselShell.app/KERNEL.CGO
+[22:09] [info] OTTSEL_IOS: KERNEL.CGO has 8 objects
+[22:09] [info] OTTSEL_IOS: linking object 0 (gcommon) size 77662
+[22:09] [info] OTTSEL_IOS dbg: obj_data=0x3cba35a code_infos[0].offset=0x3cc25e6 size=0x8c38
+[22:09] [info] OTTSEL no-emit: dedicated code region 0x3ebc000..0x4ee0000 (page 0x4000)
+[22:09] [debug] OTTSEL no-emit: stub arena A flipped RX (13320 bytes used)
+[22:09] [debug] link finish: gcommon
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3cb0000 size 0x4184
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481099972608..481099988992)
+[22:09] [debug] OTTSEL no-emit: main seg 0 offset 0x3ebc000 size 0x8c38 code 0x8000
+[22:09] [debug] OTTSEL no-emit: main code pages flipped RX (481102118912..481102151680)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481099972608..481099988992)
+[22:09] [info] OTTSEL_IOS: linking object 1 (gstring-h) size 16486
+[22:09] [debug] link finish: gstring-h
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3cb4000 size 0x4000
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481099988992..481100005376)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481099988992..481100005376)
+[22:09] [info] OTTSEL_IOS: linking object 2 (gkernel-h) size 61422
+[22:09] [info] OTTSEL_IOS dbg: obj_data=0x3cb9d7a code_infos[0].offset=0x3cc31e2 size=0x40cc
+[22:09] [debug] link finish: gkernel-h
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3cb0000 size 0x4104
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481099972608..481099988992)
+[22:09] [debug] OTTSEL no-emit: main seg 0 offset 0x3ec8000 size 0x40cc code 0x4000
+[22:09] [debug] OTTSEL no-emit: main code pages flipped RX (481102168064..481102184448)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481099972608..481099988992)
+[22:09] [info] OTTSEL_IOS: linking object 3 (gkernel) size 88107
+[22:09] [info] OTTSEL_IOS dbg: obj_data=0x3cbc3a7 code_infos[0].offset=0x3cc4a57 size=0x9094
+[22:09] [debug] link finish: gkernel
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3cb0000 size 0x43f8
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481099972608..481099988992)
+[22:09] [debug] OTTSEL no-emit: main seg 0 offset 0x3ed0000 size 0x9094 code 0x8000
+[22:09] [debug] OTTSEL no-emit: main code pages flipped RX (481102200832..481102233600)
+[22:09] [info] OTTSEL_ALLOC obj_base=0x2024a0 type=0x1c2a34 size=32 heap=0x18ff44 pp=0x18fe04
+[22:09] [info] OTTSEL_ALLOC obj_base=0x2024c0 type=0x1c04b4 size=4208 heap=0x18ff44 pp=0x18fe04
+[22:09] [info] OTTSEL_ALLOC obj_base=0x203530 type=0x1c04b4 size=4208 heap=0x18ff44 pp=0x18fe04
+[22:09] [info] OTTSEL_ALLOC obj_base=0x2045a0 type=0x1c04b4 size=4208 heap=0x18ff44 pp=0x18fe04
+[22:09] [info] OTTSEL_ALLOC obj_base=0x205610 type=0x1c04b4 size=4208 heap=0x18ff44 pp=0x18fe04
+[22:09] [info] OTTSEL_ALLOC obj_base=0x206680 type=0x1c04b4 size=4208 heap=0x18ff44 pp=0x18fe04
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481099972608..481099988992)
+[22:09] [info] OTTSEL_IOS: linking object 4 (pskernel) size 53735
+[22:09] [info] OTTSEL_IOS dbg: obj_data=0x3cb8eeb code_infos[0].offset=0x3cc116b size=0x433c
+[22:09] [debug] link finish: pskernel
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3cb0000 size 0x4050
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481099972608..481099988992)
+[22:09] [debug] OTTSEL no-emit: main seg 0 offset 0x3edc000 size 0x433c code 0x4000
+[22:09] [debug] OTTSEL no-emit: main code pages flipped RX (481102249984..481102266368)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481099972608..481099988992)
+[22:09] [info] OTTSEL_IOS: linking object 5 (gstring) size 37752
+[22:09] [info] OTTSEL_IOS dbg: obj_data=0x3cb942c code_infos[0].offset=0x3cbd53c size=0x40fc
+[22:09] [debug] link finish: gstring
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3cb0000 size 0x4110
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481099972608..481099988992)
+[22:09] [debug] OTTSEL no-emit: main seg 0 offset 0x3ee4000 size 0x40fc code 0x4000
+[22:09] [debug] OTTSEL no-emit: main code pages flipped RX (481102282752..481102299136)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481099972608..481099988992)
+[22:09] [info] OTTSEL_IOS: linking object 6 (dgo-h) size 33858
+[22:09] [debug] link finish: dgo-h
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3cb0000 size 0x4028
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481099972608..481099988992)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481099972608..481099988992)
+[22:09] [info] OTTSEL_IOS: linking object 7 (gstate) size 34262
+[22:09] [info] OTTSEL_IOS dbg: obj_data=0x3cb875e code_infos[0].offset=0x3cbc77e size=0x4118
+[22:09] [debug] link finish: gstate
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3cb0000 size 0x4020
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481099972608..481099988992)
+[22:09] [debug] OTTSEL no-emit: main seg 0 offset 0x3eec000 size 0x4118 code 0x4000
+[22:09] [debug] OTTSEL no-emit: main code pages flipped RX (481102315520..481102331904)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481099972608..481099988992)
+[22:09] [info] OTTSEL_IOS: KERNEL.CGO linked (8 objects)
+[22:09] [info] Got correct kernel version 2.0, loaded in 7 ms
+[22:09] [info] OTTSEL_IOS: listener/REPL hard-disabled
+kernel: machine started
+[22:09] [debug] OTTSEL no-emit: stub arena B flipped RX (6696 bytes used)
+[22:09] [info] OTTSEL_IOS: reading GAME.CGO from /Users/chrissotraidis/Library/Developer/CoreSimulator/Devices/08636791-2675-4675-8335-EF72EF954DCF/data/Containers/Bundle/Application/2B3F390E-D6D5-4409-AF26-429D00FC6104/OttselShell.app/GAME.CGO
+[22:09] [info] OTTSEL_IOS: GAME.CGO has 346 objects
+[22:09] [info] OTTSEL_IOS: linking object 0 (types-h) size 33451
+[22:09] [debug] link finish: types-h
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3ab0000 size 0x4028
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481097875456..481097891840)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481097875456..481097891840)
+[22:09] [info] OTTSEL_IOS: linking object 1 (vu1-macros) size 36341
+[22:09] [info] OTTSEL_IOS dbg: obj_data=0x3ab88d5 code_infos[0].offset=0x3ac0ec5 size=0x1f0
+[22:09] [debug] link finish: vu1-macros
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3ab0000 size 0x4018
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481097875456..481097891840)
+[22:09] [debug] OTTSEL no-emit: main seg 0 offset 0x3ef4000 size 0x1f0 code 0x0
+[22:09] [debug] OTTSEL no-emit: main code pages flipped RX (481102348288..481102348288)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481097875456..481097891840)
+[22:09] [info] OTTSEL_IOS: linking object 2 (math) size 52045
+[22:09] [info] OTTSEL_IOS dbg: obj_data=0x3ab8c19 code_infos[0].offset=0x3ac0db1 size=0x405c
+[22:09] [debug] link finish: math
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3ab0000 size 0x40a0
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481097875456..481097891840)
+[22:09] [debug] OTTSEL no-emit: main seg 0 offset 0x3ef8000 size 0x405c code 0x4000
+[22:09] [debug] OTTSEL no-emit: main code pages flipped RX (481102364672..481102381056)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481097875456..481097891840)
+[22:09] [info] OTTSEL_IOS: linking object 3 (vector-h) size 84826
+[22:09] [info] OTTSEL_IOS dbg: obj_data=0x3abb226 code_infos[0].offset=0x3ac8ca6 size=0x4174
+[22:09] [debug] link finish: vector-h
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3ab0000 size 0x42e8
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481097875456..481097891840)
+[22:09] [debug] OTTSEL no-emit: main seg 0 offset 0x3f00000 size 0x4174 code 0x4000
+[22:09] [debug] OTTSEL no-emit: main code pages flipped RX (481102397440..481102413824)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481097875456..481097891840)
+[22:09] [info] OTTSEL_IOS: linking object 4 (gravity-h) size 16486
+[22:09] [debug] link finish: gravity-h
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3ab4000 size 0x4000
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481097891840..481097908224)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481097891840..481097908224)
+[22:09] [info] OTTSEL_IOS: linking object 5 (bounding-box-h) size 34201
+[22:09] [debug] link finish: bounding-box-h
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3ab0000 size 0x403c
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481097875456..481097891840)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481097875456..481097891840)
+[22:09] [info] OTTSEL_IOS: linking object 6 (matrix-h) size 50798
+[22:09] [info] OTTSEL_IOS dbg: obj_data=0x3ab8736 code_infos[0].offset=0x3ac092e size=0x4000
+[22:09] [debug] link finish: matrix-h
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3ab0000 size 0x4040
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481097875456..481097891840)
+[22:09] [debug] OTTSEL no-emit: main seg 0 offset 0x3f08000 size 0x4000 code 0x4000
+[22:09] [debug] OTTSEL no-emit: main code pages flipped RX (481102430208..481102446592)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481097875456..481097891840)
+[22:09] [info] OTTSEL_IOS: linking object 7 (quaternion-h) size 33791
+[22:09] [info] OTTSEL_IOS dbg: obj_data=0x3ab856f code_infos[0].offset=0x3ac06af size=0x10
+[22:09] [debug] link finish: quaternion-h
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3ab0000 size 0x4018
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481097875456..481097891840)
+[22:09] [debug] OTTSEL no-emit: main seg 0 offset 0x3f0c000 size 0x10 code 0x0
+[22:09] [debug] OTTSEL no-emit: main code pages flipped RX (481102446592..481102446592)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481097875456..481097891840)
+[22:09] [info] OTTSEL_IOS: linking object 8 (euler-h) size 33846
+[22:09] [info] OTTSEL_IOS dbg: obj_data=0x3ab8596 code_infos[0].offset=0x3ac06b6 size=0x40
+[22:09] [debug] link finish: euler-h
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3ab0000 size 0x401c
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481097875456..481097891840)
+[22:09] [debug] OTTSEL no-emit: main seg 0 offset 0x3f10000 size 0x40 code 0x0
+[22:09] [debug] OTTSEL no-emit: main code pages flipped RX (481102462976..481102462976)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481097875456..481097891840)
+[22:09] [info] OTTSEL_IOS: linking object 9 (transform-h) size 33857
+[22:09] [debug] link finish: transform-h
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3ab0000 size 0x4028
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481097875456..481097891840)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481097875456..481097891840)
+[22:09] [info] OTTSEL_IOS: linking object 10 (geometry-h) size 34162
+[22:09] [debug] link finish: geometry-h
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3ab0000 size 0x4028
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481097875456..481097891840)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481097875456..481097891840)
+[22:09] [info] OTTSEL_IOS: linking object 11 (trigonometry-h) size 16486
+[22:09] [debug] link finish: trigonometry-h
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3ab4000 size 0x4000
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481097891840..481097908224)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481097891840..481097908224)
+[22:09] [info] OTTSEL_IOS: linking object 12 (transformq-h) size 51876
+[22:09] [info] OTTSEL_IOS dbg: obj_data=0x3ab8938 code_infos[0].offset=0x3ac0d38 size=0x402c
+[22:09] [debug] link finish: transformq-h
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3ab0000 size 0x404c
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481097875456..481097891840)
+[22:09] [debug] OTTSEL no-emit: main seg 0 offset 0x3f14000 size 0x402c code 0x4000
+[22:09] [debug] OTTSEL no-emit: main code pages flipped RX (481102479360..481102495744)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481097875456..481097891840)
+[22:09] [info] OTTSEL_IOS: linking object 13 (bounding-box) size 33602
+[22:09] [info] OTTSEL_IOS dbg: obj_data=0x3ab8582 code_infos[0].offset=0x3abc5c2 size=0x4040
+[22:09] [debug] link finish: bounding-box
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3ab0000 size 0x4040
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481097875456..481097891840)
+[22:09] [debug] OTTSEL no-emit: main seg 0 offset 0x3f1c000 size 0x4040 code 0x4000
+[22:09] [debug] OTTSEL no-emit: main code pages flipped RX (481102512128..481102528512)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481097875456..481097891840)
+[22:09] [info] OTTSEL_IOS: linking object 14 (matrix) size 72077
+[22:09] [info] OTTSEL_IOS dbg: obj_data=0x3ab97f9 code_infos[0].offset=0x3abd8c9 size=0xc384
+[22:09] [debug] link finish: matrix
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3ab0000 size 0x40d0
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481097875456..481097891840)
+[22:09] [debug] OTTSEL no-emit: main seg 0 offset 0x3f24000 size 0xc384 code 0xc000
+[22:09] [debug] OTTSEL no-emit: main code pages flipped RX (481102544896..481102594048)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481097875456..481097891840)
+[22:09] [info] OTTSEL_IOS: linking object 15 (transform) size 34415
+[22:09] [info] OTTSEL_IOS dbg: obj_data=0x3ab87f7 code_infos[0].offset=0x3abc813 size=0x411c
+[22:09] [debug] link finish: transform
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3ab0000 size 0x401c
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481097875456..481097891840)
+[22:09] [debug] OTTSEL no-emit: main seg 0 offset 0x3f34000 size 0x411c code 0x4000
+[22:09] [debug] OTTSEL no-emit: main code pages flipped RX (481102610432..481102626816)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481097875456..481097891840)
+[22:09] [info] OTTSEL_IOS: linking object 16 (quaternion) size 74258
+[22:09] [info] OTTSEL_IOS dbg: obj_data=0x3ab9f4a code_infos[0].offset=0x3ac20b6 size=0x841c
+[22:09] [debug] link finish: quaternion
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3ab0000 size 0x40e4
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481097875456..481097891840)
+[22:09] [debug] OTTSEL no-emit: main seg 0 offset 0x3f3c000 size 0x841c code 0x8000
+[22:09] [debug] OTTSEL no-emit: main code pages flipped RX (481102643200..481102675968)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481097875456..481097891840)
+[22:09] [info] OTTSEL_IOS: linking object 17 (euler) size 34329
+[22:09] [info] OTTSEL_IOS dbg: obj_data=0x3ab87fd code_infos[0].offset=0x3abc811 size=0x40c8
+[22:09] [debug] link finish: euler
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3ab0000 size 0x4014
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481097875456..481097891840)
+[22:09] [debug] OTTSEL no-emit: main seg 0 offset 0x3f48000 size 0x40c8 code 0x4000
+[22:09] [debug] OTTSEL no-emit: main code pages flipped RX (481102692352..481102708736)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481097875456..481097891840)
+[22:09] [info] OTTSEL_IOS: linking object 18 (geometry) size 76253
+[22:09] [info] OTTSEL_IOS dbg: obj_data=0x3aba539 code_infos[0].offset=0x3abe5e5 size=0xc6b8
+[22:09] [debug] link finish: geometry
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3ab0000 size 0x40ac
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481097875456..481097891840)
+[22:09] [debug] OTTSEL no-emit: main seg 0 offset 0x3f50000 size 0xc6b8 code 0xc000
+[22:09] [debug] OTTSEL no-emit: main code pages flipped RX (481102725120..481102774272)
+[22:09] [debug] OTTSEL no-emit: top-level code pages back to RW (481097875456..481097891840)
+[22:09] [info] OTTSEL_IOS: linking object 19 (trigonometry) size 55963
+[22:09] [info] OTTSEL_IOS dbg: obj_data=0x3ab977f code_infos[0].offset=0x3ac185f size=0x44fc
+[22:09] [debug] link finish: trigonometry
+[22:09] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3ab0000 size 0x40c4
+[22:09] [debug] OTTSEL no-emit: top-level code pages flipped RX (481097875456..481097891840)
+[22:09] [debug] OTTSEL no-emit: main seg 0 offset 0x3f60000 size 0x44fc code 0x4000
+[22:09] [debug] OTTSEL no-emit: main code pages flipped RX (481102790656..481102807040)

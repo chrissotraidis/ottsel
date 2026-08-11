@@ -243,6 +243,100 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
     raw_write_lit("\n");
     // Skip the PROT_NONE low-EE guard region (first 512KB of the mapping).
       if (node >= (uintptr_t)g_ee_main_mem + 0x80000) {
+        // Confirm what the corrupt type-tag values are in the runtime: dump
+        // the code words at 0x3ec0634 and 0x43c4f84 (are they continuations?).
+        {
+          const u32 sites[] = {0x3ec0630, 0x43c4f80};
+          for (u32 site : sites) {
+            raw_write_lit("OTTSEL_IOS:   code@0x");
+            raw_write_hex(site);
+            raw_write_lit(":");
+            for (int i = 0; i < 16; i += 4) {
+              u32 w = 0;
+              if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + site + (uintptr_t)i), &w)) {
+                raw_write_lit(" ");
+                raw_write_hex(w);
+              }
+            }
+            raw_write_lit("\n");
+          }
+        }
+        // Wide dump: where does the repeating {X,0x70,0,0} pattern start/end?
+        {
+          raw_write_lit("OTTSEL_IOS:   region-wide 0x202000..0x202600:");
+          for (u32 a = 0x202000; a < 0x202600; a += 0x10) {
+            u32 w0 = 0, w1 = 0;
+            if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + a), &w0) &&
+                safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + a + 4), &w1)) {
+              raw_write_lit("\n   ");
+              raw_write_hex(a);
+              raw_write_lit(": ");
+              raw_write_hex(w0);
+              raw_write_lit(" ");
+              raw_write_hex(w1);
+            }
+          }
+          raw_write_lit("\n");
+        }
+        // Wide dump around the pool (0x202480) and the faulting process
+        // (0x206640) to see the overwrite shape (whole-region vs type slots).
+        {
+          const u32 bases[] = {0x202480, 0x206640};
+          for (u32 base : bases) {
+            raw_write_lit("OTTSEL_IOS:   region-dump @0x");
+            raw_write_hex(base);
+            raw_write_lit(":");
+            for (int i = 0; i < 0x60; i += 4) {
+              u32 w = 0;
+              if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + base + (uintptr_t)i), &w)) {
+                raw_write_lit(" ");
+                raw_write_hex(w);
+              }
+            }
+            raw_write_lit("\n");
+          }
+        }
+        // Corrupt-type pattern: dump the type tag of the pool and every
+        // process in the camera pool (0x2024a4 + 0x1070-spaced processes).
+        {
+          const u32 pool_base = 0x2024a0;
+          const u32 procs[] = {0x2024c0, 0x203530, 0x2045a0, 0x205610, 0x206680};
+          u32 pv = 0;
+          if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + pool_base), &pv)) {
+            raw_write_lit("OTTSEL_IOS:   region pool@0x2024a0 tag=0x");
+            raw_write_hex(pv);
+            raw_write_lit("\n");
+          }
+          for (u32 pb : procs) {
+            u32 tv = 0;
+            if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + pb), &tv)) {
+              raw_write_lit("OTTSEL_IOS:   region proc@0x");
+              raw_write_hex(pb);
+              raw_write_lit(" tag=0x");
+              raw_write_hex(tv);
+              raw_write_lit("\n");
+            }
+          }
+        }
+        // The process's pool (proc+0x1c): identify it (type + name).
+        {
+          u32 pool2 = 0;
+          if (safe_read_u32((volatile u32*)(node + 0x1c), &pool2) && pool2 &&
+              pool2 < 0x08000000) {
+            u32 pt = 0, pn = 0;
+            if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + pool2 - 4), &pt)) {
+              raw_write_lit("OTTSEL_IOS:   pool=0x");
+              raw_write_hex(pool2);
+              raw_write_lit(" type=0x");
+              raw_write_hex(pt);
+            }
+            if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + pool2 + 4), &pn)) {
+              raw_write_lit(" name=0x");
+              raw_write_hex(pn);
+            }
+            raw_write_lit("\n");
+          }
+        }
         // The process's main-thread (proc+0x28): its pc slot (thread+0x14)
         // holds the suspended continuation.  If the process's type tag equals
         // the thread pc, the suspend/resume machinery wrote the continuation
@@ -267,7 +361,7 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
         }
         // Process identity/state: pool(+0x1c), status(+0x20), pid(+0x24),
         // main-thread(+0x28), top-thread(+0x2c).
-        for (int fi = 0x1c; fi <= 0x30; fi += 4) {
+        for (int fi = 0x1c; fi <= 0x58; fi += 4) {
           u32 w = 0;
           if (safe_read_u32((volatile u32*)(node + (uintptr_t)fi), &w)) {
             raw_write_lit("OTTSEL_IOS:   proc[");
