@@ -243,6 +243,47 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
     raw_write_lit("\n");
     // Skip the PROT_NONE low-EE guard region (first 512KB of the mapping).
       if (node >= (uintptr_t)g_ee_main_mem + 0x80000) {
+        // The *listener-process* (0x1eb824 per the boot debug): dump its
+        // main-thread + the thread's sp/stack-top, to see whether the ~20KB
+        // stack that fills [0x202000..0x207000) belongs to it.
+        {
+          u32 lp = 0x1eb824;
+          u32 lmt = 0;
+          if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + lp + 0x28), &lmt) &&
+              lmt < 0x08000000) {
+            u32 lsp = 0, ltop = 0, lpc = 0;
+            safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + lmt + 0x14), &lpc);
+            safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + lmt + 0x18), &lsp);
+            safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + lmt + 0x1c), &ltop);
+            raw_write_lit("OTTSEL_IOS:   listener proc=0x");
+            raw_write_hex(lp);
+            raw_write_lit(" thread=0x");
+            raw_write_hex(lmt);
+            raw_write_lit(" pc=0x");
+            raw_write_hex(lpc);
+            raw_write_lit(" sp=0x");
+            raw_write_hex(lsp);
+            raw_write_lit(" stack-top=0x");
+            raw_write_hex(ltop);
+            raw_write_lit("\n");
+          }
+        }
+        // The *default-dead-pool* (1 process, 16KB stack): find its process
+        // via the *default-dead-pool* symbol (scanned by hash not possible;
+        // dump the pool objects near the camera region instead).
+        {
+          // The region [0x202000..0x207000) is filled with frames; sample the
+          // top of the region to see where the stack frames end.
+          u32 w = 0;
+          if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + 0x2076f0), &w)) {
+            raw_write_lit("OTTSEL_IOS:   [0x2076f0]=0x");
+            raw_write_hex(w);
+            raw_write_lit(" [0x207700]=0x");
+            safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + 0x207700), &w);
+            raw_write_hex(w);
+            raw_write_lit("\n");
+          }
+        }
         // The *active-pool* symbol (0x4f44d4 per the boot debug) and its
         // memory: is the pool a real process-tree or garbage?
         {

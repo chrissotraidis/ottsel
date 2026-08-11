@@ -863,10 +863,10 @@ index cf6042eca..ce8ebf9dd 100644
 \ No newline at end of file
 +}
 diff --git a/game/kernel/jak1/kboot.cpp b/game/kernel/jak1/kboot.cpp
-index 859b7e13a..41ffb2323 100644
+index 859b7e13a..378696464 100644
 --- a/game/kernel/jak1/kboot.cpp
 +++ b/game/kernel/jak1/kboot.cpp
-@@ -23,6 +23,8 @@
+@@ -23,10 +23,19 @@
  #include "game/kernel/common/ksocket.h"
  #include "game/kernel/jak1/klisten.h"
  #include "game/kernel/jak1/kmachine.h"
@@ -875,7 +875,18 @@ index 859b7e13a..41ffb2323 100644
  #include "game/sce/libscf.h"
  
  using namespace ee;
-@@ -92,6 +94,16 @@ s32 goal_main(int argc, const char* const* argv) {
+ 
++// Ottsel A1.0 bounded call trace ring (defined in kscheme.cpp, C linkage,
++// global scope).  Declared here for the S2.1 region-change dump.
++extern "C" {
++extern volatile u64 g_ottsel_call_trace[];
++extern volatile u64 g_ottsel_call_idx;
++}
++
+ namespace jak1 {
+ VideoMode BootVideoMode;
+ 
+@@ -92,6 +101,16 @@ s32 goal_main(int argc, const char* const* argv) {
  
    // Launch GOAL!
    if (InitMachine() >= 0) {    // init kernel
@@ -892,7 +903,7 @@ index 859b7e13a..41ffb2323 100644
      KernelCheckAndDispatch();  // run kernel
      ShutdownMachine();         // kernel died, we should too.
    } else {
-@@ -106,7 +118,13 @@ s32 goal_main(int argc, const char* const* argv) {
+@@ -106,7 +125,13 @@ s32 goal_main(int argc, const char* const* argv) {
   * Main loop to dispatch the GOAL kernel.
   */
  void KernelCheckAndDispatch() {
@@ -907,7 +918,7 @@ index 859b7e13a..41ffb2323 100644
  
    while (MasterExit == RuntimeExitStatus::RUNNING) {
      // try to get a message from the listener, and process it if needed
-@@ -123,8 +141,89 @@ void KernelCheckAndDispatch() {
+@@ -123,8 +148,163 @@ void KernelCheckAndDispatch() {
      Timer kernel_dispatch_timer;
      if (MasterUseKernel) {
        // use the GOAL kernel.
@@ -977,6 +988,56 @@ index 859b7e13a..41ffb2323 100644
 +                   ios_dispatch_count, r0, *(volatile u32*)(g_ee_main_mem + 0x202080),
 +                   *(volatile u32*)(g_ee_main_mem + 0x2024c0),
 +                   *(volatile u32*)(g_ee_main_mem + 0x206680));
++          // Dump the GOAL call trace ring (the recorder shim is compiled in
++          // with OTTSEL_TRACE_GOAL_CALLS) to identify the writer.
++          u64 idx = g_ottsel_call_idx;
++          lg::info("OTTSEL_TRACE at region change: count={}", idx);
++          u64 first = idx > 40 ? idx - 40 : 0;
++          for (u64 i = first; i < idx; i++) {
++            u64 v = g_ottsel_call_trace[(i * 2) & 255];
++            u64 lr = g_ottsel_call_trace[(i * 2 + 1) & 255];
++            if (v || lr) {
++              lg::info("OTTSEL_TRACE site=0x{:x} target=0x{:x} caller-lr=0x{:x} pp=0x{:x}",
++                       v >> 32, v & 0xffffffffu, lr & 0xffffffffu, lr >> 32);
++            }
++          }
++          // The writer process is the LAST non-zero pp in the trace; dump its
++          // header + main-thread (pc/sp/stack-top/size) to tie the pool-region
++          // frames to a specific thread and expose the wrong-sp source.
++          for (u64 i = idx; i-- > 0;) {
++            u64 lr = g_ottsel_call_trace[(i * 2 + 1) & 255];
++            u32 pp = (u32)(lr >> 32);
++            if (pp) {
++              lg::info("OTTSEL_WRITER pp=0x{:x} (trace idx {})", pp, i);
++              auto rd = [&](const char* tag, u32 off) {
++                u32 w = 0;
++                if (pp + off < 0x08000000) {
++                  w = *(volatile u32*)(g_ee_main_mem + pp + off);
++                }
++                lg::info("OTTSEL_WRITER {} [pp+0x{:x}]=0x{:08x}", tag, off, w);
++              };
++              rd("type", 0x0);
++              rd("name", 0x4);
++              rd("mask", 0x8);
++              rd("pool", 0xc);
++              rd("top-thread", 0x28);
++              rd("stack", 0x6c);
++              u32 mt = 0;
++              if (pp + 0x28 < 0x08000000) {
++                mt = *(volatile u32*)(g_ee_main_mem + pp + 0x28);
++              }
++              if (mt && mt < 0x08000000) {
++                u32 pc = 0, sp = 0, stop = 0, ssz = 0;
++                if (mt + 0x14 < 0x08000000) pc = *(volatile u32*)(g_ee_main_mem + mt + 0x14);
++                if (mt + 0x18 < 0x08000000) sp = *(volatile u32*)(g_ee_main_mem + mt + 0x18);
++                if (mt + 0x1c < 0x08000000) stop = *(volatile u32*)(g_ee_main_mem + mt + 0x1c);
++                if (mt + 0x20 < 0x08000000) ssz = *(volatile u32*)(g_ee_main_mem + mt + 0x20);
++                lg::info("OTTSEL_WRITER thread=0x{:x} pc=0x{:x} sp=0x{:x} stack-top=0x{:x} size=0x{:x}",
++                         mt, pc, sp, stop, ssz);
++              }
++              break;
++            }
++          }
 +        }
 +      }
 +      if (ios_dispatch_count == 0 || ios_dispatch_count == 1 || ios_dispatch_count == 2 ||
@@ -989,6 +1050,30 @@ index 859b7e13a..41ffb2323 100644
 +        lg::info("OTTSEL_REGION iter {}: 0x202000=0x{:08x} 0x202080=0x{:08x} "
 +                 "0x2024c0=0x{:08x} 0x206680=0x{:08x}",
 +                 ios_dispatch_count, r0, r1, r2, r3);
++        // Writer-thread sp/stack-top at the same sampled iterations: is the
++        // thread's sp already inside the pool region from the FIRST dispatch,
++        // or does it descend there mid-boot?  (thread 0x1c4e3a4 of the
++        // subtitle-load writer; pc/sp/stack-top at +0x14/+0x18/+0x1c.)
++        {
++          u32 mt = 0x1c4e3a4;
++          u32 pc = 0, sp = 0, stop = 0;
++          if (mt && mt < 0x08000000) {
++            pc = *(volatile u32*)(g_ee_main_mem + mt + 0x14);
++            sp = *(volatile u32*)(g_ee_main_mem + mt + 0x18);
++            stop = *(volatile u32*)(g_ee_main_mem + mt + 0x1c);
++          }
++          // The frame word at [sp]: is the +16/iteration a GOAL call
++          // continuation (call shim's x30-push) being left on the stack each
++          // resume, or the process's own frame?
++          u32 w0 = 0, w1 = 0;
++          if (sp < 0x08000000 && sp >= 0x200000) {
++            w0 = *(volatile u32*)(g_ee_main_mem + sp);
++            w1 = *(volatile u32*)(g_ee_main_mem + sp + 4);
++          }
++          lg::info("OTTSEL_WRITER-SP iter {}: mt=0x{:x} pc=0x{:x} sp=0x{:x} stack-top=0x{:x} "
++                   "[sp]=0x{:08x} [sp+4]=0x{:08x} calls={}",
++                   ios_dispatch_count, mt, pc, sp, stop, w0, w1, g_ottsel_call_idx);
++        }
 +      }
 +      if ((++ios_dispatch_count % 200) == 0) {
 +        lg::info("OTTSEL_IOS: GOAL kernel dispatcher iteration {} (running)", ios_dispatch_count);
@@ -2681,7 +2766,7 @@ index 73a056e45..b5d9073dd 100644
      (.mov :color #f a0 s1)
      (.mov :color #f a1 s2)
 diff --git a/goalc/CMakeLists.txt b/goalc/CMakeLists.txt
-index a9b02e7c4..979107cb3 100644
+index a9b02e7c4..e3cee9c66 100644
 --- a/goalc/CMakeLists.txt
 +++ b/goalc/CMakeLists.txt
 @@ -91,6 +91,9 @@ if (WIN32)
@@ -2694,7 +2779,7 @@ index a9b02e7c4..979107cb3 100644
  add_executable(goalc main.cpp)
  add_executable(goalc-simple simple_main.cpp)
  
-@@ -101,3 +104,46 @@ target_link_libraries(goalc common Zydis compiler)
+@@ -101,3 +104,51 @@ target_link_libraries(goalc common Zydis compiler)
  target_link_libraries(goalc-simple common Zydis compiler)
  target_link_libraries(build_level common Zydis compiler)
  target_link_libraries(build_actor common Zydis compiler)
@@ -2741,6 +2826,11 @@ index a9b02e7c4..979107cb3 100644
 +# Ottsel H2.5: Mach-O packaging path proof (AOT bytes -> .s -> clang -> native object)
 +add_executable(ottsel-h25-proof ../tools/ottsel_h2/h2_5_macho_packaging_proof.cpp)
 +target_link_libraries(ottsel-h25-proof common Zydis compiler)
++
++# Ottsel S2.1 diagnostic (TEMPORARY): emit the GOAL->GOAL call recorder shim so
++# the runtime can dump the last calls at the region-corruption point.  Rebuild
++# goalc AND regenerate KERNEL.CGO/GAME.CGO with this on; remove for product.
++target_compile_definitions(compiler PRIVATE OTTSEL_TRACE_GOAL_CALLS)
 diff --git a/goalc/compiler/CodeGenerator.cpp b/goalc/compiler/CodeGenerator.cpp
 index 3866e884b..b1c566b04 100644
 --- a/goalc/compiler/CodeGenerator.cpp

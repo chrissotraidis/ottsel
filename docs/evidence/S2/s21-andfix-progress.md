@@ -585,3 +585,35 @@ trace the stack arg through activate -> cpu-thread new).
   execution fills [0x202000..0x207000) (dump the *listener-process* and
   *default-dead-pool* process threads' sp/stack-top, and the
   *kernel-context* current-process at the fault).
+
+## Writer trace-proven: the camera process thread's sp climbs +0x10 per dispatcher iteration into the pool region (2026-08-10, BOT9 cont 18)
+
+The REGION-CHANGE hook + GOAL call recorder + a new OTTSEL_WRITER probe now
+prove the writer of the pool-region corruption:
+
+- **REGION-CHANGE fires at dispatcher iter 10755**: `[0x202000]` first goes
+  non-zero = `0x045d2030`, and the trace's LAST camera-process call before it
+  is `site=0x4b43de8 target=0x3ed83f4 caller-lr=0x45d2030 pp=0x1c4e3a4`
+  (subtitle-load spin -> gkernel).  The value at [0x202000] EXACTLY equals
+  that call's caller-lr (a cam-master continuation) - the region's first
+  written word is the call shim's x30 push at sp=0x202000.
+- **OTTSEL_WRITER names the writer**: pp=0x1c4e2d4 (heap game process),
+  top-thread=0x1c4e3a4, thread pc=0x4b43e74 (load-subtitle-text-info spin),
+  sp=0x202000, stack-top=0x1d8000 (the fake scratchpad), size=0x100.
+- **OTTSEL_WRITER-SP quantifies the sp source**: the writer thread's saved sp
+  field climbs EXACTLY +0x10 per dispatcher iteration:
+  iter0=0x1d7fd0, iter1=0x1d7fe0, iter2=0x1d7ff0, iter5=0x1d8020,
+  iter10=0x1d8070, iter50=0x1d82f0, iter200=0x1d8c50, iter10755=0x202000.
+  Every sample matches `sp = 0x1d7fd0 + iter*0x10` (verified arithmetically).
+- The thread starts 0x30 below its stack-top (0x1d8000) and climbs THROUGH
+  and PAST it, entering the debug-dead-pool region [0x202000..0x207000) at
+  iter 10755 - exactly when the region-change fires.  Its call frames
+  (continuations like 0x45d2030) then fill the pool + processes.
+
+Honest boundary: the exact component that adds 16 bytes to the saved sp per
+dispatch is not yet proven (resume/suspend path vs a call-frame leak per
+iteration); but the writer, the sp trajectory, and the region-fill trigger
+are now all trace-proven.  S2.1 remains ACTIVE.  Evidence:
+docs/evidence/S2/s21-tracer-regionchange-iter10755.log,
+s21-tracer-regionchange-fault.log, s21-tracer-writersp2-regionchange.log,
+s21-tracer-writersp2-fault.log.
