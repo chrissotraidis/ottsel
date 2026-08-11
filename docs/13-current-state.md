@@ -1,5 +1,41 @@
 # 13 — Current state (handoff snapshot)
 
+## 2026-08-11 update (BOT12) — boot reaches the title screen
+
+The engine-integration boot now advances past every earlier boundary to the
+game's title state machine: KERNEL.CGO (8) + GAME.CGO (346) link; ART.CGO
+(21) + TIT.DGO (15) serve from the bundle `iso_data`; title-vis loads; the
+dispatcher runs; **"GAMEPLAY: enter title"** prints (the target's
+level-enter handler).  This loop's verified fixes:
+
+1. `src/shell/ios_boot.cpp`: low-EE guard `PROT_NONE` -> `PROT_READ`
+   (zeroed).  The PS2 has no MMU; game code legitimately reads low memory
+   through default-initialized pointers (`vector<-cspace!` null-bone read;
+   its `w == 0` guard returns `{0,0,0,1}`).  Writes/execute still fault.
+2. `goalc/emitter/IGenARM64.cpp` `msub_gpr32`: MSUB base lacked the "o" bit,
+   so `(mod a b)` compiled to `a + (a/b)*b` (update-wind array index fault
+   at 0x41d83c4).  Fixed + clang-verified (`msub w0,w0,w1,w17 = 0x1B01C400`).
+3. Same file `min_vf`/`max_vf`: FAMIN/FAMAX (ARMv9.2 FEAT_FAMINMAX) raise
+   SIGILL on the M4 (bones.gc at 0x42308c8); replaced with ARMv8 FMIN/FMAX
+   (`fmin.4s v1,v0,v1 = 0x4EA1F401`, `fmax = 0x4E21F401`).
+
+**Current deterministic blocker (DIAGNOSED)**: `enter-state` (gstate.o)
+calls the target's first state (`init-target` ends `(go target-continue
+arg0)`) and the state symbol value is garbage (0x42b4000 — shrub-work's
+zeroed static region).  The target-death state objects are correctly linked
+(0x4624074, 0x46252d4) and the linker's ADRP+ADD static patch is correct
+(verified with a temporary LINKSTAT diagnostic); the failure is in the
+state-symbol value write/read path (the `(sym - s7)` slots live in the
+transient top-level segment).  See
+`docs/evidence/S2/s21-bot12-state-mislink.md` and
+`docs/reports/2026-08-12-bot13-handoff.md` for the exact next probes.
+
+Evidence: `docs/evidence/S2/s21-bot12-*` (protre-advance, title-enter,
+topdump, state-mislink).  The canonical patch `patches/h3-jak1-host-boot.patch`
+was regenerated and clean-applies to the pin (reverse-apply OK).
+
+---
+
 Date: 2026-08-09. Updated by the operator-requested repository audit.
 This is the authoritative state document. Read it before doing anything.
 Read `docs/15-progress-audit.md` first for the corrected execution order.

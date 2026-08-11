@@ -42,6 +42,7 @@
 #include "game/kernel/jak1/kscheme.h"
 #include "game/mips2c/mips2c_table.h"
 #include "game/runtime.h"
+#include "game/sce/sif_ee.h"
 
 // Ottsel A1.0 bounded trace (TEMPORARY): ring buffer written by the goalc
 // IR_FunctionCall shim via the 'ottsel-goal-call-trace' C export.
@@ -572,37 +573,6 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
         raw_write_lit("OTTSEL_IOS: node type tag=0x");
         raw_write_hex(type_tag);
         raw_write_lit("\n");
-        // Compare with the tree neighbors' type tags: if every pooled node
-        // has a code-address tag, the pool init is broken; if only this one,
-        // the spawn wrote it.
-        for (int fi = 8; fi <= 0x10; fi += 4) {
-          u32 nb = 0;
-          if (safe_read_u32((volatile u32*)(node + (uintptr_t)fi), &nb) && nb &&
-              nb < 0x08000000) {
-            u32 nbt = 0;
-            if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + nb - 4), &nbt)) {
-              raw_write_lit("OTTSEL_IOS:   neighbor@");
-              raw_write_dec((unsigned)fi);
-              raw_write_lit("+0x");
-              raw_write_hex(nb);
-              raw_write_lit(" type=0x");
-              raw_write_hex(nbt);
-              raw_write_lit("\n");
-            }
-          }
-        }
-        // GOAL type pointers are EE-relative offsets; read through the EE map.
-        const uintptr_t type_abs = (uintptr_t)g_ee_main_mem + type_tag;
-        for (int i = 0; i <= 0x48; i += 4) {
-          u32 w = 0;
-          if (safe_read_u32((volatile u32*)(type_abs + (uintptr_t)i), &w)) {
-            raw_write_lit("OTTSEL_IOS:   type[");
-            raw_write_dec((unsigned)i);
-            raw_write_lit("] = 0x");
-            raw_write_hex(w);
-            raw_write_lit("\n");
-          }
-        }
       }
     } else {
       raw_write_lit("OTTSEL_IOS:   (node in PROT_NONE low-EE region; skipped)\n");
@@ -621,8 +591,10 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
     const uintptr_t node2 = uc->uc_mcontext->__ss.__x[0] < 0x8000000
                                 ? (uintptr_t)g_ee_main_mem + uc->uc_mcontext->__ss.__x[0]
                                 : uc->uc_mcontext->__ss.__x[0];
-    if (node2 >= (uintptr_t)g_ee_main_mem + 0x80000 && safe_read_u32((volatile u32*)(node2 + 4), &name_ptr) && name_ptr &&
-        name_ptr < 0x08000000) {
+    if (node2 >= (uintptr_t)g_ee_main_mem + 0x80000 &&
+        node2 < (uintptr_t)g_ee_main_mem + 0x08000000 &&
+        safe_read_u32((volatile u32*)(node2 + 4), &name_ptr) && name_ptr &&
+        name_ptr >= 0x80000 && name_ptr < 0x08000000) {
       raw_write_lit("OTTSEL_IOS: process name str=0x");
       raw_write_hex(name_ptr);
       raw_write_lit(" bytes:");
@@ -1073,12 +1045,20 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
   raw_write_lit(" fault addr=");
   raw_write_hex((uintptr_t)info->si_addr);
   raw_write_lit("\n");
-#if 0
+#if 1
   u32 fw[4] = {0, 0, 0, 0};
   for (int i = 0; i < 4; i++) {
     safe_read_u32((volatile u32*)(pc + i * 4), &fw[i]);
   }
-  rawlog("OTTSEL_IOS: faulting words: 0x%08x 0x%08x 0x%08x 0x%08x\n", fw[0], fw[1], fw[2], fw[3]);
+  raw_write_lit("OTTSEL_IOS: faulting words: 0x");
+  raw_write_hex(fw[0]);
+  raw_write_lit(" 0x");
+  raw_write_hex(fw[1]);
+  raw_write_lit(" 0x");
+  raw_write_hex(fw[2]);
+  raw_write_lit(" 0x");
+  raw_write_hex(fw[3]);
+  raw_write_lit("\n");
 #endif
   // S2.1 debug: hold the process alive at the fault so lldb can attach and
   // unwind the faulting thread (the jump source is one step behind pc).
@@ -1218,7 +1198,16 @@ void ottsel_ios_run_boot() {
   }
   lg::debug("OTTSEL_IOS: EE main memory mapped at 0x{:016x}", (u64)g_ee_main_mem);
   memset(g_ee_main_mem, 0, EE_MAIN_MEM_SIZE);
-  mprotect(g_ee_main_mem, EE_MAIN_MEM_LOW_PROTECT, PROT_NONE);
+  // Ottsel S2.2 (BOT12): keep the low-EE region readable-zero instead of
+  // PROT_NONE.  The PS2 has no MMU: game code legitimately reads low memory
+  // through default-initialized/null pointers (e.g. vector<-cspace! reads
+  // bone->transform via a null bone and relies on its `w == 0` guard to
+  // return {0,0,0,1} -- see the swamp-blimp comment in process-drawable.gc).
+  // PROT_NONE turned that same read into a fault.  Reads now see zeros
+  // (matching the game's intended guard behavior); writes and execute
+  // attempts still fault (SIGSEGV, caught by the gated handler), so null
+  // pointer WRITES/CALLS are still diagnosed.
+  mprotect(g_ee_main_mem, EE_MAIN_MEM_LOW_PROTECT, PROT_READ);
 
   // ---- globals (kernel subset of the host init sequence) ----
   fileio_init_globals();
@@ -1231,10 +1220,23 @@ void ottsel_ios_run_boot() {
   klisten_init_globals();
   jak1::klisten_init_globals();
   kmemcard_init_globals();
+  // Ottsel S2.1 (BOT11): the native boot (jak1/kboot.cpp goal_main) calls
+  // init_crc() before InitMachine(); the iOS shell skips goal_main, so the
+  // CRC table stayed all zeros.  Symbol interning is self-consistent with a
+  // broken hash, BUT find_symbol_from_c("_empty_") special-cases the hardcoded
+  // EMPTY_HASH constant -- with a zero table the hash never matches, "_empty_"
+  // is interned dynamically with value 0, and static list terminators point at
+  // that symbol instead of the fixed empty pair (s7-0xa).  GOAL `(null? x)`
+  // compares against s7-0xa, so such lists never terminate and the walk runs
+  // past the end into near-null (game-info get-continue-by-name fault).
+  init_crc();
 
   // ---- boot the kernel (IOP/gfx/sound/listener are OTTSEL_IOS-stubbed) ----
   MasterDebug = 0;
   MasterUseKernel = 1;
+  // Ottsel S2.1 (BOT11): serve DGO/CGO loads from the bundle's iso_data copy
+  // (the host iso_data tree is not reachable from the Simulator sandbox).
+  ee::ottsel_set_iso_data_dir((g_bundle_dir + "iso_data").c_str());
   if (jak1::InitMachine() >= 0) {
     // Match the native boot order: linking GAME invokes Mips2C callbacks,
     // so register their C exports while arena B is writable, then seal it
@@ -1244,6 +1246,20 @@ void ottsel_ios_run_boot() {
     // S2.1: load the full game engine after the kernel so the game's
     // top-levels run and (in the full boot) the game processes start.
     ottsel_ios_link_cgo_from_bundle("GAME.CGO");
+    // Ottsel S2.1 (BOT11): the native boot (kmachine.cpp InitMachineScheme,
+    // DiskBoot && MasterUseKernel) sets *kernel-boot-message* to
+    // DebugBootMessage ('play) and then calls the GOAL `(play)` function,
+    // which spawns the display-loop process via `(on #t)` and starts the
+    // renderer/level path.  On iOS, DiskBoot = 0 (InitParms is never called),
+    // so that block never ran: the process tree was fully built at link time
+    // (verified: time-of-day, camera master/slave/combiner/list-keeper,
+    // hud-battle-enemy, subtitle all parked, dispatcher healthy) but
+    // *dproc*/*run* stayed #f and no display-loop process appeared.  Mirror
+    // the native boot step here after the game link.
+    jak1::intern_from_c("*kernel-boot-message*")->value =
+        jak1::intern_from_c("play").offset;
+    lg::info("OTTSEL_IOS: calling play (BOT11)");
+    jak1::call_goal_function_by_name("play");
     jak1::KernelCheckAndDispatch();
     jak1::ShutdownMachine();
     lg::info("OTTSEL_IOS: kernel dispatch loop exited cleanly");

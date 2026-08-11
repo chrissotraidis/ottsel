@@ -739,6 +739,73 @@ index 9244ee84a..73d57a4d3 100644
 +  ldp x19, x20, [sp], #16
 +  ldp x29, x30, [sp], #16
    ret
+diff --git a/game/kernel/common/kdgo.cpp b/game/kernel/common/kdgo.cpp
+index a7cca902c..eccae5792 100644
+--- a/game/kernel/common/kdgo.cpp
++++ b/game/kernel/common/kdgo.cpp
+@@ -19,6 +19,15 @@ u32 sShowStallMsg;           //! setting to show a "stalled on iop" message
+ u16 x[8];                    //! stupid temporary for storing a message
+ u32 sMsgNum;                 //! Toggle for double buffered message sending.
+ 
++// Ottsel S2.1: the iOS runtime has no IOP, so sceSifBindRpc does not write
++// cd[].rpcd.id.  Record the STR and DGO channel client-data addresses so the
++// SIF emulation can recognize loader calls (which the GOAL side routes by
++// channel) without relying on the id.  InitRPC()/RpcBind() are compiled out
++// under OTTSEL_IOS, so initialize the pointers directly here instead of in
++// RpcBind.
++ee::sceSifClientData* g_ottsel_str_rpc_bd = &cd[STR_RPC_CHANNEL];
++ee::sceSifClientData* g_ottsel_dgo_rpc_bd = &cd[DGO_RPC_CHANNEL];
++
+ void kdgo_init_globals() {
+   memset(x, 0, sizeof(x));
+   memset(cd, 0, sizeof(cd));
+@@ -64,6 +73,12 @@ u64 RpcCall_wrapper(void* _args) {
+   auto send_size = args->get_as<s32>(4);
+   auto recv_buff = args->get_as<u64>(5);
+   auto recv_size = args->get_as<s32>(6);
++#ifdef OTTSEL_IOS
++  lg::info("OTTSEL RpcCall channel={} fno={} async={} send={} ssize={} recv={} rsize={} "
++           "cd.id={:#x}",
++           rpcChannel, fno, async, send_buff, send_size, recv_buff, recv_size,
++           cd[rpcChannel].rpcd.id);
++#endif
+   return sceSifCallRpc(&cd[rpcChannel], fno, async, Ptr<u8>(send_buff).c(), send_size,
+                        Ptr<u8>(recv_buff).c(), recv_size, nullptr, nullptr);
+ }
+@@ -98,6 +113,9 @@ void RpcSync(s32 channel) {
+  * Setup an RPC.
+  */
+ u32 RpcBind(s32 channel, s32 id) {
++  if (channel == STR_RPC_CHANNEL) {
++    g_ottsel_str_rpc_bd = &cd[channel];
++  }
+   while (true) {
+     if (sceSifBindRpc(&cd[channel], id, 1) < 0) {
+       MsgErr("Error: RpcBind failed on port #%d [%4.4X]\n", channel, id);
+diff --git a/game/kernel/common/kdgo.h b/game/kernel/common/kdgo.h
+index b8f8899a9..c9322bbca 100644
+--- a/game/kernel/common/kdgo.h
++++ b/game/kernel/common/kdgo.h
+@@ -5,6 +5,10 @@
+ #include "game/common/dgo_rpc_types.h"
+ #include "game/kernel/common/Ptr.h"
+ 
++namespace ee {
++struct sceSifClientData;
++}
++
+ extern u32 sMsgNum;
+ s32 RpcCall(s32 rpcChannel,
+             u32 fno,
+@@ -22,3 +26,8 @@ u32 InitRPC();
+ void StopIOP();
+ 
+ extern u32 sShowStallMsg;
++
++// Ottsel S2.1: client-data pointers for the STR and DGO loader channels (the
++// iOS SIF emulation uses them to recognize loader calls; see sceSifCallRpc).
++extern ee::sceSifClientData* g_ottsel_str_rpc_bd;
++extern ee::sceSifClientData* g_ottsel_dgo_rpc_bd;
 diff --git a/game/kernel/common/klink.h b/game/kernel/common/klink.h
 index 60fb374e0..28811103b 100644
 --- a/game/kernel/common/klink.h
@@ -863,10 +930,25 @@ index cf6042eca..ce8ebf9dd 100644
 \ No newline at end of file
 +}
 diff --git a/game/kernel/jak1/kboot.cpp b/game/kernel/jak1/kboot.cpp
-index 859b7e13a..378696464 100644
+index 859b7e13a..db8984015 100644
 --- a/game/kernel/jak1/kboot.cpp
 +++ b/game/kernel/jak1/kboot.cpp
-@@ -23,10 +23,19 @@
+@@ -8,9 +8,14 @@
+ 
+ #include <chrono>
+ #include <cstring>
++#include <functional>
++#include <sys/mman.h>
++#include <unistd.h>
+ #include <stdio.h>
+ #include <stdlib.h>
++#include <string>
+ #include <thread>
++#include <vector>
+ 
+ #include "common/common_types.h"
+ #include "common/log/log.h"
+@@ -23,10 +28,19 @@
  #include "game/kernel/common/ksocket.h"
  #include "game/kernel/jak1/klisten.h"
  #include "game/kernel/jak1/kmachine.h"
@@ -886,7 +968,7 @@ index 859b7e13a..378696464 100644
  namespace jak1 {
  VideoMode BootVideoMode;
  
-@@ -92,6 +101,16 @@ s32 goal_main(int argc, const char* const* argv) {
+@@ -92,6 +106,16 @@ s32 goal_main(int argc, const char* const* argv) {
  
    // Launch GOAL!
    if (InitMachine() >= 0) {    // init kernel
@@ -903,7 +985,7 @@ index 859b7e13a..378696464 100644
      KernelCheckAndDispatch();  // run kernel
      ShutdownMachine();         // kernel died, we should too.
    } else {
-@@ -106,7 +125,13 @@ s32 goal_main(int argc, const char* const* argv) {
+@@ -106,7 +130,13 @@ s32 goal_main(int argc, const char* const* argv) {
   * Main loop to dispatch the GOAL kernel.
   */
  void KernelCheckAndDispatch() {
@@ -918,7 +1000,7 @@ index 859b7e13a..378696464 100644
  
    while (MasterExit == RuntimeExitStatus::RUNNING) {
      // try to get a message from the listener, and process it if needed
-@@ -123,8 +148,163 @@ void KernelCheckAndDispatch() {
+@@ -123,8 +153,339 @@ void KernelCheckAndDispatch() {
      Timer kernel_dispatch_timer;
      if (MasterUseKernel) {
        // use the GOAL kernel.
@@ -1078,12 +1160,188 @@ index 859b7e13a..378696464 100644
 +      if ((++ios_dispatch_count % 200) == 0) {
 +        lg::info("OTTSEL_IOS: GOAL kernel dispatcher iteration {} (running)", ios_dispatch_count);
 +      }
++      // One-shot process dump at a late dispatch: are the game's main
++      // processes advancing (renderer path) or is the boot gated on the
++      // subtitle-load spin?  cpu-thread layout (verified against the
++      // COMPILED thread-resume disassembly, which does
++      // `ldur w0,[x16,#0x18]; mov sp,x0` and `ldur w0,[x16,#0x14]; br x0`):
++      // pc(+0x14) sp(+0x18) stack-top(+0x1c) stack-size(+0x20).
++      if (ios_dispatch_count == 5000 || ios_dispatch_count == 200000) {
++        auto dump_thread = [&](const char* tag, u32 proc) {
++          u32 mt = 0;
++          if (proc + 0x28 < 0x08000000) mt = *(volatile u32*)(g_ee_main_mem + proc + 0x28);
++          u32 pc = 0, sp = 0, stop = 0, ssz = 0;
++          if (mt && mt < 0x08000000) {
++            pc = *(volatile u32*)(g_ee_main_mem + mt + 0x14);
++            sp = *(volatile u32*)(g_ee_main_mem + mt + 0x18);
++            stop = *(volatile u32*)(g_ee_main_mem + mt + 0x1c);
++            ssz = *(volatile u32*)(g_ee_main_mem + mt + 0x20);
++          }
++          u32 type = *(volatile u32*)(g_ee_main_mem + proc);
++          lg::info("OTTSEL_PROC {} proc={:#x} type={:#x} top-thread={:#x} pc={:#x} sp={:#x} stop={:#x} size={:#x}",
++                   tag, proc, type, mt, pc, sp, stop, ssz);
++        };
++        dump_thread("listener", intern_from_c("*listener-process*")->value);
++        // The camera-combiner process (the previous region writer).
++        dump_thread("writer", 0x1c4e2d4);
++      }
++      // Ottsel S2.1 (BOT11): walk the *active-pool* process tree and dump
++      // EVERY node (pools + processes) with thread state, plus key game-state
++      // symbols, at two late dispatches.  Question: is the boot gated on a
++      // missing process spawn (only listener + writer exist), and what is the
++      // game waiting on?  Layout is the COMPILED runtime layout (type-system
++      // offset - 4, verified against the compiled kernel disassembly):
++      //   process-tree: name(+0x0) mask(+0x4) parent(+0x8) brother(+0xc)
++      //                 child(+0x10) ppointer(+0x14) self(+0x18)
++      //   process adds: pool(+0x1c) status(+0x20) pid(+0x24)
++      //                 main-thread(+0x28) top-thread(+0x2c)
++      //   thread:       pc(+0x14) sp(+0x18) stack-top(+0x1c) stack-size(+0x20)
++      if (ios_dispatch_count == 100000 || ios_dispatch_count == 200000) {
++        // Guarded EE read (the fault handler's mincore pattern): never
++        // dereference a GOAL address that may not be mapped.  The EE mapping
++        // is g_ee_main_mem + [0, 0x08000000); GOAL values like #f (s7.offset)
++        // must never be followed as tree links.
++        auto ee_u32 = [&](u32 off) -> bool {
++          if (off >= 0x08000000) return false;
++          const uintptr_t page = (uintptr_t)sysconf(_SC_PAGESIZE);
++          uintptr_t addr = (uintptr_t)(g_ee_main_mem + off);
++          char vec = 0;
++          if (mincore((void*)(addr & ~(page - 1)), page, &vec) != 0 || (vec & 1) == 0) {
++            return false;
++          }
++          return true;
++        };
++        auto rd32 = [&](u32 off, u32* out) -> bool {
++          if (!ee_u32(off) || !ee_u32(off + 3)) return false;
++          *out = *(volatile u32*)(g_ee_main_mem + off);
++          return true;
++        };
++        auto read_goal_string = [&](u32 str_addr) -> std::string {
++          // GOAL string: u32 length, then bytes.
++          if (!str_addr || str_addr >= 0x08000000) return "?";
++          u32 len = 0;
++          if (!rd32(str_addr, &len)) return "?";
++          if (len > 255 || str_addr + 4 + len >= 0x08000000) return "?";
++          // Verify the whole string body is mapped before reading it.
++          if (!ee_u32(str_addr + 4 + len - 1)) return "?";
++          std::string out((const char*)(g_ee_main_mem + str_addr + 4), len);
++          for (char c : out) {
++            if (c < 0x20 || c > 0x7e) return "?";
++          }
++          return out;
++        };
++        auto resolve_name = [&](u32 name_val) -> std::string {
++          if (!name_val || name_val >= 0x08000000) return "?";
++          // A GOAL `basic` name is usually a symbol: the string POINTER is
++          // stored at sym + SYM_TO_STRING_OFFSET (0x20000), and the string
++          // itself (len + bytes) is at that pointer.  If the name is already a
++          // string, read it directly.  Fall back to the raw pointer.
++          u32 sym_str = 0;
++          if (rd32(name_val + 0x20000, &sym_str) && sym_str && sym_str < 0x08000000) {
++            std::string s = read_goal_string(sym_str);
++            if (s != "?" && !s.empty()) return s;
++          }
++          std::string s = read_goal_string(name_val);
++          if (s != "?" && !s.empty()) return s;
++          char buf[24];
++          snprintf(buf, sizeof(buf), "0x%x", name_val);
++          return buf;
++        };
++        lg::info("OTTSEL_TREE iter {}: walking *active-pool*", ios_dispatch_count);
++        u32 active_pool = intern_from_c("*active-pool*")->value;
++        if (!active_pool || active_pool >= 0x08000000) {
++          lg::info("OTTSEL_TREE iter {}: *active-pool* invalid 0x{:x}",
++                   ios_dispatch_count, active_pool);
++        } else {
++          // Iterative DFS over the left-child/right-sibling tree.
++          std::vector<std::pair<u32, int>> stack{{active_pool, 0}};
++          int nodes = 0;
++          while (!stack.empty()) {
++            auto [node, depth] = stack.back();
++            stack.pop_back();
++            if (!node || node >= 0x08000000 || depth > 16 || nodes > 128) continue;
++            // The root's parent/brother/child are stored as #f (s7.offset)
++            // when empty; s7.offset and the fixed-symbol region are NOT valid
++            // process-tree nodes.  Skip anything that fails a sanity read of
++            // the mask field.
++            u32 probe_mask = 0;
++            if (!rd32(node + 0x4, &probe_mask)) continue;
++            nodes++;
++            u32 name = 0, mask = 0, parent = 0, brother = 0, child = 0;
++            rd32(node + 0x0, &name);
++            rd32(node + 0x4, &mask);
++            rd32(node + 0x8, &parent);
++            rd32(node + 0xc, &brother);
++            rd32(node + 0x10, &child);
++            bool is_tree = (mask & (1u << 8)) != 0;  // process-mask: process-tree
++            if (is_tree) {
++              lg::info("OTTSEL_TREE {}{} POOL node=0x{:x} name=0x{:x}({}) mask=0x{:x} "
++                       "parent=0x{:x} brother=0x{:x} child=0x{:x}",
++                       std::string(depth, ' '), depth, node, name, resolve_name(name),
++                       mask, parent, brother, child);
++            } else {
++              u32 status = 0, pid = 0, mt = 0;
++              rd32(node + 0x20, &status);
++              rd32(node + 0x24, &pid);
++              rd32(node + 0x28, &mt);
++              u32 pc = 0, sp = 0, stop = 0, ssz = 0;
++              if (mt && mt < 0x08000000) {
++                rd32(mt + 0x14, &pc);
++                rd32(mt + 0x18, &sp);
++                rd32(mt + 0x1c, &stop);
++                rd32(mt + 0x20, &ssz);
++              }
++              lg::info("OTTSEL_TREE {}{} PROC node=0x{:x} name=0x{:x}({}) mask=0x{:x} pid={} "
++                       "status=0x{:x} main-thread=0x{:x} pc=0x{:x} sp=0x{:x} "
++                       "stack-top=0x{:x} size=0x{:x}",
++                       std::string(depth, ' '), depth, node, name, resolve_name(name),
++                       mask, pid, status, mt, pc, sp, stop, ssz);
++            }
++            // left-child / right-sibling.  The tree stores child/brother/
++            // parent as PPOINTERS (address of the node's `self` field), so a
++            // link value L means the node is at [L] (the self field holds the
++            // node address).  #f links equal s7.offset (0x18fe04).  Only
++            // follow links whose dereferenced node passes a mask sanity read.
++            auto push_link = [&](u32 link, int d) {
++              if (!link || link >= 0x08000000) return;
++              if (link == s7.offset) return;  // #f
++              u32 node_at = 0;
++              if (!rd32(link, &node_at)) return;
++              if (!node_at || node_at >= 0x08000000) return;
++              u32 m = 0;
++              if (rd32(node_at + 0x4, &m)) stack.push_back({node_at, d});
++            };
++            push_link(brother, depth);
++            push_link(child, depth + 1);
++          }
++          lg::info("OTTSEL_TREE iter {}: {} nodes dumped", ios_dispatch_count, nodes);
++        }
++        // Game-state symbols that name what the boot is waiting on.
++        const char* state_syms[] = {
++            "*kernel-boot-message*", "*kernel-boot-mode*", "*kernel-boot-level*",
++            "*master-mode*",         "*dproc*",            "*run*",
++            "*game-info*",           "*level*",            "*target*",
++            "*camera*",              "*common-text*",      "*subtitle-text*",
++            "*debug-segment*",       "*display*",          "loading-level",
++        };
++        for (const char* sym_name : state_syms) {
++          u32 v = intern_from_c(sym_name)->value;
++          std::string s = resolve_name(v);
++          if (s != "?") {
++            lg::info("OTTSEL_STATE iter {}: {} = 0x{:x} ({})", ios_dispatch_count,
++                     sym_name, v, s);
++          } else {
++            lg::info("OTTSEL_STATE iter {}: {} = 0x{:x}", ios_dispatch_count, sym_name,
++                     v);
++          }
++        }
++      }
 +#endif
      } else {
        // use a hack to just run the listener function if there's no GOAL kernel.
        if (ListenerFunction->value != s7.offset) {
 diff --git a/game/kernel/jak1/klink.cpp b/game/kernel/jak1/klink.cpp
-index fd7199959..1593b5380 100644
+index fd7199959..e7098e364 100644
 --- a/game/kernel/jak1/klink.cpp
 +++ b/game/kernel/jak1/klink.cpp
 @@ -14,7 +14,34 @@
@@ -1406,6 +1664,23 @@ index fd7199959..1593b5380 100644
      }
  
      // inform compiler that we loaded.
+@@ -581,6 +814,16 @@ Ptr<uint8_t> link_and_exec(Ptr<uint8_t> data,
+                            Ptr<kheapinfo> heap,
+                            uint32_t flags,
+                            bool jump_from_c_to_goal) {
++  // Ottsel S2.1: a zero-length object (the emulated STR load on the
++  // ROM-safe iOS boot has no ISO data, so load-status = 0) has no GOAL
++  // object header.  jak1_jak2_begin would assert VERSION ERROR reading
++  // garbage.  Return an invalid entry pointer so the GOAL side's
++  // `(if (<= (the-as int (-> curr-text value)) 0) (set! ... #f))` marks the
++  // text/subtitle symbol invalid and the boot advances past the data
++  // boundary instead of crashing the linker.
++  if (size <= 0) {
++    return Ptr<uint8_t>();
++  }
+   link_control lc;
+   lc.jak1_jak2_begin(data, name, size, heap, flags);
+   uint32_t done;
 diff --git a/game/kernel/jak1/klisten.cpp b/game/kernel/jak1/klisten.cpp
 index 0731d5272..209a11baa 100644
 --- a/game/kernel/jak1/klisten.cpp
@@ -2634,10 +2909,94 @@ index 4f7cc5e18..cc2d2e926 100644
    }
  
 diff --git a/game/sce/sif_ee.cpp b/game/sce/sif_ee.cpp
-index d40922a9a..bea67ab7d 100644
+index d40922a9a..9a6ca70eb 100644
 --- a/game/sce/sif_ee.cpp
 +++ b/game/sce/sif_ee.cpp
-@@ -80,24 +80,69 @@ s32 sceSifCallRpc(sceSifClientData* bd,
+@@ -6,17 +6,48 @@
+ 
+ #include "common/util/Assert.h"
+ #include "common/util/FileUtil.h"
++#include "common/log/log.h"
+ 
+ #include "game/runtime.h"
+ #include "game/system/iop_thread.h"
++#include "game/common/str_rpc_types.h"
++#include "game/common/dgo_rpc_types.h"
++#include "game/kernel/common/kdgo.h"
++#include "game/kernel/common/Ptr.h"
++#include "common/util/DgoReader.h"
++#include "common/util/FileUtil.h"
++#include "common/link_types.h"
++#include "common/goal_constants.h"
++
++#include <algorithm>
++#include <cstdlib>
++#include <string>
++#include <vector>
+ 
+ namespace ee {
+ 
+ namespace {
+ ::IOP* iop;
+ std::unordered_map<s32, FILE*> sce_fds;
++// Ottsel S2.1 (BOT11): directory that holds the real Jak 1 DGO/CGO files the
++// iOS DGO-loader emulation serves.  Set by the shell (host iso_data path is
++// not inside the Simulator sandbox, so the shell copies/binds what it needs).
++std::string g_ottsel_iso_data_dir;
+ }  // namespace
+ 
++// Ottsel S2.1 (BOT11): shell hook for the DGO data directory.
++void ottsel_set_iso_data_dir(const char* dir) {
++  if (dir) {
++    g_ottsel_iso_data_dir = dir;
++  } else {
++    g_ottsel_iso_data_dir.clear();
++  }
++}
++
++const char* ottsel_iso_data_dir() {
++  return g_ottsel_iso_data_dir.c_str();
++}
++
+ void LIBRARY_sceSif_register(::IOP* i) {
+   iop = i;
+ }
+@@ -28,6 +59,34 @@ void LIBRARY_INIT_sceSif() {
+   }
+   sce_fds.clear();
+ }
++
++// Ottsel S2.1 (BOT11): resolve a requested DGO/CGO/VIS file name against a
++// served data directory.  The GOAL side requests lowercase names ("tit.DGO"),
++// while the extracted iso_data tree keeps uppercase names ("TIT.DGO").  The
++// Simulator sandbox resolves the case-mismatched path to ENOENT even though
++// the host APFS volume is case-insensitive, so scan the actual directory and
++// return the canonical on-disk path (exact case) when a case-insensitive
++// match exists.
++static fs::path ottsel_resolve_data_file(const fs::path& root,
++                                         const fs::path& subdir,
++                                         const std::string& requested) {
++  fs::path dir = root / subdir;
++  fs::path direct = dir / requested;
++  if (fs::exists(direct)) {
++    return direct;
++  }
++  std::error_code ec;
++  for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
++    std::string entry = it->path().filename().string();
++    if (entry.size() == requested.size() &&
++        std::equal(entry.begin(), entry.end(), requested.begin(),
++                   [](char a, char b) { return std::tolower((unsigned char)a) ==
++                                               std::tolower((unsigned char)b); })) {
++      return it->path();
++    }
++  }
++  return {};
++}
+ void sceSifInitRpc(unsigned int mode) {
+   (void)mode;
+ }
+@@ -80,24 +139,286 @@ s32 sceSifCallRpc(sceSifClientData* bd,
                    s32 rsize,
                    void* end_func,
                    void* end_para) {
@@ -2651,7 +3010,6 @@ index d40922a9a..bea67ab7d 100644
 +  // at +2) with version 2.0 so check-irx-version passes instead of crash!-ing.
 +  if (send && ssize >= 12) {
 +    u16 cmd = 0;
-+   (void)bd;
 +    (void)fno;
 +    memcpy(&cmd, (const u8*)send + 2, 2);
 +    if (cmd == 12) {
@@ -2659,6 +3017,224 @@ index d40922a9a..bea67ab7d 100644
 +      const u32 minor = 0;
 +      memcpy((u8*)send + 4, &major, 4);
 +      memcpy((u8*)send + 8, &minor, 4);
++    }
++  }
++  // Emulate the OVERLORD STR loader (RPC id 0xfab4, channel 4): the GOAL
++  // side's str-load sends a load-chunk-msg and str-load-status polls until
++  // the IOP writes a response (result = done, maxlen = loaded length) into
++  // the recv buffer.  Without a response the boot spins forever printing
++  // "Game subtitle heap overrun!" / "Game text heap overrun!" because
++  // sceSifCheckStatRpc always reports not-busy, so pop-last-received returns
++  // the still-invalid command buffer (result = invalid 666, maxlen = full
++  // heap free) and the overrun guard trips.  On the ROM-safe no-emit runtime
++  // there is NO ISO data.  Report a completed zero-length load
++  // (STR_RPC_RESULT_DONE, maxlen = 0): str-load-status returns 'complete
++  // with load-status = 0, the `(>= load-status (+ heap-free -300))` guard
++  // passes, and the code proceeds to `(link new-mem name 0 heap 0)`.  This is
++  // the smallest falsifiable probe to distinguish a caller re-invoking the
++  // loader (link of a 0-size object -> next observable fault) from a
++  // miscompiled retry loop (still spins on overrun/error).
++  // The GOAL side calls rpc-call with the rpc-buffer-pair's rpc-port as the
++  // channel, so STR loads arrive with bd == &cd[STR_RPC_CHANNEL].  The
++  // rpcd.id stays 0 here because sceSifBindRpc is a no-op on iOS.
++  if (bd == g_ottsel_str_rpc_bd) {
++    lg::info("OTTSEL STR RPC emulated: fno={} send={} size={} recv={} rsize={}", fno, send, ssize,
++             recv, rsize);
++    if (recv && rsize >= 16 && send && ssize >= 16) {
++      // send: load-chunk-msg (rsvd+0 result+2 address+4 section+8 maxlen+12).
++      u16 rsvd = 0;
++      u16 result = (u16)STR_RPC_RESULT_DONE;
++      u32 addr = 0;
++      s32 section = 0;
++      memcpy(&addr, (const u8*)send + 4, 4);
++      memcpy(&section, (const u8*)send + 8, 4);
++      memcpy((u8*)recv + 0, &rsvd, 2);
++      memcpy((u8*)recv + 2, &result, 2);
++      memcpy((u8*)recv + 4, &addr, 4);
++      memcpy((u8*)recv + 8, &section, 4);
++      const u32 zero_len = 0;
++      memcpy((u8*)recv + 12, &zero_len, 4);
++      // Copy the basename too so a follow-up link can at least see the name.
++      if (ssize > 16 && rsize > 16) {
++        memcpy((u8*)recv + 16, (const u8*)send + 16, std::min<size_t>(ssize - 16, rsize - 16));
++      }
++    }
++  }
++  // Emulate the OVERLORD DGO loader (RPC id 0xfab3, channel 3): the GOAL
++  // side's load-package / level load calls `(load-package "art" global)` ->
++  // load_and_link_dgo_from_c -> BeginLoadingDGO (fno 0) then GetNextDGO /
++  // ContinueLoadingDGO (fno 1).  On iOS there is no IOP, so without a
++  // response GetNextDGO returns nothing forever and (play)'s
++  // `(while ... (load-continue ...))` spins at 100% CPU.  Serve REAL DGO/CGO
++  // data from the local iso_data tree (mirroring overlord): parse the file,
++  // copy each object (ObjectHeader + aligned bytes) into the EE buffer the
++  // overlord would use, and set result MORE/DONE exactly like LoadDGO/
++  // LoadNextDGO.  The recv buffer is the same RPC_Dgo_Cmd as send (the EE
++  // reads the response back from it).
++  if (bd == g_ottsel_dgo_rpc_bd) {
++    lg::info("OTTSEL DGO RPC emulated: fno={} send={} size={} recv={} rsize={}", fno, send, ssize,
++             recv, rsize);
++    // Two request shapes share the DGO channel:
++    //  - C++ load_and_link_dgo_from_c: RPC_Dgo_Cmd (64 bytes, name at +16)
++    //  - GOAL dgo-load-begin / level loads: load-dgo-msg (32 bytes:
++    //    rsvd u16, result u16, b1 u32, b2 u32, bt u32, name[16])
++    // Both use the same response protocol (result at +2, object location at
++    // +4, heap top at +12).
++    if (send && ssize >= 32 && recv && rsize >= 32) {
++      u8* cmd = (u8*)send;
++      u8* reply = (u8*)recv;
++      // Preserve the request fields in the reply.
++      memcpy(reply, cmd, std::min<size_t>(ssize, rsize));
++      u32 cmd_b1 = 0, cmd_b2 = 0, cmd_bt = 0;
++      memcpy(&cmd_b1, cmd + 4, 4);
++      memcpy(&cmd_b2, cmd + 8, 4);
++      memcpy(&cmd_bt, cmd + 12, 4);
++      char cmd_name[17] = {0};
++      if (ssize >= (s32)sizeof(RPC_Dgo_Cmd)) {
++        // C++ path: name at +16.
++        memcpy(cmd_name, cmd + 16, 16);
++      } else {
++        // GOAL path: name at +16 (load-dgo-msg name is 16 bytes).
++        memcpy(cmd_name, cmd + 16, 16);
++      }
++      // The overlord keeps ONE DGO load in flight: LOAD (fno 0) starts it,
++      // LOAD_NEXT (fno 1) continues the same file.  ContinueLoadingDGO does
++      // not resend the name, so persist the parsed file between calls.
++      struct DgoSession {
++        std::vector<DgoDataEntry> entries;
++        size_t next_obj = 0;
++        u32 buf1 = 0;   // EE buffer for the first object (from LOAD cmd)
++        u32 buf2 = 0;   // EE buffer for the second object (from LOAD cmd)
++        u32 heap_top = 0;
++        bool use_buf2 = false;  // which buffer the NEXT object goes into
++      };
++      static DgoSession s_dgo;
++      if (fno == DGO_RPC_LOAD_FNO) {
++        // The file name is uppercased by the caller (e.g. "ART.CGO").
++        std::string name(cmd_name, strnlen(cmd_name, 16));
++        lg::info("OTTSEL DGO RPC: loading {}", name);
++        // Resolve against the served iso_data directory (set by the shell).
++        const char* dgo_dir = ottsel_iso_data_dir();
++        fs::path path;
++        if (dgo_dir && *dgo_dir) {
++          fs::path root(dgo_dir);
++          // The iso_data tree keeps CGOs and DGOs in subdirectories; the
++          // loader requests the bare file name (e.g. "ART.CGO", "tit.DGO").
++          // The sandbox is case-sensitive for lookups, so resolve the real
++          // on-disk name (the tree uses uppercase) case-insensitively.
++          path = ottsel_resolve_data_file(root, "CGO", name);
++          if (path.empty()) {
++            path = ottsel_resolve_data_file(root, "DGO", name);
++          }
++          if (path.empty()) {
++            path = ottsel_resolve_data_file(root, "", name);
++          }
++        }
++        if (path.empty() || !fs::exists(path)) {
++          lg::error("OTTSEL DGO RPC: file {} not found (resolved from {} -> {})", name,
++                    dgo_dir ? dgo_dir : "(unset)", path.empty() ? "(none)" : path.string());
++          s_dgo.entries.clear();
++          s_dgo.next_obj = 0;
++          u16 err = (u16)DGO_RPC_RESULT_ERROR;
++          memcpy(reply + 2, &err, 2);
++        } else {
++          lg::info("OTTSEL DGO RPC: resolved {} -> {}", name, path.string());
++          // BOT11: read_binary_file throws std::runtime_error for paths that
++          // are not regular files/symlinks (e.g. a directory resolved through
++          // the case-insensitive scan).  An uncaught exception on the boot
++          // thread terminates the app (see the 2026-08-11 11:13 SIGABRT in
++          // file_util::read_binary_file from sceSifCallRpc).  Catch it here
++          // and reply ERROR like any other load failure.
++          try {
++            auto data = file_util::read_binary_file(path);
++            DgoReader reader(name, data);
++            s_dgo.entries = reader.entries();
++            s_dgo.next_obj = 0;
++            // The LOAD command carries the two double-buffer addresses and the
++            // heap-top.  The first object goes into buffer1; the overlord toggles
++            // buffer1/buffer2 for the rest, and the LAST object is loaded
++            // directly at the heap top.
++            s_dgo.buf1 = cmd_b1;
++            s_dgo.buf2 = cmd_b2;
++            s_dgo.heap_top = cmd_bt;
++            s_dgo.use_buf2 = false;
++            lg::info("OTTSEL DGO RPC: {} has {} objects", name, s_dgo.entries.size());
++          } catch (const std::exception& e) {
++            lg::error("OTTSEL DGO RPC: cannot read {} ({}): {}", name, path.string(), e.what());
++            s_dgo.entries.clear();
++            s_dgo.next_obj = 0;
++            u16 err = (u16)DGO_RPC_RESULT_ERROR;
++            memcpy(reply + 2, &err, 2);
++          }
++        }
++      }
++      if (fno == DGO_RPC_LOAD_NEXT_FNO) {
++        lg::info("OTTSEL DGO RPC: continue (obj {}/{})", s_dgo.next_obj,
++                 s_dgo.entries.size());
++        // ContinueLoadingDGO only sends buffer_heap_top; the double-buffer
++        // addresses persist from the LOAD command.
++        s_dgo.heap_top = cmd_bt;
++      }
++      // Skip objects that are not GOAL link blocks (raw texture/data records
++      // in the shipped ART.CGO, e.g. "texture-upload").  The real game's
++      // loader links every DGO object, but those records are data, not
++      // linkable GOAL objects; serving them to link_and_exec asserts
++      // VERSION ERROR.  The compiled GAME.CGO already contains the matching
++      // logic, so skipping the data record is the correct ROM-safe behavior.
++      while (s_dgo.next_obj < s_dgo.entries.size()) {
++        const auto& e = s_dgo.entries[s_dgo.next_obj];
++        u32 tag = e.data.size() >= 4 ? *(const u32*)e.data.data() : 0;
++        if (tag == 0xffffffffu) {
++          break;
++        }
++        lg::info("OTTSEL DGO RPC: skip non-GOAL obj {} ({}, {} bytes, tag=0x{:x})",
++                 s_dgo.next_obj, e.internal_name, e.data.size(), tag);
++        s_dgo.next_obj++;
++      }
++      if (s_dgo.entries.empty() || s_dgo.next_obj >= s_dgo.entries.size()) {
++        u16 err = (u16)DGO_RPC_RESULT_ERROR;
++        memcpy(reply + 2, &err, 2);
++        s_dgo.entries.clear();
++        s_dgo.next_obj = 0;
++      } else {
++        const auto& entry = s_dgo.entries[s_dgo.next_obj];
++        bool is_last = (s_dgo.next_obj + 1 == s_dgo.entries.size());
++        u32 obj_size = (u32)entry.data.size();
++        // Destination: the overlord loads the last object to the heap top,
++        // earlier ones into buffer1/buffer2 (toggling).  The EE reads
++        // reply->buffer1 as the object location, so report where we wrote.
++        u32 dest_off;
++        if (is_last) {
++          dest_off = s_dgo.heap_top;
++        } else if (!s_dgo.use_buf2) {
++          dest_off = s_dgo.buf1;
++        } else {
++          dest_off = s_dgo.buf2;
++        }
++        u8* dest = (u8*)g_ee_main_mem + dest_off;
++        if (dest_off >= 0x08000000 || dest_off < EE_MAIN_MEM_LOW_PROTECT) {
++          lg::error("OTTSEL DGO RPC: bad dest 0x{:x} for obj {}", dest_off, s_dgo.next_obj);
++          u16 err = (u16)DGO_RPC_RESULT_ERROR;
++          memcpy(reply + 2, &err, 2);
++          s_dgo.entries.clear();
++          s_dgo.next_obj = 0;
++          (void)dest;
++        } else {
++        // ObjectHeader{size,name} then aligned data.
++        memcpy(dest, &obj_size, 4);
++        memset(dest + 4, 0, 60);
++        strncpy((char*)dest + 4, entry.internal_name.c_str(), 59);
++        memcpy(dest + sizeof(ObjectHeader), entry.data.data(), obj_size);
++        // The reply's buffer1 tells the EE where the object is.
++        memcpy(reply + 4, &dest_off, 4);
++        u16 res = (u16)(is_last ? DGO_RPC_RESULT_DONE : DGO_RPC_RESULT_MORE);
++        memcpy(reply + 2, &res, 2);
++        lg::info("OTTSEL DGO RPC: served obj {} ({}, {} bytes) result={} dest=0x{:x}",
++                 s_dgo.next_obj, entry.internal_name, obj_size, res, dest_off);
++        s_dgo.next_obj++;
++        s_dgo.use_buf2 = !s_dgo.use_buf2;
++        }
++      }
 +    }
 +  }
 +  (void)bd;
@@ -2707,6 +3283,23 @@ index d40922a9a..bea67ab7d 100644
  }
  
  s32 sceOpen(const char* filename, s32 flag) {
+diff --git a/game/sce/sif_ee.h b/game/sce/sif_ee.h
+index 09aecec15..07b68ff8a 100644
+--- a/game/sce/sif_ee.h
++++ b/game/sce/sif_ee.h
+@@ -49,6 +49,12 @@ struct sceSifClientData {
+ void LIBRARY_sceSif_register(::IOP* i);
+ void LIBRARY_INIT_sceSif();
+ 
++// Ottsel S2.1 (BOT11): the iOS DGO-loader emulation serves real DGO/CGO data
++// from a directory set by the shell (the host iso_data tree is not reachable
++// from the Simulator sandbox, so the shell supplies a copy).
++void ottsel_set_iso_data_dir(const char* dir);
++const char* ottsel_iso_data_dir();
++
+ void sceSifInitRpc(unsigned int mode);
+ int sceSifRebootIop(const char* imgfile);
+ int sceSifSyncIop();
 diff --git a/game/settings/settings.h b/game/settings/settings.h
 index 4355cb922..c1034ba72 100644
 --- a/game/settings/settings.h
@@ -2783,7 +3376,7 @@ index 73a056e45..96a03cb9f 100644
      (.mov :color #f a0 s1)
      (.mov :color #f a1 s2)
 diff --git a/goalc/CMakeLists.txt b/goalc/CMakeLists.txt
-index a9b02e7c4..979107cb3 100644
+index a9b02e7c4..dae7d0e98 100644
 --- a/goalc/CMakeLists.txt
 +++ b/goalc/CMakeLists.txt
 @@ -91,6 +91,9 @@ if (WIN32)
@@ -2796,7 +3389,7 @@ index a9b02e7c4..979107cb3 100644
  add_executable(goalc main.cpp)
  add_executable(goalc-simple simple_main.cpp)
  
-@@ -101,3 +104,46 @@ target_link_libraries(goalc common Zydis compiler)
+@@ -101,3 +104,51 @@ target_link_libraries(goalc common Zydis compiler)
  target_link_libraries(goalc-simple common Zydis compiler)
  target_link_libraries(build_level common Zydis compiler)
  target_link_libraries(build_actor common Zydis compiler)
@@ -2833,11 +3426,16 @@ index a9b02e7c4..979107cb3 100644
 +# Ottsel S2.1 debug (TEMPORARY): print GOAL type field offsets from the real
 +# ARM64 goalc type system (process / stack-frame / catch-frame).
 +add_executable(ottsel-typelayout ../tools/ottsel_a1/typelayout.cpp)
++add_executable(ottsel-thread-off-test ../tools/ottsel_a1/thread_off_test.cpp)
++target_link_libraries(ottsel-thread-off-test common Zydis compiler)
 +target_link_libraries(ottsel-typelayout common Zydis compiler)
 +
 +# Ottsel S2.1 diagnostic: name the gkernel function that calls pc-prof.
 +add_executable(ottsel-kernel-fn-dump ../tools/ottsel_a1/kernel_fn_dump.cpp)
 +target_link_libraries(ottsel-kernel-fn-dump common Zydis compiler)
++
++add_executable(ottsel-subtitle-fn-dump ../tools/ottsel_a1/subtitle_fn_dump.cpp)
++target_link_libraries(ottsel-subtitle-fn-dump common Zydis compiler)
 +
 +
 +# Ottsel H2.5: Mach-O packaging path proof (AOT bytes -> .s -> clang -> native object)
@@ -4812,7 +5410,7 @@ index 27cbcc8c1..e2eec60e9 100644
   * Divide (idiv, 32 bit)
   */
 diff --git a/goalc/emitter/IGenARM64.cpp b/goalc/emitter/IGenARM64.cpp
-index 1180f722d..e22d1c525 100644
+index 1180f722d..7ad095610 100644
 --- a/goalc/emitter/IGenARM64.cpp
 +++ b/goalc/emitter/IGenARM64.cpp
 @@ -90,6 +90,19 @@ InstructionARM64 mov_gpr64_gpr64(Register dst, Register src) {
@@ -4945,8 +5543,7 @@ index 1180f722d..e22d1c525 100644
    // 64-bit variant
 -  // LDR <Xt>, [<Xn|SP>], #<simm>
 +  // LDR <Xt>, [<Xn|SP>{, #<pimm>}]
-   instrs.emplace_back(
--      InstructionARM64(Base(0b1111100001000000000001, 22), Imm9s(0), Rt(dst_reg.id()), Rn(X16)));
++  instrs.emplace_back(
 +      InstructionARM64(Base(0b1111100101, 10), Imm12(0), Rt(dst_reg.id()), Rn(X16)));
 +  return InstructionARM64(instrs);
 +}
@@ -4977,7 +5574,8 @@ index 1180f722d..e22d1c525 100644
 +  // below s7), so sign-extend (LDRSW) to match the x86 disp32 address math.
 +  // https://www.scs.stanford.edu/~zyedidia/arm64/ldrsw_imm.html
 +  // LDRSW <Xt>, [<Xn|SP>{, #<pimm>}]
-+  instrs.emplace_back(
+   instrs.emplace_back(
+-      InstructionARM64(Base(0b1111100001000000000001, 22), Imm9s(0), Rt(dst_reg.id()), Rn(X16)));
 +      InstructionARM64(Base(0b1011100110, 10), Imm12(0), Rt(dst_reg.id()), Rn(X16)));
    return InstructionARM64(instrs);
  }
@@ -5319,7 +5917,7 @@ index 1180f722d..e22d1c525 100644
    return InstructionARM64(Base(0b11001011000, 11), Rd(dst.id()), Imm6(0), Rn(dst.id()),
                            Rm(src.id()));
  }
-@@ -2103,28 +2207,49 @@ InstructionARM64 imul_gpr64_gpr64(Register dst, Register src) {
+@@ -2103,28 +2207,55 @@ InstructionARM64 imul_gpr64_gpr64(Register dst, Register src) {
                            Rm(src.id()));
  }
  
@@ -5343,7 +5941,13 @@ index 1180f722d..e22d1c525 100644
 +InstructionARM64 msub_gpr32(Register dst, Register quotient, Register divisor, Register dividend) {
 +  // MSUB <Wd>, <Wn>, <Wm>, <Wa> : Wd = Wa - Wn*Wm
 +  // https://www.scs.stanford.edu/~zyedidia/arm64/msub_msubl.html
-+  return InstructionARM64(Base(0b0001101100000000000000, 22), Rm(divisor.id()),
++  // Ottsel BOT12: the 22-bit base must set bit 5 (instruction bit 15, the
++  // MSUB "o" flag).  Without it the encoding is MADD (Wd = Wa + Wn*Wm), so
++  // GOAL `(mod a b)` compiled to a + (a/b)*b instead of a - (a/b)*b -- the
++  // index in update-wind (wind.gc) became ~2*float-bits and read far out of
++  // bounds (fault at 0x41d83c4).  Verified: msub w0,w0,w1,w17 = 0x1B01C400
++  // (clang), madd = 0x1B014400.
++  return InstructionARM64(Base(0b0001101100000000100000, 22), Rm(divisor.id()),
 +                          Rn(quotient.id()), Rd(dst.id()), ARM64::Field(dividend.id() << 10));
 +}
 +
@@ -5382,7 +5986,7 @@ index 1180f722d..e22d1c525 100644
  }
  
  InstructionARM64 movsx_r64_r32(Register dst, Register src) {
-@@ -2134,9 +2259,12 @@ InstructionARM64 movsx_r64_r32(Register dst, Register src) {
+@@ -2134,9 +2265,12 @@ InstructionARM64 movsx_r64_r32(Register dst, Register src) {
  }
  
  InstructionARM64 cmp_gpr64_gpr64(Register a, Register b) {
@@ -5398,7 +6002,7 @@ index 1180f722d..e22d1c525 100644
  }
  
  //;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-@@ -2152,11 +2280,11 @@ InstructionARM64 or_gpr64_gpr64(Register dst, Register src) {
+@@ -2152,11 +2286,11 @@ InstructionARM64 or_gpr64_gpr64(Register dst, Register src) {
  }
  
  InstructionARM64 and_gpr64_gpr64(Register dst, Register src) {
@@ -5413,7 +6017,7 @@ index 1180f722d..e22d1c525 100644
  }
  
  InstructionARM64 xor_gpr64_gpr64(Register dst, Register src) {
-@@ -2210,7 +2338,7 @@ InstructionARM64 sar_gpr64_reg(Register reg, Register shift_reg) {
+@@ -2210,7 +2344,7 @@ InstructionARM64 sar_gpr64_reg(Register reg, Register shift_reg) {
  InstructionARM64 shl_gpr64_u8(Register reg, uint8_t sa) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/lsl_ubfm.html
    // LSL <Xd>, <Xn>, #<shift>
@@ -5422,7 +6026,7 @@ index 1180f722d..e22d1c525 100644
    ASSERT(reg.is_gpr(instr_set));
    return InstructionARM64(Base(0b1101001101, 10), Rd(reg.id()), Rn(reg.id()), Immr((64 - sa) & 63),
                            Imms(63 - sa));
-@@ -2220,7 +2348,7 @@ InstructionARM64 shr_gpr64_u8(Register reg, uint8_t sa) {
+@@ -2220,7 +2354,7 @@ InstructionARM64 shr_gpr64_u8(Register reg, uint8_t sa) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/lsr_ubfm.html
    // LSR <Xd>, <Xn>, #<shift>
    // sf	1	0	1	0	0	1	1	0	N
@@ -5431,7 +6035,7 @@ index 1180f722d..e22d1c525 100644
    ASSERT(reg.is_gpr(instr_set));
    return InstructionARM64(Base(0b1101001101000000111111, 22), Rd(reg.id()), Rn(reg.id()), Immr(sa));
  }
-@@ -2228,7 +2356,7 @@ InstructionARM64 shr_gpr64_u8(Register reg, uint8_t sa) {
+@@ -2228,7 +2362,7 @@ InstructionARM64 shr_gpr64_u8(Register reg, uint8_t sa) {
  InstructionARM64 sar_gpr64_u8(Register reg, uint8_t sa) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/asr_sbfm.html
    // ASR <Xd>, <Xn>, #<shift>
@@ -5440,7 +6044,7 @@ index 1180f722d..e22d1c525 100644
    ASSERT(reg.is_gpr(instr_set));
    return InstructionARM64(Base(0b1001001101000000111111, 22), Rd(reg.id()), Rn(reg.id()), Immr(sa));
  }
-@@ -2253,7 +2381,11 @@ InstructionARM64 sar_gpr64_u8(Register reg, uint8_t sa) {
+@@ -2253,7 +2387,11 @@ InstructionARM64 sar_gpr64_u8(Register reg, uint8_t sa) {
  InstructionARM64 jmp_imm() {
    // https://www.scs.stanford.edu/~zyedidia/arm64/b_uncond.html
    // B <label>
@@ -5453,7 +6057,7 @@ index 1180f722d..e22d1c525 100644
  }
  
  // Now these instructions in ARM are even more limiting, conditional
-@@ -2274,71 +2406,101 @@ InstructionARM64 jmp_imm() {
+@@ -2274,71 +2412,101 @@ InstructionARM64 jmp_imm() {
  InstructionARM64 je_imm() {
    // https://www.scs.stanford.edu/~zyedidia/arm64/b_cond.html
    // B.<cond> <label>
@@ -5575,7 +6179,7 @@ index 1180f722d..e22d1c525 100644
  }
  
  //;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-@@ -2472,17 +2634,17 @@ InstructionARM64 loadvf_gpr64_plus_gpr64(Register dst, Register addr1, Register
+@@ -2472,17 +2640,17 @@ InstructionARM64 loadvf_gpr64_plus_gpr64(Register dst, Register addr1, Register
    ASSERT(addr1 != addr2);
    ASSERT(addr1 != SP);
    ASSERT(addr2 != SP);
@@ -5598,7 +6202,7 @@ index 1180f722d..e22d1c525 100644
    ASSERT(dst.is_128bit_simd(instr_set));
    ASSERT(addr1.is_gpr(instr_set));
    ASSERT(addr2.is_gpr(instr_set));
-@@ -2490,8 +2652,28 @@ InstructionARM64 loadvf_gpr64_plus_gpr64_plus_s8(Register dst,
+@@ -2490,8 +2658,28 @@ InstructionARM64 loadvf_gpr64_plus_gpr64_plus_s8(Register dst,
    ASSERT(addr1 != SP);
    ASSERT(addr2 != SP);
    ASSERT(offset >= INT8_MIN && offset <= INT8_MAX);
@@ -5629,7 +6233,7 @@ index 1180f722d..e22d1c525 100644
  }
  
  InstructionARM64 loadvf_gpr64_plus_gpr64_plus_s32(Register dst,
-@@ -2537,7 +2719,9 @@ InstructionARM64 storevf_gpr64_plus_gpr64(Register value, Register addr1, Regist
+@@ -2537,7 +2725,9 @@ InstructionARM64 storevf_gpr64_plus_gpr64(Register value, Register addr1, Regist
    ASSERT(addr2 != SP);
    // https://www.scs.stanford.edu/~zyedidia/arm64/str_reg_fpsimd.html
    // STR <Qt>, [<Xn|SP>, (<Wm>|<Xm>){, <extend> {<amount>}}]
@@ -5640,7 +6244,7 @@ index 1180f722d..e22d1c525 100644
                            Rm(addr2.id()));
  }
  
-@@ -2609,8 +2793,6 @@ InstructionARM64 storevf_gpr64_plus_gpr64_plus_s32(Register value,
+@@ -2609,8 +2799,6 @@ InstructionARM64 storevf_gpr64_plus_gpr64_plus_s32(Register value,
  
  InstructionARM64 loadvf_rip_plus_s32(Register dest, s64 offset) {
    ASSERT(dest.is_128bit_simd(instr_set));
@@ -5649,7 +6253,7 @@ index 1180f722d..e22d1c525 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -2635,19 +2817,80 @@ InstructionARM64 shuffle_vf(Register dst, Register src, u8 dx, u8 dy, u8 dz, u8
+@@ -2635,19 +2823,80 @@ InstructionARM64 shuffle_vf(Register dst, Register src, u8 dx, u8 dy, u8 dz, u8
    return InstructionARM64(0b0);
  }
  
@@ -5734,7 +6338,36 @@ index 1180f722d..e22d1c525 100644
        break;
      default:
        ASSERT(false);
-@@ -2739,8 +2982,9 @@ InstructionARM64 pw_sra(Register dst, Register src, u8 imm) {
+@@ -2687,18 +2936,20 @@ InstructionARM64 mul_vf(Register dst, Register src1, Register src2) {
+ }
+ 
+ InstructionARM64 max_vf(Register dst, Register src1, Register src2) {
+-  // https://www.scs.stanford.edu/~zyedidia/arm64/famax_advsimd.html
+-  // FAMAX <Vd>.<T>, <Vn>.<T>, <Vm>.<T>
+-  // 4 single precision floats
+-  return InstructionARM64(Base(0b0100111010100000110111, 22), Rn(src1.id()), Rm(src2.id()),
++  // FMAX <Vd>.4S, <Vn>.4S, <Vm>.4S (ARMv8 baseline).  The previous FAMAX
++  // encoding (FEAT_FAMINMAX, ARMv9.2) raises SIGILL on the M4 Simulator
++  // (bones.gc min/max math at 0x42308c8).  Verified with clang:
++  // fmax.4s v1,v0,v1 = 0x4E21F401 (base 0x4E20F400, 22-bit 0x13883D).
++  return InstructionARM64(Base(0b0100111000100000111101, 22), Rn(src1.id()), Rm(src2.id()),
+                           Rd(dst.id()));
+ }
+ 
+ InstructionARM64 min_vf(Register dst, Register src1, Register src2) {
+-  // https://www.scs.stanford.edu/~zyedidia/arm64/famin_advsimd.html
+-  // FAMIN <Vd>.<T>, <Vn>.<T>, <Vm>.<T>
+-  // 4 single precision floats
+-  return InstructionARM64(Base(0b0110111010100000110111, 22), Rn(src1.id()), Rm(src2.id()),
++  // FMIN <Vd>.4S, <Vn>.4S, <Vm>.4S (ARMv8 baseline).  The previous FAMIN
++  // encoding (FEAT_FAMINMAX, ARMv9.2) raises SIGILL on the M4 Simulator
++  // (bones.gc min/max math at 0x42308c8).  Verified with clang:
++  // fmin.4s v1,v0,v1 = 0x4EA1F401 (base 0x4EA0F400, 22-bit 0x13A83D).
++  return InstructionARM64(Base(0b0100111010100000111101, 22), Rn(src1.id()), Rm(src2.id()),
+                           Rd(dst.id()));
+ }
+ 
+@@ -2739,8 +2990,9 @@ InstructionARM64 pw_sra(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/sshr_advsimd.html
    // - vector, 4S
    // SSHR <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -5745,7 +6378,7 @@ index 1180f722d..e22d1c525 100644
  }
  
  // - logical_shift_right_32bit_vf
-@@ -2748,8 +2992,9 @@ InstructionARM64 pw_srl(Register dst, Register src, u8 imm) {
+@@ -2748,8 +3000,9 @@ InstructionARM64 pw_srl(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/ushr_advsimd.html
    // - vector, 4S
    // USHR <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -5756,7 +6389,7 @@ index 1180f722d..e22d1c525 100644
  }
  
  // - logical_shift_left_32bit_vf
-@@ -2757,8 +3002,9 @@ InstructionARM64 pw_sll(Register dst, Register src, u8 imm) {
+@@ -2757,8 +3010,9 @@ InstructionARM64 pw_sll(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/shl_advsimd.html
    // - vector, 4S
    // SHL <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -5767,7 +6400,7 @@ index 1180f722d..e22d1c525 100644
  }
  
  // - logical_shift_right_16bit_vf
-@@ -2766,8 +3012,9 @@ InstructionARM64 ph_srl(Register dst, Register src, u8 imm) {
+@@ -2766,8 +3020,9 @@ InstructionARM64 ph_srl(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/ushr_advsimd.html
    // - vector, 8H
    // USHR <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -5778,7 +6411,7 @@ index 1180f722d..e22d1c525 100644
  }
  
  // - logical_shift_left_16bit_vf
-@@ -2775,8 +3022,9 @@ InstructionARM64 ph_sll(Register dst, Register src, u8 imm) {
+@@ -2775,8 +3030,9 @@ InstructionARM64 ph_sll(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/shl_advsimd.html
    // - vector, 8H
    // SHL <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -8157,6 +8790,188 @@ index 000000000..052c757ff
 +    return 1;
 +  }
 +  std::cout << "[A1.0] PASS all semantic regressions\n";
++  return 0;
++}
+diff --git a/tools/ottsel_a1/subtitle_fn_dump.cpp b/tools/ottsel_a1/subtitle_fn_dump.cpp
+new file mode 100644
+index 000000000..0459eb2d6
+--- /dev/null
++++ b/tools/ottsel_a1/subtitle_fn_dump.cpp
+@@ -0,0 +1,108 @@
++// Ottsel S2.1 diagnostic: compile the subtitle/text GOAL sources through the
++// ARM64 goalc and print function name + code size + first words, so a live pc
++// can be mapped to a source function.
++#include <cstdint>
++#include <iostream>
++#include <string>
++#include <vector>
++
++#include "common/log/log.h"
++#include "common/util/FileUtil.h"
++#include "common/versions/versions.h"
++
++#include "goalc/compiler/CodeGenerator.h"
++#include "goalc/compiler/Compiler.h"
++#include "goalc/compiler/IR.h"
++#include "goalc/debugger/DebugInfo.h"
++#include "goalc/emitter/InstructionSet.h"
++#include "goalc/emitter/Register.h"
++
++using namespace emitter;
++
++int main(int argc, char** argv) {
++  lg::set_stdout_level(lg::level::warn);
++  lg::set_flush_level(lg::level::warn);
++  lg::initialize();
++
++  if (!file_util::setup_project_path(std::nullopt)) {
++    std::cerr << "setup_project_path failed\n";
++    return 2;
++  }
++
++  try {
++    Compiler compiler(GameVersion::Jak1, InstructionSet::ARM64);
++    RegisterInfo::set_active_instruction_set(InstructionSet::ARM64);
++
++    // Order matters: rpc-h defines rpc-buffer-pair before load-dgo uses it,
++    // and the kernel headers must come first (the game project compiles the
++    // kernel group before the engine).  Mirror game.gp's ordering for the
++    // subtitle dependency chain only.
++    std::vector<std::pair<const char*, const char*>> files = {
++        {"goal_src/jak1/kernel/gcommon.gc", "gcommon"},
++        {"goal_src/jak1/kernel/gstring-h.gc", "gstring-h"},
++        {"goal_src/jak1/kernel/gkernel-h.gc", "gkernel-h"},
++        {"goal_src/jak1/kernel/gkernel.gc", "gkernel"},
++        {"goal_src/jak1/kernel/pskernel.gc", "pskernel"},
++        {"goal_src/jak1/kernel/gstring.gc", "gstring"},
++        {"goal_src/jak1/kernel/dgo-h.gc", "dgo-h"},
++        {"goal_src/jak1/kernel/gstate.gc", "gstate"},
++        {"goal_src/jak1/engine/math/vector-h.gc", "vector-h"},
++        {"goal_src/jak1/engine/util/types-h.gc", "types-h"},
++        {"goal_src/jak1/engine/ps2/rpc-h.gc", "rpc-h"},
++        {"goal_src/jak1/engine/gfx/hw/display-h.gc", "display-h"},
++        {"goal_src/jak1/engine/load/decomp-h.gc", "decomp-h"},
++        {"goal_src/jak1/pc/pckernel-h.gc", "pckernel-h"},
++        {"goal_src/jak1/engine/sound/gsound-h.gc", "gsound-h"},
++        {"goal_src/jak1/engine/load/load-dgo.gc", "load-dgo"},
++        {"goal_src/jak1/engine/load/loader-h.gc", "loader-h"},
++        {"goal_src/jak1/engine/sound/gsound.gc", "gsound"},
++        {"goal_src/jak1/engine/ui/text.gc", "text"},
++        {"goal_src/jak1/pc/pckernel.gc", "pckernel"},
++        {"goal_src/jak1/pc/subtitle.gc", "subtitle"},
++    };
++    const char* target = argc > 1 ? argv[1] : "goal_src/jak1/pc/subtitle.gc";
++    std::vector<FunctionEnv*> target_fns;
++    FileEnv* target_fe = nullptr;
++    std::string target_obj = "subtitle";
++    for (auto& [file, obj_name] : files) {
++      auto obj = compiler.get_goos().reader.read_from_file({file});
++      auto* fe = compiler.compile_object_file(obj_name, obj, true);
++      compiler.color_only_for_proof(fe);
++      if (std::string(file) == target) {
++        target_fe = fe;
++        target_obj = obj_name;
++        for (auto& f : fe->functions()) {
++          target_fns.push_back(f.get());
++        }
++      }
++    }
++
++    auto* debug = &compiler.get_debugger().get_debug_info_for_object(target_obj);
++
++    u32 off = 0;
++    for (auto* f : target_fns) {
++      debug->clear();
++      size_t code_size = 0;
++      std::vector<u8> bytes;
++      try {
++        CodeGenerator gen(target_fe, debug, GameVersion::Jak1, InstructionSet::ARM64);
++        bytes = gen.emit_function_machine_code(f, 0);
++        code_size = bytes.size();
++      } catch (const std::exception&) {
++        code_size = 0;
++      }
++      std::cout << "OFF " << std::hex << off << std::dec << " " << f->name() << " size=" << code_size;
++      if (bytes.size() >= 4) {
++        u32 w0;
++        std::memcpy(&w0, bytes.data(), 4);
++        std::cout << " w0=0x" << std::hex << w0 << std::dec;
++      }
++      std::cout << "\n";
++      off += (u32)code_size;
++    }
++  } catch (const std::exception& e) {
++    std::cerr << "exception: " << e.what() << "\n";
++    return 3;
++  }
++  return 0;
++}
+diff --git a/tools/ottsel_a1/thread_off_test.cpp b/tools/ottsel_a1/thread_off_test.cpp
+new file mode 100644
+index 000000000..d16a148da
+--- /dev/null
++++ b/tools/ottsel_a1/thread_off_test.cpp
+@@ -0,0 +1,62 @@
++#include <cstdint>
++#include <iostream>
++#include "common/log/log.h"
++#include "common/util/FileUtil.h"
++#include "common/versions/versions.h"
++#include "goalc/compiler/Compiler.h"
++#include "goalc/emitter/InstructionSet.h"
++#include "goalc/compiler/CodeGenerator.h"
++
++using namespace emitter;
++
++int main() {
++  lg::set_stdout_level(lg::level::info);
++  lg::set_flush_level(lg::level::info);
++  lg::initialize();
++  if (!file_util::setup_project_path(std::nullopt)) {
++    std::cerr << "setup failed\n";
++    return 2;
++  }
++  Compiler compiler(GameVersion::Jak1, InstructionSet::ARM64);
++  RegisterInfo::set_active_instruction_set(InstructionSet::ARM64);
++  const char* preludes[] = {
++      "goal_src/jak1/kernel-defs.gc",
++      "goal_src/jak1/kernel/gcommon.gc",
++      "goal_src/jak1/kernel/gstring-h.gc",
++      "goal_src/jak1/kernel/gstring.gc",
++      "goal_src/jak1/kernel/gkernel-h.gc",
++  };
++  for (auto p : preludes) {
++    try {
++      auto code = compiler.get_goos().reader.read_from_file({p});
++      auto* fe = compiler.compile_object_file("prelude", code, true);
++      compiler.color_only_for_proof(fe);
++    } catch (std::exception& e) {
++      std::cerr << "prelude " << p << " failed: " << e.what() << "\n";
++    }
++  }
++  try {
++    auto code = compiler.get_goos().reader.read_from_file({"/tmp/probe_thread.gc"});
++    auto* fe = compiler.compile_object_file("probe", code, true);
++    compiler.color_only_for_proof(fe);
++    std::cout << "functions: " << fe->functions().size() << "\n";
++    for (auto& f : fe->functions()) {
++      try {
++        auto* debug = &compiler.get_debugger().get_debug_info_for_object("probe");
++        CodeGenerator gen(fe, debug, GameVersion::Jak1, InstructionSet::ARM64);
++        auto bytes = gen.emit_function_machine_code(f.get(), 0);
++        std::cout << f->name() << " code:";
++        for (size_t i = 0; i < bytes.size(); i += 4) {
++          u32 w; std::memcpy(&w, bytes.data() + i, 4);
++          std::cout << " " << std::hex << w << std::dec;
++        }
++        std::cout << "\n";
++      } catch (std::exception& e) {
++        std::cout << "emit failed: " << e.what() << "\n";
++      }
++    }
++  } catch (std::exception& e) {
++    std::cerr << "probe failed: " << e.what() << "\n";
++  }
 +  return 0;
 +}
 diff --git a/tools/ottsel_a1/typelayout.cpp b/tools/ottsel_a1/typelayout.cpp

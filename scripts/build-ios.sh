@@ -86,6 +86,7 @@ COMMON_SRC="
   common/util/Assert.cpp
   common/util/BitUtils.cpp
   common/util/crc32.cpp
+  common/util/DgoReader.cpp
   common/util/dgo_util.cpp
   common/util/diff.cpp
   common/util/FileUtil.cpp
@@ -205,6 +206,17 @@ cp "$APP_BUILD/OttselShell" "$APP/"
 cp "$REPO_DIR/src/shell/Info.plist" "$APP/"
 cp "$WORKTREE/out/jak1/iso/KERNEL.CGO" "$APP/KERNEL.CGO"
 cp "$WORKTREE/out/jak1/iso/GAME.CGO" "$APP/GAME.CGO"
+# Ottsel S2.1 (BOT11): the iOS DGO-loader emulation serves real DGO/CGO data.
+# The host iso_data tree is not inside the Simulator sandbox, so copy the
+# title-boot subset (art + common + title level + vis) into the bundle.
+mkdir -p "$APP/iso_data/DGO" "$APP/iso_data/CGO"
+for f in ART.CGO COMMON.CGO; do
+  cp "$WORKTREE/iso_data/jak1/CGO/$f" "$APP/iso_data/CGO/" 2>/dev/null || true
+done
+for f in TIT.DGO; do
+  cp "$WORKTREE/iso_data/jak1/DGO/$f" "$APP/iso_data/DGO/" 2>/dev/null || true
+done
+cp "$WORKTREE/iso_data/jak1/VIS/TIT.VIS" "$APP/iso_data/TIT.VIS" 2>/dev/null || true
 plutil -lint "$APP/Info.plist" >/dev/null
 codesign --force --sign - "$APP" >/dev/null 2>&1 || true
 

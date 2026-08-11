@@ -669,3 +669,88 @@ s21-tracer-writersp2-fault.log.
   boot spins on `load-subtitle-text-info` (no ISO data, expected ROM-safe
   boundary).  The camera stack-corruption fault mechanism is fixed at its
   root on both the tracer and product paths.
+
+## STR RPC emulation fires and is consumed by GOAL (2026-08-11, BOT10)
+
+- **Pointer bug fixed and proven:** `g_ottsel_str_rpc_bd` was never assigned on
+  iOS because `InitRPC()`/`RpcBind()` are compiled out under `OTTSEL_IOS`
+  (kmachine.cpp `#ifndef OTTSEL_IOS`).  Changed kdgo.cpp to initialize it
+  directly to `&cd[STR_RPC_CHANNEL]`.  The log now shows
+  `OTTSEL STR RPC emulated: fno=0 send=0x7001543100 size=64 recv=0x7001543100 rsize=32`
+  for every channel-4 STR load.
+- **GOAL consumes the emulated response (semantic proof):** with
+  `result=STR_RPC_RESULT_DONE, maxlen=requested` the boot printed
+  `Game subtitle heap overrun!` (365k times — the `(>= load-status
+  (+ heap-free -300))` guard trips because requested == full heap free).
+  With `result=STR_RPC_RESULT_ERROR` the boot prints `Error loading subtitle`
+  (1.49M times — str-load-status returns 'error and
+  load-subtitle-text-info prints the error branch).  The response fields are
+  provably being read by the game.
+- **The overrun spin is eliminated** (0 `heap overrun` lines), but the boot
+  does NOT advance: something re-invokes the subtitle loader once per
+  dispatcher iteration (~1.49M prints / 1.64M dispatcher iterations), so
+  `*subtitle-text*` never becomes valid.  The writer process (proc=0x1c4e2d4,
+  type=0x19b0bc) parks at pc=0x4860c14 inside the subtitle object's main
+  segment (0x485c000, offset 0x4c14) with sp constant at 0x1d7fc0.
+- Honest boundary: the re-invoking caller was not conclusively identified
+  from static disassembly alone.  Candidates: (a) a caller loop re-entering
+  load-subtitle-text-info each frame (subtitle-debug :trans line 580 calls
+  load-level-subtitle-files when `(not *subtitle-text*)`), or (b) a
+  miscompiled fall-through after the error/overrun `(return 0)` into the
+  `(goto retry)` busy loop.  Next smallest falsifiable probe: emulate a
+  SUCCESSFUL zero-length load (DONE + maxlen=0) — if the guard passes and
+  the code proceeds to `(link new-mem name 0 heap 0)`, the spin is a caller
+  re-invocation and the next fault moves to the link path; if it still spins
+  on overrun/error, the retry loop is the culprit.
+- Evidence: docs/evidence/S2/s21-strfix-error-runtime.log (5.1 MB, one boot),
+  s21-strfix-error-fault.log (empty — no fault handler fired).
+
+## DECISIVE PROBE: STR emulation DONE+maxlen=0 advances the boot past the subtitle spin (2026-08-11, BOT10)
+
+- Changed the emulated STR response to `STR_RPC_RESULT_DONE` with `maxlen = 0`
+  (completed zero-length load).  Rebuilt the app, booted (one Simulator,
+  Windowed).
+- **Result (new milestone):** GAME.CGO links (346 objects); `OTTSEL STR RPC
+  emulated` fires exactly ONCE; zero `Game subtitle heap overrun!` and zero
+  `Error loading subtitle` spins.  The boot advanced past the subtitle/text
+  loader for the first time.
+- **Next fault (new, distinct):** the zero-length load proceeds to
+  `(link new-mem name 0 heap 0)` and the runtime linker asserts
+  `VERSION ERROR` in `link_control::jak1_jak2_begin` (klink.cpp:77) because
+  the empty text buffer has no GOAL object header (goal_version_major 0 != 1).
+- This proves: (1) the STR emulation is semantically consumed by GOAL and the
+  response VALUE controls which path runs; (2) the previous overrun/error
+  spins were the overrun guard / error branch retrying, and DONE+maxlen=0
+  passes the guard; (3) the game genuinely tries to link the loaded text
+  object, and with no ISO data there are no bytes to link.
+- Honest boundary: the boot is now blocked at the link of a zero-length text
+  object, not at the RPC.  The smallest falsifiable next step is a size-0
+  guard in the runtime linker (link_and_exec/jak1_jak2_begin) so a
+  zero-byte load returns an invalid pointer instead of asserting — the GOAL
+  side already handles `(<= (-> curr-text value) 0)` by setting
+  `*subtitle-text*`/`*common-text*` to #f (the game's fallback-text path
+  tolerates missing text).  This is a runtime robustness change for the
+  ROM-safe no-data boot, NOT a game-source patch.
+- Evidence: docs/evidence/S2/s21-strfix-done0-linkassert-runtime.log
+  (fault at log line 2880), s21-strfix-done0-linkassert-fault.log (empty —
+  the assert aborts before the fault handler).
+
+## VERIFIED MILESTONE: size-0 linker guard lets the boot advance past the subtitle/text boundary (2026-08-11, BOT10 cont)
+
+- Added a size-0 guard in `jak1::link_and_exec` (game/kernel/jak1/klink.cpp):
+  a zero-length object (the emulated STR load with maxlen=0 on the ROM-safe
+  no-ISO boot) has no GOAL object header, so return an invalid Ptr instead of
+  asserting VERSION ERROR in jak1_jak2_begin.  The GOAL side already handles
+  `(<= (-> curr-text value) 0)` by setting *subtitle-text*/*common-text* to #f.
+- Boot verified (one Simulator, Windowed, zero stale processes, 05:17 build):
+  GAME.CGO links (346 objects); `OTTSEL STR RPC emulated` fires exactly ONCE;
+  zero overrun / error / assertion lines; GOAL kernel dispatcher runs
+  continuously (302k+ iterations at ~650 iter/s when captured, no fault log).
+  Evidence: docs/evidence/S2/s21-strfix-size0guard-runtime.log,
+  s21-strfix-size0guard-fault.log (empty).
+- Honest boundary: the boot is STABLE past the subtitle/text data boundary
+  (no spin, no crash, dispatcher alive), but the game has NOT yet produced a
+  renderer-ready message, a level-load attempt, or a Jak frame.  S2.1 remains
+  ACTIVE.  The next smallest falsifiable probe is to determine what the boot
+  does after text init (why no level/progress/frame path) — e.g. a later
+  OTTSEL_PROC-style sample or a check of which process the dispatcher runs.

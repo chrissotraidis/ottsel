@@ -1,5 +1,25 @@
 # 00 — Loop log
 
+## 2026-08-11 — BOT12: boot reaches the title screen; state-symbol mislink
+
+- **Acted:** three verified fixes advanced the boot from the display-spawn
+  fault to the game's title state machine ("GAMEPLAY: enter title"):
+  1) low-EE guard `PROT_NONE` -> `PROT_READ` (PS2 memory semantics; the
+  `vector<-cspace!` null-bone read is now benign and its `w==0` guard
+  works), 2) `msub_gpr32` emitted MADD instead of MSUB (`(mod a b)` was
+  `a + (a/b)*b`; update-wind index fault), 3) `min_vf`/`max_vf` emitted
+  FAMIN/FAMAX (ARMv9.2), which SIGILL on the M4; replaced with FMIN/FMAX.
+- **Diagnosed (not fixed):** `enter-state` calls the target's first state
+  (`go target-continue`) and the state symbol value is garbage (0x42b4000).
+  The target-death states are correctly linked and the linker ADRP+ADD
+  static patch is correct (temporary LINKSTAT diagnostic); the failure is in
+  the state-symbol value write/read path (`(sym - s7)` slots in the
+  transient top-level segment).  Evidence:
+  `docs/evidence/S2/s21-bot12-*`, `docs/evidence/S2/s21-bot12-state-mislink.md`.
+- **Docs:** STATUS / 13-current-state updated; BOT13 handoff written at
+  `docs/reports/2026-08-12-bot13-handoff.md`; canonical patch regenerated and
+  clean-apply verified on a fresh pin archive (reverse-apply OK).
+
 ## 2026-08-08 — Progress review (operator-requested, no gate work)
 
 - **Acted:** Whole-repo review after the operator reported the system was
@@ -1874,3 +1894,59 @@ return address, not the call-site continuation
   fixed on the product path.  S2.1 remains ACTIVE (no renderer-ready
   boundary / no Jak frame; ROM-safe subtitle-load spin).
 - Evidence: docs/evidence/S2/s21-fix-product-spstable-runtime.log.
+
+## 2026-08-11 (BOT10) — STR RPC emulation: pointer bug fixed, response VALUE proven, boot advances past the subtitle spin to a NEW link-phase assert
+
+- **Pointer bug fixed:** `g_ottsel_str_rpc_bd` was never assigned on iOS
+  because `InitRPC()`/`RpcBind()` are compiled out under `OTTSEL_IOS`
+  (kmachine.cpp).  kdgo.cpp now initializes it directly to
+  `&cd[STR_RPC_CHANNEL]`.  The emulation fires:
+  `OTTSEL STR RPC emulated: fno=0 send=0x7001543100 size=64 recv=... rsize=32`.
+- **Response value controls the GOAL path (proven):**
+  - `DONE + maxlen=requested` -> `Game subtitle heap overrun!` spin (365k);
+  - `ERROR` -> `Error loading subtitle` spin (1.49M);
+  - `DONE + maxlen=0` -> **no spin at all**; GAME.CGO links, emulation fires
+    once, boot advances to `(link new-mem name 0 heap 0)`.
+- **NEW fault (distinct):** zero-length text object -> runtime linker
+  `VERSION ERROR` assert in `link_control::jak1_jak2_begin` (klink.cpp:77).
+  S2.1 remains ACTIVE; no renderer-ready boundary / no Jak frame.
+- Honest boundary: the ROM-safe no-data boot needs a size-0 guard in the
+  runtime linker (return invalid pointer so GOAL sets the text symbol to #f),
+  not a game-source patch.  Evidence: s21-strfix-done0-linkassert-*,
+  s21-strfix-error-runtime.log, s21-andfix-progress.md.
+
+## 2026-08-11 (BOT10 cont) — size-0 linker guard: boot advances past the subtitle/text boundary, stable dispatcher
+
+- Added the size-0 guard in `jak1::link_and_exec` (klink.cpp): zero-length
+  objects (emulated STR load with no ISO data) return an invalid Ptr instead
+  of asserting VERSION ERROR; GOAL marks the text symbols #f.
+- Boot verified: STR emulation fires ONCE, zero spins/asserts, GAME.CGO links,
+  GOAL kernel dispatcher runs 302k+ iterations with no fault log.  The boot is
+  stable past the ROM-safe data boundary for the first time.
+- S2.1 remains ACTIVE: no renderer-ready message, level-load attempt, or Jak
+  frame yet.  Evidence: s21-strfix-size0guard-runtime.log (358 KB).
+
+## 2026-08-11 (BOT11) — `(play)` never ran; boot was gated on a missing C++ boot step (VERIFIED)
+
+- Added a process-tree walk + game-state probe (kboot.cpp, dispatch 100k/200k).
+  First version faulted at g_ee_main_mem+0x2c (read the PROT_NONE low-EE guard
+  through a #f tree link); fixed with mincore-guarded reads and ppointer
+  deref (links are ppointers, node = [link], #f == s7.offset).
+- VERIFIED: the active-pool tree is COMPLETE — 13 nodes, 8 processes
+  (time-of-day-proc, camera master/slave/combiner/list-keeper,
+  hud-battle-enemy, subtitle), identical at 100k and 200k.  The BOT10 handoff's
+  "only listener + writer exist" premise was wrong (2-address probe).
+- VERIFIED: `*kernel-boot-message* = 0x0`, `*dproc* = #f`, `*run* = #f` — the
+  boot was gated because C++ never called `(play)`: on iOS DiskBoot=0, so
+  kmachine InitMachineScheme's `call_goal_function_by_name("play")` never ran.
+- FIX: src/shell/ios_boot.cpp now sets `*kernel-boot-message*` = 'play and
+  calls `call_goal_function_by_name("play")` after linking GAME.CGO.
+- VERIFIED: `(play :use-vis :init-game ) has been called!` and
+  `*kernel-boot-message*: play` — the game's play entry ran; the boot advances
+  into the level-load path (`load-package "art"` -> DGO loader RPC channel 3,
+  blocks waiting for IOP, no ISO data).  No fault; 100% CPU in the C++ wait.
+- S2.1 remains ACTIVE: next gate is the level-data boundary — how the ROM-safe
+  no-data boot should handle `load-package "art"` (clean end-of-data / skip
+  level load / data-less ART) so the display process can spawn and the
+  renderer path can start.  Evidence: docs/evidence/S2/s21-bot11-play-fix.md,
+  s21-bot11-play-levelload-runtime.log.
