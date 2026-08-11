@@ -225,6 +225,346 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
       }
     }
   }
+  // S2.1 (2026-08-10, corrupt-process-type probe): the faulting dispatch
+  // (execute-process-tree's run-logic? call) read [this-4] as the type tag and
+  // [type+0x40] as the method pointer (x1 at the fault).  Dump the node header
+  // and the type object's method slot in-process -- lldb cannot read the
+  // Simulator EE mapping reliably, so this is the only trustworthy read.
+  {
+    // x0 may be an EE-relative offset (method-dispatch faults, e.g. the
+    // execute-process-tree run-logic? call) or an absolute EE-mapped pointer
+    // (link-phase faults); normalize before reading.
+    uintptr_t node = uc->uc_mcontext->__ss.__x[0];
+    if (node < 0x8000000) {
+      node = (uintptr_t)g_ee_main_mem + node;
+    }
+    raw_write_lit("OTTSEL_IOS: node probe this=0x");
+    raw_write_hex(node);
+    raw_write_lit("\n");
+    // Skip the PROT_NONE low-EE guard region (first 512KB of the mapping).
+      if (node >= (uintptr_t)g_ee_main_mem + 0x80000) {
+        // The process's main-thread (proc+0x28): its pc slot (thread+0x14)
+        // holds the suspended continuation.  If the process's type tag equals
+        // the thread pc, the suspend/resume machinery wrote the continuation
+        // into the wrong slot.
+        {
+          u32 mt = 0;
+          if (safe_read_u32((volatile u32*)(node + 0x28), &mt) && mt &&
+              mt < 0x08000000) {
+            u32 mt_type = 0, mt_pc = 0;
+            if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + mt - 4), &mt_type)) {
+              raw_write_lit("OTTSEL_IOS:   main-thread=0x");
+              raw_write_hex(mt);
+              raw_write_lit(" type=0x");
+              raw_write_hex(mt_type);
+            }
+            if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + mt + 0x14), &mt_pc)) {
+              raw_write_lit(" pc=0x");
+              raw_write_hex(mt_pc);
+            }
+            raw_write_lit("\n");
+          }
+        }
+        // Process identity/state: pool(+0x1c), status(+0x20), pid(+0x24),
+        // main-thread(+0x28), top-thread(+0x2c).
+        for (int fi = 0x1c; fi <= 0x30; fi += 4) {
+          u32 w = 0;
+          if (safe_read_u32((volatile u32*)(node + (uintptr_t)fi), &w)) {
+            raw_write_lit("OTTSEL_IOS:   proc[");
+            raw_write_dec((unsigned)fi);
+            raw_write_lit("+] = 0x");
+            raw_write_hex(w);
+            raw_write_lit("\n");
+          }
+        }
+        for (int i = -8; i <= 0x20; i += 4) {
+        u32 w = 0;
+        uintptr_t addr = (uintptr_t)node + (uintptr_t)i;
+        if (safe_read_u32((volatile u32*)addr, &w)) {
+          raw_write_lit("OTTSEL_IOS:   node[");
+          raw_write_dec(i >= 0 ? (unsigned)i : (unsigned)(-i));
+          raw_write_lit(i >= 0 ? "+] = 0x" : "-] = 0x");
+          raw_write_hex(w);
+          raw_write_lit("\n");
+        }
+      }
+      u32 type_tag = 0;
+      if (node >= 4 && safe_read_u32((volatile u32*)(node - 4), &type_tag)) {
+        raw_write_lit("OTTSEL_IOS: node type tag=0x");
+        raw_write_hex(type_tag);
+        raw_write_lit("\n");
+        // Compare with the tree neighbors' type tags: if every pooled node
+        // has a code-address tag, the pool init is broken; if only this one,
+        // the spawn wrote it.
+        for (int fi = 8; fi <= 0x10; fi += 4) {
+          u32 nb = 0;
+          if (safe_read_u32((volatile u32*)(node + (uintptr_t)fi), &nb) && nb &&
+              nb < 0x08000000) {
+            u32 nbt = 0;
+            if (safe_read_u32((volatile u32*)((uintptr_t)g_ee_main_mem + nb - 4), &nbt)) {
+              raw_write_lit("OTTSEL_IOS:   neighbor@");
+              raw_write_dec((unsigned)fi);
+              raw_write_lit("+0x");
+              raw_write_hex(nb);
+              raw_write_lit(" type=0x");
+              raw_write_hex(nbt);
+              raw_write_lit("\n");
+            }
+          }
+        }
+        // GOAL type pointers are EE-relative offsets; read through the EE map.
+        const uintptr_t type_abs = (uintptr_t)g_ee_main_mem + type_tag;
+        for (int i = 0; i <= 0x48; i += 4) {
+          u32 w = 0;
+          if (safe_read_u32((volatile u32*)(type_abs + (uintptr_t)i), &w)) {
+            raw_write_lit("OTTSEL_IOS:   type[");
+            raw_write_dec((unsigned)i);
+            raw_write_lit("] = 0x");
+            raw_write_hex(w);
+            raw_write_lit("\n");
+          }
+        }
+      }
+    } else {
+      raw_write_lit("OTTSEL_IOS:   (node in PROT_NONE low-EE region; skipped)\n");
+    }
+  }
+  // S2.1 (2026-08-10, process-type source probe): the faulting process's type
+  // tag points into the time-of-day code segment.  get-process writes the
+  // type symbol's value into the node.  Dump the 'time-of-day-proc symbol's
+  // value (s7 = x21 = 0x18fe04; symbol index 2746 -> s7 - 0xaa34 = 0x1853d0,
+  // per test/all_jak1_symbols.cpp) and its name, plus the process's own name
+  // string, to decide whether the SYMBOL or the WRITE is wrong.
+  {
+    const uintptr_t ee = (uintptr_t)g_ee_main_mem;
+    // Process identity: [this+4] is the process name (a GOAL string).
+    u32 name_ptr = 0;
+    const uintptr_t node2 = uc->uc_mcontext->__ss.__x[0] < 0x8000000
+                                ? (uintptr_t)g_ee_main_mem + uc->uc_mcontext->__ss.__x[0]
+                                : uc->uc_mcontext->__ss.__x[0];
+    if (node2 >= (uintptr_t)g_ee_main_mem + 0x80000 && safe_read_u32((volatile u32*)(node2 + 4), &name_ptr) && name_ptr &&
+        name_ptr < 0x08000000) {
+      raw_write_lit("OTTSEL_IOS: process name str=0x");
+      raw_write_hex(name_ptr);
+      raw_write_lit(" bytes:");
+      for (int i = 0; i < 0x24; i += 4) {
+        u32 w = 0;
+        if (safe_read_u32((volatile u32*)(ee + name_ptr + (uintptr_t)i), &w)) {
+          raw_write_lit(" ");
+          raw_write_hex(w);
+        }
+      }
+      raw_write_lit("\n");
+    }
+    u32 sym_val = 0;
+    // Read the real s7 (GOAL symbol-table-mid register) from its global.
+    const u32 s7_val = s7.offset;
+    raw_write_lit("OTTSEL_IOS: s7=0x");
+    raw_write_hex(s7_val);
+    raw_write_lit("\n");
+    // The time-of-day spawn (start-time-of-day in time-of-day.gc) loads its
+    // pool/type/name/init args from static slots in time-of-day's data segment
+    // (main seg 0x43c4000, code 0x8000).  Dump the slots and the symbol values
+    // they resolve to.
+    {
+      const u32 static_base = 0x43c4000 + 0x8000;
+      // The spawn's type object (0x14bfb84) fields.
+      {
+        u32 tv2 = 0;
+        raw_write_lit("OTTSEL_IOS: spawn type 0x14bfb84 fields:");
+        for (int i = 0; i <= 0x44; i += 4) {
+          if (safe_read_u32((volatile u32*)(ee + 0x14bfb84 + (uintptr_t)i), &tv2)) {
+            raw_write_lit(" ");
+            raw_write_hex(tv2);
+          }
+        }
+        raw_write_lit("\n");
+      }
+      // The faulting node's pool (0x2024a4): read its child process's type tag.
+      {
+        u32 pool_child = 0;
+        if (safe_read_u32((volatile u32*)(ee + 0x2024a4 + 0x10), &pool_child) && pool_child &&
+            pool_child < 0x08000000) {
+          u32 child_type = 0;
+          if (safe_read_u32((volatile u32*)(ee + pool_child - 4), &child_type)) {
+            raw_write_lit("OTTSEL_IOS: pool sibling child=0x");
+            raw_write_hex(pool_child);
+            raw_write_lit(" type=0x");
+            raw_write_hex(child_type);
+            raw_write_lit("\n");
+          }
+        }
+      }
+      const u32 slots[] = {0x28c, 0x290, 0x294, 0x298, 0x29c, 0x2a0, 0x2a4, 0x2a8};
+      for (u32 off : slots) {
+        u32 sym_off = 0;
+        if (safe_read_u32((volatile u32*)(ee + static_base + off), &sym_off)) {
+          raw_write_lit("OTTSEL_IOS: spawn slot +0x");
+          raw_write_hex(off);
+          raw_write_lit(" sym_off=0x");
+          raw_write_hex(sym_off);
+          u32 sym_val = 0;
+          if (sym_off < 0x8000000 && safe_read_u32((volatile u32*)(ee + s7_val + sym_off), &sym_val)) {
+            raw_write_lit(" value=0x");
+            raw_write_hex(sym_val);
+          }
+          raw_write_lit("\n");
+        }
+      }
+      // The get-process receiver is *default-dead-pool* (slot +0x298 value).
+      // Read its type and the get-process method it dispatches (type+0x48),
+      // to tell the dead-pool (buggy store) path from dead-pool-heap (correct).
+      u32 pool = 0;
+      u32 pool_off = 0;
+      if (safe_read_u32((volatile u32*)(ee + static_base + 0x298), &pool_off) &&
+          safe_read_u32((volatile u32*)(ee + s7_val + pool_off), &pool)) {
+        u32 pool_type = 0;
+        if (pool < 0x08000000 && safe_read_u32((volatile u32*)(ee + pool - 4), &pool_type)) {
+          raw_write_lit("OTTSEL_IOS: pool=0x");
+          raw_write_hex(pool);
+          raw_write_lit(" type=0x");
+          raw_write_hex(pool_type);
+          u32 gp_method = 0;
+          if (pool_type < 0x08000000 &&
+              safe_read_u32((volatile u32*)(ee + pool_type + 0x48), &gp_method)) {
+            raw_write_lit(" get-process-method=0x");
+            raw_write_hex(gp_method);
+          }
+          raw_write_lit("\n");
+        }
+      }
+    }
+    // Identify the get-process implementation the pool dispatches to: dump
+    // the runtime words at the expected dead-pool (0x3ed2ef4) and
+    // dead-pool-heap (0x3ed4208) sites and the actual method (0x3ed37e4).
+    {
+      const u32 sites[] = {0x3ed2ef4, 0x3ed37e4, 0x3ed4208};
+      for (u32 site : sites) {
+        raw_write_lit("OTTSEL_IOS: code@0x");
+        raw_write_hex(site);
+        raw_write_lit(":");
+        for (int i = 0; i < 8; i += 4) {
+          u32 w = 0;
+          if (safe_read_u32((volatile u32*)(ee + site + (uintptr_t)i), &w)) {
+            raw_write_lit(" ");
+            raw_write_hex(w);
+          }
+        }
+        raw_write_lit("\n");
+      }
+    }
+    // The process's name field ([this+0] = 0x70) is the s7-relative offset of
+    // the 'time-of-day-proc symbol (the `n` macro names the process after the
+    // type).  Read that symbol's value + name directly.
+    {
+      const u32 tod_sym = s7_val + 0x70;
+      u32 tv = 0;
+      if (safe_read_u32((volatile u32*)(ee + tod_sym), &tv)) {
+        raw_write_lit("OTTSEL_IOS: sym(time-of-day-proc@");
+        raw_write_hex(tod_sym);
+        raw_write_lit(") value=0x");
+        raw_write_hex(tv);
+        raw_write_lit("\n");
+        u32 sym_hash = 0;
+        if (safe_read_u32((volatile u32*)(ee + tod_sym + 0x1fffc), &sym_hash)) {
+          raw_write_lit("OTTSEL_IOS:   symhash=0x");
+          raw_write_hex(sym_hash);
+          raw_write_lit(" (expect 0x4b64a867 for time-of-day-proc)\n");
+        }
+        u32 strp = 0;
+        if (safe_read_u32((volatile u32*)(ee + tod_sym + 0x1fffc + 4), &strp) && strp &&
+            strp < 0x08000000) {
+          raw_write_lit("OTTSEL_IOS:   str=0x");
+          raw_write_hex(strp);
+          raw_write_lit("\n");
+          raw_write_lit("OTTSEL_IOS:   name bytes:");
+          for (int i = 0; i < 0x18; i += 4) {
+            u32 w = 0;
+            if (safe_read_u32((volatile u32*)(ee + strp + (uintptr_t)i), &w)) {
+              raw_write_lit(" ");
+              raw_write_hex(w);
+            }
+          }
+          raw_write_lit("\n");
+        }
+        if (tv && tv < 0x08000000) {
+          raw_write_lit("OTTSEL_IOS:   type fields:");
+          for (int i = 0; i <= 0x44; i += 4) {
+            u32 w = 0;
+            if (safe_read_u32((volatile u32*)(ee + tv + (uintptr_t)i), &w)) {
+              raw_write_lit(" ");
+              raw_write_hex(w);
+            }
+          }
+          raw_write_lit("\n");
+        }
+      }
+    }
+    // Sanity: the kernel symlink log bound 'array at s7 + 0xf8; dump slots
+    // around there to confirm the table geometry.
+    for (u32 slot = s7_val + 0xf0; slot < s7_val + 0x140; slot += 8) {
+      u32 v = 0;
+      if (safe_read_u32((volatile u32*)(ee + slot), &v)) {
+        raw_write_lit("OTTSEL_IOS: near-s7 slot 0x");
+        raw_write_hex(slot);
+        raw_write_lit(" value=0x");
+        raw_write_hex(v);
+        raw_write_lit("\n");
+      }
+    }
+    // 'time-of-day-proc: crc32c = 0x4b64a867 (ARM __crc32cw), sh2 =
+    // s32(hash<<18)>>15 = -0xbd00 -> lower table, probe up from s7 - 0xbd00.
+    const u32 tod_probe_start = s7_val - 0xbd00;
+    for (u32 slot = tod_probe_start; slot < tod_probe_start + 0x100; slot += 8) {
+      u32 v = 0;
+      if (!safe_read_u32((volatile u32*)(ee + slot), &v)) {
+        continue;
+      }
+      u32 str_ptr = 0;
+      safe_read_u32((volatile u32*)(ee + slot + 0x1fffc + 4), &str_ptr);
+      raw_write_lit("OTTSEL_IOS: sym slot 0x");
+      raw_write_hex(slot);
+      raw_write_lit(" value=0x");
+      raw_write_hex(v);
+      raw_write_lit(" str=0x");
+      raw_write_hex(str_ptr);
+      raw_write_lit("\n");
+      if (str_ptr && str_ptr < 0x08000000) {
+        raw_write_lit("OTTSEL_IOS:   name bytes:");
+        for (int i = 0; i < 0x14; i += 4) {
+          u32 w = 0;
+          if (safe_read_u32((volatile u32*)(ee + str_ptr + (uintptr_t)i), &w)) {
+            raw_write_lit(" ");
+            raw_write_hex(w);
+          }
+        }
+        raw_write_lit("\n");
+      }
+    }
+  }
+  // S2.1 (2026-08-10, link-phase fault probe): the fault pc is inside a
+  // transient top-level segment; dump the runtime-patched code words around pc
+  // and lr so the dispatch (ADRP/ADD/load/blr chain) can be decoded without
+  // trusting the unpatched CGO file bytes.
+  {
+    // pc is the fault target (unmapped garbage); dump the caller's code around
+    // lr instead (a mapped code address in the object/kernel region).
+    const uintptr_t flr = uc->uc_mcontext->__ss.__lr;
+    raw_write_lit("OTTSEL_IOS: code probe lr=0x");
+    raw_write_hex(flr);
+    raw_write_lit("\n");
+    for (int i = -0x40; i <= 0x20; i += 4) {
+      u32 w = 0;
+      uintptr_t addr = flr + (uintptr_t)i;
+      if (safe_read_u32((volatile u32*)addr, &w)) {
+        raw_write_lit("OTTSEL_IOS:   pc[");
+        raw_write_dec(i >= 0 ? (unsigned)i : (unsigned)(-i));
+        raw_write_lit(i >= 0 ? "+] = 0x" : "-] = 0x");
+        raw_write_hex(w);
+        raw_write_lit("\n");
+      }
+    }
+  }
   // These broad stack/probe dumps were useful during the earlier rfn fault,
   // but are not async-signal-safe enough for arbitrary later faults.
 #if 0

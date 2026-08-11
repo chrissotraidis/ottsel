@@ -415,3 +415,71 @@ allocations, so deftype-created Types are never overwritten by code.
 S2.1 is NOT PASS: there is no stable renderer-ready boundary and no Jak
 frame.  The AND fix and the all-346-object link are integration progress.
 A1.0/A1.1/A1.2 remain PASS (not reopened).
+
+## Dedicated code region fix applied (2026-08-10, BOT9 cont 13)
+
+Implemented in `game/kernel/jak1/klink.cpp` (OTTSEL_NO_EMIT main-segment branch):
+main segments are now placed in a dedicated region above the global heap
+(`OTTSEL_CODE_BASE` = page-aligned just above `GLOBAL_HEAP_END` = 0x3ebc000,
+with its own cumulative cursor, up to `OTTSEL_CODE_LIMIT` = 0x4ee0000 below the
+fixed stub arenas), instead of at the global heap's `current` pointer.  The
+heap cursor is untouched.  Kernel + game main code now lives at 0x3ebc000+
+(measured: kernel ends ~0x3ef8000, game ends ~0x491c000; 0xa60000 of 0x1044000
+used).  Top-level segments stay in the existing heap-top transient slot.
+
+Verified mechanically (boot `s21-coderegion-dispatcher-boot21-runtime.log`):
+- `OTTSEL no-emit: dedicated code region 0x3ebc000..0x4ee0000 (page 0x4000)`.
+- All main-seg placements are inside the dedicated region.
+- The OLD overlap address 0x2381704 now reads 0 (no code there any more).
+
+## The code/heap-overlap root cause is DISPROVEN
+
+The dispatcher fault persists with the same signature but a DIFFERENT type-tag
+address: the process node's type tag is now **0x43c4f84** (in the new code
+region; old value 0x2381704 in the old region).  The tag TRACKS the code
+placement - it is derived from the code, not from a heap allocation that code
+overwrote.  The overlap theory (code placements overwriting deftype Types) is
+therefore wrong; the linker fix is still correct and stays (code must not live
+in the heap), but the next fault has a different mechanism.
+
+## New root-cause evidence (in-process fault-handler probes, reliable)
+
+Fault: `execute-process-tree`'s run-logic? dispatch reads [this-4] = 0x43c4f84,
+then [0x43c4fc4] = 0x8b36e010 (an instruction word) and blrs -> pc = 0x708b36e010.
+
+- The node (this = 0x206684, deterministic across boots) is a GENUINE process:
+  name = 0x70 (s7-relative symbol offset), mask = 0x40014, parent/brother/child
+  links set, self = this, ppointer = this+0x18 (both set correctly by
+  `new process-tree`), pool = 0x2024a4, status = 0x19d304, pid = 9,
+  main-thread = top-thread = 0x207094 (a cpu-thread, type 0x1c29e4).
+- The 'time-of-day-proc TYPE OBJECT (spawn slot +0x29c -> symbol at s7+0x87a8
+  -> value 0x14bfb84) is WELL-FORMED: 80 methods, allocated_size 0xb8,
+  parent 0x1c04b4, run-logic? (method 16) = 0x3ed5254 (kernel).  The spawn
+  (start-time-of-day in time-of-day.gc) loads a VALID type.
+- The *default-dead-pool* (0x20b864) get-process method = 0x3ed37e4 = the
+  **dead-pool** get-process (NOT dead-pool-heap).  Its compiled type-store is:
+  `ldr w0,[x24,x22]; add x16,x0,x22; sub x16,x16,#4; str w19,[x16]` - it loads
+  [proc] (the process's FIRST WORD = the name field) and stores the type at
+  [[proc]+base-4] instead of [proc-4].  The dead-pool-heap variant compiles the
+  same pattern correctly (`str w19,[x24+x22-4]`).  Source difference:
+  dead-pool uses `(set! (-> (-> proc) type) type-to-make)` (double deref),
+  dead-pool-heap uses `(set! (-> proc type) type-to-make)`.
+- The type tag value 0x43c4f84 is the CONTINUATION of the time-of-day-tick
+  behavior's suspend call (segment offset 0xf84 = the instruction after the
+  `blr x16` at 0xf80 that calls the thread's suspend-hook).  The process's
+  main-thread pc slot (thread+0x14) holds a DIFFERENT continuation (0x44ec89c),
+  so the type slot holds an EARLIER continuation.
+
+Honest boundary: the exact writer of the process's type slot (which component
+stores the 0x43c4f84 continuation into [proc-4]) is not yet proven.  The
+double-deref in the dead-pool get-process and the thread-suspend/process-start
+machinery are the two prime suspects.  The next bounded probe is to identify
+the writer via a C-side trace of the get-process/activate stores or a
+watchpoint on [0x206680], not to patch game source around it.
+
+## Honest status
+
+S2.1 is NOT PASS.  The dedicated-code-region fix is verified (code no longer
+lives in the heap; the old overlap address reads 0), but the dispatcher fault
+persists with a newly-characterized mechanism (process type tag = a behavior
+continuation).  A1.0/A1.1/A1.2 remain PASS.

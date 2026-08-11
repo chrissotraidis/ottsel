@@ -1708,3 +1708,25 @@ return address, not the call-site continuation
 - Fix direction: place no-emit code segments in a dedicated region above the
   global heap (fixed code base above GLOBAL_HEAP_END, own cursor), separate
   from runtime allocations.
+
+## 2026-08-10 (BOT9 cont 13) — dedicated code region fix applied; overlap theory DISPROVEN; process type tag = a behavior continuation
+
+- Implemented the S2.1 root-cause fix direction: main segments now live in a
+  dedicated region above the global heap (`OTTSEL_CODE_BASE` 0x3ebc000,
+  own cursor, limit 0x4ee0000) instead of at the heap's current pointer
+  (`game/kernel/jak1/klink.cpp`, OTTSEL_NO_EMIT main-segment branch).  Verified:
+  all placements in-region; old overlap address 0x2381704 now reads 0.
+- The overlap theory is DISPROVEN: the dispatcher fault persists with the type
+  tag now 0x43c4f84 (inside the NEW code region; old value 0x2381704).  The tag
+  tracks the code placement - it is a code-derived value, not a heap Type
+  overwritten by code.  The linker fix stays (code must not live in the heap).
+- New mechanism characterized with reliable in-process probes (extended fault
+  handler): the process node (0x206684, deterministic) has type tag =
+  0x43c4f84 = the CONTINUATION of the time-of-day-tick behavior's suspend call
+  (offset 0xf84, the instruction after the `blr` at 0xf80).  The spawn loads a
+  VALID type (0x14bfb84, 80-method time-of-day-proc type).  *default-dead-pool*
+  uses the dead-pool get-process whose compiled type-store double-derefs
+  (`str w19,[[proc]+x22-4]`), unlike dead-pool-heap (`str w19,[proc-4]`).
+- Next bounded probe: identify the exact writer of [proc-4] (C-side trace of
+  get-process/activate stores or a watchpoint); do not patch game source.
+- Evidence: docs/evidence/S2/s21-coderegion-* (boot21 = full probes).

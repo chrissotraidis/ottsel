@@ -975,10 +975,10 @@ index 859b7e13a..90f6e8b7e 100644
        // use a hack to just run the listener function if there's no GOAL kernel.
        if (ListenerFunction->value != s7.offset) {
 diff --git a/game/kernel/jak1/klink.cpp b/game/kernel/jak1/klink.cpp
-index fd7199959..f4fe71822 100644
+index fd7199959..e4d06b2b0 100644
 --- a/game/kernel/jak1/klink.cpp
 +++ b/game/kernel/jak1/klink.cpp
-@@ -14,6 +14,9 @@
+@@ -14,7 +14,34 @@
  
  #include "fmt/format.h"
  
@@ -986,9 +986,34 @@ index fd7199959..f4fe71822 100644
 +#include <sys/mman.h>
 +
  static constexpr bool link_debug_printfs = false;
++#ifdef OTTSEL_NO_EMIT
++namespace {
++// Ottsel S2.1: dedicated no-emit code region ABOVE the global heap.
++//
++// The no-emit linker used to place every main segment at the global heap's
++// current allocation pointer and advance the heap, so runtime heap allocations
++// (the game's deftype-created Type objects, kmalloc'd during linking and
++// top-levels) could land inside a later code segment's range and be
++// overwritten by code -- the process-tree node whose type tag pointed into the
++// time-of-day code segment (S2.1 root cause, 2026-08-10).  Main segments now
++// live in their own region starting just above GLOBAL_HEAP_END (page-aligned)
++// and growing upward with a private cursor; heap allocations can never reach
++// it, so code and runtime data never overlap.
++//
++// EE-offset layout (the whole region stays RW until jak1_finish flips only the
++// code pages of each segment to RX; static-data pages stay writable):
++//   [OTTSEL_CODE_BASE .. OTTSEL_CODE_LIMIT)  main segments (cumulative)
++//   [0x04EE0000 .. 0x04EF0000)               reserved transient top-level slot
++//   [0x04F00000 .. 0x04F20000)               fixed C-export stub arenas A/B
++constexpr u32 OTTSEL_CODE_BASE = (GLOBAL_HEAP_END + 0x3fff) & ~0x3fffu;  // 0x3ebc000
++constexpr u32 OTTSEL_CODE_LIMIT = 0x04EE0000;  // just below the stub arenas
++u32 g_ottsel_code_cur = OTTSEL_CODE_BASE;
++}  // namespace
++#endif
  /*!
   * Make progress on linking.
-@@ -74,7 +77,54 @@ uint32_t cross_seg_dist_link_v3(Ptr<uint8_t> link,
+  */
+@@ -74,7 +101,54 @@ uint32_t cross_seg_dist_link_v3(Ptr<uint8_t> link,
    // both 32-bit and 64-bit pointer links are supported, though 64-bit ones are no longer in use.
    // we still support it just in case we want to run ancient code.
    if (size == 4) {
@@ -1043,7 +1068,7 @@ index fd7199959..f4fe71822 100644
    } else if (size == 8) {
      *Ptr<int64_t>(offset_of_patch).c() = diff;
    } else {
-@@ -160,6 +210,8 @@ uint32_t symlink_v3(Ptr<uint8_t> link, Ptr<uint8_t> data) {
+@@ -160,6 +234,8 @@ uint32_t symlink_v3(Ptr<uint8_t> link, Ptr<uint8_t> data) {
      uint32_t offset = offsets.c()[i];
      seek += 4;
      auto data_ptr = (data + offset).cast<int32_t>();
@@ -1052,7 +1077,7 @@ index fd7199959..f4fe71822 100644
  
      if (*data_ptr == -1) {
        // a "-1" indicates that we should store the address.
-@@ -168,6 +220,8 @@ uint32_t symlink_v3(Ptr<uint8_t> link, Ptr<uint8_t> data) {
+@@ -168,6 +244,8 @@ uint32_t symlink_v3(Ptr<uint8_t> link, Ptr<uint8_t> data) {
        // otherwise store the offset to st.  Eventually this should become an s16 instead.
        *(data + offset).cast<int32_t>() = sym_offset;
      }
@@ -1061,7 +1086,7 @@ index fd7199959..f4fe71822 100644
    }
  
    return seek;
-@@ -217,7 +271,33 @@ uint32_t link_control::jak1_work_v3() {
+@@ -217,7 +295,35 @@ uint32_t link_control::jak1_work_v3() {
          if (ofh->code_infos[seg_id].size == 0) {
            ofh->code_infos[seg_id].offset = 0;
          } else {
@@ -1072,30 +1097,32 @@ index fd7199959..f4fe71822 100644
 +#endif
            Ptr<u8> src(ofh->code_infos[seg_id].offset);
 +#ifdef OTTSEL_NO_EMIT
-+          // Ottsel H3 no-emit: the main segment contains code followed by
-+          // static data that GOAL writes at runtime (new 'static objects).
-+          // jak1_finish flips ONLY the code pages to RX and keeps the static
-+          // data pages writable, so allocate the segment page-aligned (whole
-+          // 16KB pages) and let subsequent heap allocations start on a fresh
-+          // page.  The emitter pads static data to a page boundary and records
-+          // the code size in the object header (code_infos[].size covers the
-+          // whole segment).
++          // Ottsel S2.1: the main segment (code + static data) is placed in
++          // the dedicated code region above the global heap with its own
++          // cumulative cursor, never at the heap's allocation pointer -- so
++          // deftype-created Type objects (heap allocations) are never
++          // overwritten by later code segments.  jak1_finish still flips only
++          // the code pages (code_size) to RX; static-data pages stay RW.
 +          const uintptr_t page = (uintptr_t)sysconf(_SC_PAGESIZE);  // 16KB on Apple Silicon
-+          uint32_t seg_start = (m_heap->current.offset + page - 1) & ~(uint32_t)(page - 1);
++          uint32_t seg_start = g_ottsel_code_cur;
 +          uint32_t seg_end =
 +              seg_start + ((ofh->code_infos[seg_id].size + page - 1) & ~(uint32_t)(page - 1));
-+          if (seg_end > m_heap->top.offset) {
-+            MsgErr("dkernel: unable to malloc %d bytes for main-segment\n",
++          if (g_ottsel_code_cur == OTTSEL_CODE_BASE) {
++            lg::info("OTTSEL no-emit: dedicated code region 0x{:x}..0x{:x} (page 0x{:x})",
++                     OTTSEL_CODE_BASE, OTTSEL_CODE_LIMIT, (uint32_t)page);
++          }
++          if (seg_end > OTTSEL_CODE_LIMIT) {
++            MsgErr("dkernel: ottsel code region exhausted at 0x%x (need %d bytes)\n", seg_start,
 +                   ofh->code_infos[seg_id].size);
 +            return 1;
 +          }
-+          m_heap->current.offset = seg_end;
++          g_ottsel_code_cur = seg_end;
 +          ofh->code_infos[seg_id].offset = seg_start;
 +#else
            ofh->code_infos[seg_id].offset =
                kmalloc(m_heap, ofh->code_infos[seg_id].size, 0, "main-segment").offset;
            if (ofh->code_infos[seg_id].offset == 0) {
-@@ -225,6 +305,7 @@ uint32_t link_control::jak1_work_v3() {
+@@ -225,6 +331,7 @@ uint32_t link_control::jak1_work_v3() {
                     ofh->code_infos[seg_id].size);
              return 1;
            }
@@ -1103,7 +1130,7 @@ index fd7199959..f4fe71822 100644
            jak1::ultimate_memcpy(Ptr<u8>(ofh->code_infos[seg_id].offset).c(), src.c(),
                                  ofh->code_infos[seg_id].size);
          }
-@@ -233,6 +314,26 @@ uint32_t link_control::jak1_work_v3() {
+@@ -233,6 +340,26 @@ uint32_t link_control::jak1_work_v3() {
            ofh->code_infos[seg_id].offset = 0;
          } else {
            Ptr<u8> src(ofh->code_infos[seg_id].offset);
@@ -1130,7 +1157,7 @@ index fd7199959..f4fe71822 100644
            ofh->code_infos[seg_id].offset =
                kmalloc(m_heap, ofh->code_infos[seg_id].size, KMALLOC_TOP, "top-level-segment")
                    .offset;
-@@ -241,6 +342,7 @@ uint32_t link_control::jak1_work_v3() {
+@@ -241,6 +368,7 @@ uint32_t link_control::jak1_work_v3() {
                     ofh->code_infos[seg_id].size);
              return 1;
            }
@@ -1138,7 +1165,7 @@ index fd7199959..f4fe71822 100644
            jak1::ultimate_memcpy(Ptr<u8>(ofh->code_infos[seg_id].offset).c(), src.c(),
                                  ofh->code_infos[seg_id].size);
          }
-@@ -514,6 +616,17 @@ uint32_t link_control::jak1_work_v2() {
+@@ -514,6 +642,17 @@ uint32_t link_control::jak1_work_v2() {
   * Complete linking. This will execute the top-level code for v3 object files, if requested.
   */
  void link_control::jak1_finish(bool jump_from_c_to_goal) {
@@ -1156,7 +1183,7 @@ index fd7199959..f4fe71822 100644
    CacheFlush(m_code_start.c(), m_code_size);
    auto old_debug_segment = DebugSegment;
    if (m_keep_debug) {
-@@ -527,6 +640,8 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
+@@ -527,6 +666,8 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
  
    ObjectFileHeader* ofh = m_link_block_ptr.cast<ObjectFileHeader>().c();
    lg::debug("link finish: {}", m_object_name);
@@ -1165,7 +1192,7 @@ index fd7199959..f4fe71822 100644
    if (ofh->object_file_version == 3) {
      // todo check function type of entry
  
-@@ -540,12 +655,91 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
+@@ -540,12 +681,91 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
  
      // execute top level!
      if (m_entry.offset && (m_flags & LINK_FLAG_EXECUTE)) {
@@ -2222,10 +2249,10 @@ index 04e91eb0a..22bccf3e4 100644
 +}  // namespace Mips2C
 diff --git a/game/ottsel_cgolink_dump.cpp b/game/ottsel_cgolink_dump.cpp
 new file mode 100644
-index 000000000..34458988a
+index 000000000..f95205829
 --- /dev/null
 +++ b/game/ottsel_cgolink_dump.cpp
-@@ -0,0 +1,199 @@
+@@ -0,0 +1,207 @@
 +// Ottsel S2.1 debug (TEMPORARY): host-side replica of the Simulator's
 +// no-emit KERNEL.CGO + GAME.CGO link, then dump the linked code at fixed
 +// EE offsets.  The Simulator fault trace (s21-cf-boot.log) shows:
@@ -2408,6 +2435,14 @@ index 000000000..34458988a
 +  dump_region(0x1b2e00, 0x80, "rfn+0xc (sim 0x1f2e00)");
 +  dump_region(0x1ad4c4, 0x180, "throw-dispatch NO-TRACE (sim 0x1e5e54)");
 +  dump_region(0x1a6014, 0x180, "catch-frame-new NO-TRACE (sim 0x1e5b84?)");
++  // S2.1 dispatcher-loop fault: method dispatch on an object whose type tag
++  // is a game code address.  Sim addresses (host = sim - 0x40000):
++  //   faulting function 0x1e53e0 (host 0x1a53e0)
++  //   object 0x22f9f4     (host 0x1ef9f4)
++  //   "type" 0x2381704    (host 0x2341704)
++  dump_region(0x1a53e0, 0x280, "faulting dispatch fn (sim 0x1e53e0)");
++  dump_region(0x1ef9f0, 0x60, "object 0x22f9f4 (sim)");
++  dump_region(0x2341700, 0x60, "type 0x2381704 (sim)");
 +  // Scan the linked EE image for the throw-dispatch entry pattern
 +  // (mov x2,x0; add x16,x2,x22; ldur w0,[x16,#4]) and dump what we find.
 +  {
@@ -6699,10 +6734,10 @@ index f5b031f1a..52ba45e49 100644
        }
 diff --git a/tools/ottsel_a1/kernel_fn_dump.cpp b/tools/ottsel_a1/kernel_fn_dump.cpp
 new file mode 100644
-index 000000000..aa57858db
+index 000000000..87814ba5e
 --- /dev/null
 +++ b/tools/ottsel_a1/kernel_fn_dump.cpp
-@@ -0,0 +1,127 @@
+@@ -0,0 +1,188 @@
 +// Ottsel S2.1 diagnostic: name the gkernel function that calls the pc-prof
 +// C export (the pc=0 fault site).  Compiles the real kernel GOAL sources
 +// through the ARM64 goalc and prints every function name + code size, then
@@ -6782,14 +6817,27 @@ index 000000000..aa57858db
 +        }
 +      }
 +      size_t code_size = 0;
++      bool dispatch_pattern = false;
 +      try {
 +        CodeGenerator gen(target_fe, debug, GameVersion::Jak1, InstructionSet::ARM64);
-+        code_size = gen.emit_function_machine_code(f, 0).size();
++        auto bytes = gen.emit_function_machine_code(f, 0);
++        code_size = bytes.size();
++        // S2.1 dispatch-fault pattern: ldur w0,[x16,#-0x4]; add x16,x0,x22,sxtx;
++        // ldur w1,[x16,#0x40] (method dispatch on an object's type tag).
++        for (size_t i = 0; i + 12 <= bytes.size(); i += 4) {
++          u32 w0, w1, w2;
++          std::memcpy(&w0, bytes.data() + i, 4);
++          std::memcpy(&w1, bytes.data() + i + 4, 4);
++          std::memcpy(&w2, bytes.data() + i + 8, 4);
++          if (w0 == 0xb85fc200 && w1 == 0x8b36e010 && w2 == 0xb8440201) {
++            dispatch_pattern = true;
++          }
++        }
 +      } catch (const std::exception&) {
 +        code_size = 0;
 +      }
-+      std::cout << (calls_pc_prof ? "PC_PROF: " : "        ") << f->name() << "  code="
-+                << code_size << " bytes\n";
++      std::cout << (calls_pc_prof ? "PC_PROF: " : dispatch_pattern ? "DISPATCH: " : "        ")
++                << f->name() << "  code=" << code_size << " bytes\n";
 +      if (f->name().find("anon-function-5") != std::string::npos) {
 +        for (auto& ir : f->code()) {
 +          auto* call = dynamic_cast<IR_FunctionCall*>(ir.get());
@@ -6803,6 +6851,54 @@ index 000000000..aa57858db
 +        CodeGenerator gen2(target_fe, debug, GameVersion::Jak1, InstructionSet::ARM64);
 +        auto bytes2 = gen2.emit_function_machine_code(f, 0);
 +        std::cout << "execute-process-tree code:";
++        for (size_t i = 0; i < bytes2.size(); i += 4) {
++          u32 w;
++          std::memcpy(&w, bytes2.data() + i, 4);
++          std::cout << " " << std::hex << w << std::dec;
++        }
++        std::cout << "\n";
++      }
++      if (f->name().find("get-process dead-pool") != std::string::npos) {
++        debug->clear();
++        CodeGenerator gen2(target_fe, debug, GameVersion::Jak1, InstructionSet::ARM64);
++        auto bytes2 = gen2.emit_function_machine_code(f, 0);
++        std::cout << "get-process-dead-pool code:";
++        for (size_t i = 0; i < bytes2.size(); i += 4) {
++          u32 w;
++          std::memcpy(&w, bytes2.data() + i, 4);
++          std::cout << " " << std::hex << w << std::dec;
++        }
++        std::cout << "\n";
++        debug->clear();
++        CodeGenerator genx(target_fe, debug, GameVersion::Jak1, InstructionSet::X86);
++        auto bytesx = genx.emit_function_machine_code(f, 0);
++        std::cout << "get-process-dead-pool x86:";
++        for (size_t i = 0; i < bytesx.size(); i += 4) {
++          u32 w;
++          std::memcpy(&w, bytesx.data() + i, 4);
++          std::cout << " " << std::hex << w << std::dec;
++        }
++        std::cout << "\n";
++      }
++      if (f->name() == "(method new process-tree)" || f->name() == "(method new process)") {
++        debug->clear();
++        CodeGenerator gen2(target_fe, debug, GameVersion::Jak1, InstructionSet::ARM64);
++        auto bytes2 = gen2.emit_function_machine_code(f, 0);
++        std::cout << f->name() << " code:";
++        for (size_t i = 0; i < bytes2.size(); i += 4) {
++          u32 w;
++          std::memcpy(&w, bytes2.data() + i, 4);
++          std::cout << " " << std::hex << w << std::dec;
++        }
++        std::cout << "\n";
++      }
++      if (f->name().find("thread-suspend") != std::string::npos ||
++          f->name().find("thread-resume") != std::string::npos ||
++          f->name().find("run-now-in-process") != std::string::npos) {
++        debug->clear();
++        CodeGenerator gen2(target_fe, debug, GameVersion::Jak1, InstructionSet::ARM64);
++        auto bytes2 = gen2.emit_function_machine_code(f, 0);
++        std::cout << f->name() << " code:";
 +        for (size_t i = 0; i < bytes2.size(); i += 4) {
 +          u32 w;
 +          std::memcpy(&w, bytes2.data() + i, 4);
