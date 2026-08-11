@@ -541,3 +541,26 @@ proven - candidates: the thread-resume sp restoration, the process-start
 stack setup (catch-frame/run-now-in-process), or a corrupted thread sp field.
 Next probe: trace the camera's first-resume sp source; do not patch game
 source around it.
+
+## The camera's stack frames overflowed its 4KB process stack (2026-08-10, BOT9 cont 16)
+
+The camera-combiner's process allocation = [0x206680, 0x2076f0) with its
+dynamic stack at [0x2066f4, 0x2076f4) (allocated-length 0x1000).  Its
+execution, however, ran with sp = 0x206690 - 0x64 BELOW its own stack base
+and 0x10 above its own type tag - so its first frame push (the call shim's
+`str x30, [sp,#-16]!`) overwrote the type tag with a continuation (0x43c4f84),
+and its deep call chain (a valid?-heavy frame pattern {0x3ec0634, 0x70, 0, 0}
+at every 16 bytes) filled [0x202000..0x207000) - the whole *debug-dead-pool*
+region - corrupting the pool and the spare processes' type tags.
+
+The camera thread's stack-top = 0x1d8000 (the fake scratchpad:
+*fake-scratchpad-stack* = a 128KB global-heap array at ~0x1d0000, stack at
++32KB) but the saved sp = 0x206690 - the execution did NOT run on the fake
+scratchpad.  The wrong sp source is still open (thread-resume sp restoration,
+a corrupted thread sp field, or a wrong stack arg); the mechanism of the
+corruption itself is proven.
+
+Honest status: S2.1 NOT PASS.  This is a process-thread/stack issue, not a
+compiler encoding bug and not a code/heap overlap.  Next probe: find why the
+camera's thread sp = 0x206690 (log the thread sp field at first resume /
+trace the stack arg through activate -> cpu-thread new).

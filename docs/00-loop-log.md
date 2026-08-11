@@ -1765,3 +1765,19 @@ return address, not the call-site continuation
   process-start stack setup, or a corrupted sp field).  Next probe: trace the
   camera's first-resume sp.  Do not patch game source around it.
 - Evidence: docs/evidence/S2/s21-stack-overflow-*.
+
+## 2026-08-10 (BOT9 cont 16) — camera stack frames overflowed its 4KB process stack, corrupting the dead-pool region
+
+- The camera-combiner's process stack = [0x2066f4, 0x2076f4) (4KB) but its
+  execution ran at sp = 0x206690 (0x64 below its stack base, 0x10 above its
+  type tag): the first frame push overwrote the type tag with a continuation
+  (0x43c4f84), and the deep valid?-heavy chain filled [0x202000..0x207000)
+  with {valid?-continuation, 0x70, 0, 0} frames - corrupting the pool and
+  spare processes' type tags.
+- The camera thread's stack-top = 0x1d8000 (fake scratchpad) but the saved sp
+  = 0x206690 - execution did not run on the fake scratchpad.
+- Honest: the wrong-sp source is open (resume sp restoration / corrupted sp
+  field / wrong stack arg); the corruption mechanism is proven.  Next probe:
+  log the thread sp at first resume / trace the stack arg through
+  activate -> cpu-thread new.  Do not patch game source.
+- Evidence: docs/evidence/S2/s21-stack-source-*.
