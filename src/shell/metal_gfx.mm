@@ -14,6 +14,8 @@
 
 #include "game/graphics/gfx.h"
 #include "common/texture/texture_conversion.h"
+#include "common/dma/dma_chain_read.h"
+#include "common/dma/gs.h"
 
 #include "metal_shell.h"
 
@@ -169,7 +171,42 @@ std::shared_ptr<GfxDisplay> gfx_make_display(int, int, const char*, GfxGlobalSet
 void gfx_exit() {}
 u32 gfx_vsync() { return 0; }
 u32 gfx_sync_path() { return 0; }
-void gfx_send_chain(const void*, u32) {}
+// S2.2 renderer core (first piece): walk the DMA chain with the runtime's
+// own DmaFollower and log the GIF transfer structure.  The IMAGE payloads
+// (texture texels) and the register-setup/draw packets are then routed to
+// the VRAM model + rasterizer.
+void gfx_send_chain(const void* data, u32 offset) {
+  if (!data) {
+    return;
+  }
+  static bool ottsel_dma_logged = false;
+  bool log_dma = !ottsel_dma_logged;
+  if (log_dma) {
+    ottsel_dma_logged = true;
+  }
+  const u8* base = (const u8*)data;
+  DmaFollower dma(base, offset);
+  int count = 0;
+  while (!dma.ended() && count < 32) {
+    DmaTransfer t = dma.read_and_advance();
+    count++;
+    if (t.size_bytes == 0) {
+      continue;
+    }
+    const u8* g = t.data;
+    GifTag tag(g);
+    u32 off = (u32)(g - base);
+    if (log_dma) {
+      lg::info("OTTSEL DMA: t{} size={} off=0x{:x} flg={} nloop={} eop={} nreg={}", count,
+               t.size_bytes, off, (int)tag.flg(), tag.nloop(), (int)tag.eop(), tag.nreg());
+    }
+    if (log_dma && tag.flg() == GifTag::Format::IMAGE) {
+      u32 qw = tag.nloop();
+      lg::info("OTTSEL DMA: t{} IMAGE {} qwords at 0x{:x}: {:08x} {:08x} {:08x} {:08x}", count, qw,
+               off + 16, *(u32*)(g + 16), *(u32*)(g + 20), *(u32*)(g + 24), *(u32*)(g + 28));
+    }
+  }
+}
 void gfx_texture_upload_now(const u8* tpage, int mode, u32 s7_ptr) {
   (void)mode;
   if (!g_metal || !tpage) {
