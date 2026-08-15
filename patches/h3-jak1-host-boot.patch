@@ -101,10 +101,10 @@ index e7f4dd432..1c70697ec 100644
    auto decomp_data = compression::decompress_zstd(data.data(), data.size());
 diff --git a/game/ios_stubs.cpp b/game/ios_stubs.cpp
 new file mode 100644
-index 000000000..8ab74ec02
+index 000000000..9199b366f
 --- /dev/null
 +++ b/game/ios_stubs.cpp
-@@ -0,0 +1,344 @@
+@@ -0,0 +1,354 @@
 +// Ottsel S1.3 — stub implementations for the iOS (OTTSEL_IOS) build of the
 +// no-emit runtime.  The iOS shell is a headless-renderer build: graphics,
 +// sound, IOP and listener subsystems are not linked, so the few symbols the
@@ -151,12 +151,22 @@ index 000000000..8ab74ec02
 +
 +GfxGlobalSettings g_global_settings;
 +
++// Ottsel S2.2: the shell registers its Metal GfxRendererModule here (from
++// src/shell/metal_gfx.mm via ottsel_metal_gfx_register); the game's texture
++// uploads then decode and present through the CAMetalLayer instead of being
++// dropped.  Set by the shell during startup; null before that.
++const GfxRendererModule* g_ottsel_metal_renderer = nullptr;
++
 +const GfxRendererModule* GetCurrentRenderer() {
-+  // No renderer in the S1 shell; callers guard against nullptr.
-+  return nullptr;
++  return g_ottsel_metal_renderer;
 +}
 +
 +}  // namespace Gfx
++
++// Global-scope setter (called from the shell's metal_gfx.mm).
++void ottsel_metal_gfx_set_renderer(const GfxRendererModule* m) {
++  Gfx::g_ottsel_metal_renderer = m;
++}
 +
 +// --- PS2 GS interface stubs (no graphics on iOS) ---
 +u32 sceGsSyncV(u32 mode) {
@@ -838,7 +848,7 @@ index c7ee549da..a92020035 100644
  
  /*!
 diff --git a/game/kernel/common/kmachine.cpp b/game/kernel/common/kmachine.cpp
-index bc2c52d86..7e34bc51a 100644
+index bc2c52d86..cdd36d9bc 100644
 --- a/game/kernel/common/kmachine.cpp
 +++ b/game/kernel/common/kmachine.cpp
 @@ -73,6 +73,11 @@ void InitCD() {
@@ -853,6 +863,48 @@ index bc2c52d86..7e34bc51a 100644
    if (!SplashScreen) {
      lg::info("InitVideo: skipping splash!\n");
      return;
+@@ -486,12 +491,41 @@ void pc_memmove(u32 dst, u32 src, u32 size) {
+ }
+ 
+ void send_gfx_dma_chain(u32 /*bank*/, u32 chain) {
++#ifdef OTTSEL_IOS
++  // S2.2 probe: capture the first DMA chain the game submits (the renderer
++  // is stubbed on iOS) so the chain contents can be decoded offline.
++  {
++    static u32 ottsel_chain_count = 0;
++    if (ottsel_chain_count < 8 && chain < 0x08000000) {
++      u32* c = (u32*)(g_ee_main_mem + chain);
++      lg::info("OTTSEL CHAIN {}: bank-off 0x{:x} words: {:08x} {:08x} {:08x} {:08x} {:08x} "
++               "{:08x} {:08x} {:08x}",
++               ottsel_chain_count, chain, c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7]);
++      ottsel_chain_count++;
++    }
++  }
++#endif
+   if (Gfx::GetCurrentRenderer()) {
+     Gfx::GetCurrentRenderer()->send_chain(g_ee_main_mem, chain);
+   }
+ }
+ 
+ void pc_texture_upload_now(u32 page, u32 mode) {
++#ifdef OTTSEL_IOS
++  // S2.2 probe: capture the texture pages the game uploads (the renderer is
++  // stubbed on iOS) so the tpage format + contents can be decoded.
++  {
++    static u32 ottsel_tpage_count = 0;
++    if (ottsel_tpage_count < 12 && page >= 0x080000 && page < 0x08000000) {
++      u32* tp = (u32*)(g_ee_main_mem + page);
++      lg::info("OTTSEL TPAGE {}: page=0x{:x} mode={} hdr: {:08x} {:08x} {:08x} {:08x} {:08x} "
++               "{:08x} {:08x} {:08x}",
++               ottsel_tpage_count, page, mode, tp[0], tp[1], tp[2], tp[3], tp[4], tp[5], tp[6],
++               tp[7]);
++      ottsel_tpage_count++;
++    }
++  }
++#endif
+   if (Gfx::GetCurrentRenderer()) {
+     Gfx::GetCurrentRenderer()->texture_upload_now(Ptr<u8>(page).c(), mode, s7.offset);
+   }
 diff --git a/game/kernel/common/kscheme.cpp b/game/kernel/common/kscheme.cpp
 index ae43de721..cc0b9db58 100644
 --- a/game/kernel/common/kscheme.cpp

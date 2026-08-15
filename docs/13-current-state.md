@@ -1,5 +1,22 @@
 # 13 — Current state (handoff snapshot)
 
+## 2026-08-15 update (BOT14) — S2.2 Metal backend wired; first correct frame pending
+
+S2.1's stable title boot is committed (3d15997).  S2.2 progress this loop: a
+Metal GfxRendererModule (`src/shell/metal_gfx.mm`) is registered into the
+runtime's Gfx backend -- the game's texture uploads now route through Metal
+and present through the CAMetalLayer (the first game-driven present on the
+Simulator; evidence `docs/evidence/S2/s22-bot14-metal-backend.*`).  The
+decoded frame is not yet a correct Jak image: the GS texels arrive via the
+DMA chains (GIF IMAGE packets) into the converter's VRAM, not directly in
+the tpage, and the PSMT8 CLUT needs the correct palette region.  The renderer
+texture-data flow + the direct-draw rasterization (title backdrop) is the
+next step (see `docs/reports/2026-08-15-bot15-handoff.md`).
+
+---
+
+# 13 — Current state (handoff snapshot)
+
 ## 2026-08-15 update (BOT13) — stable title boot; enter-state fault fixed
 
 The previous deterministic blocker is FIXED and verified (one boot, one

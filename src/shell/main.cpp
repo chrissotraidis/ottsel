@@ -232,6 +232,10 @@ int main(int argc, char** argv) {
     fprintf(stderr, "ottsel S2.0: Metal init failed; using SDL software surface\n");
   }
 
+  // S2.2: register the shell's Metal instance as the Gfx renderer backend so
+  // the game's texture uploads decode and present through the CAMetalLayer.
+  ottsel_metal_gfx_register(g_metal);
+
   std::string bundle = SDL_GetBasePath();
   ottsel_ios_set_bundle_dir(bundle);
   g_log_path = bundle + "ottsel-runtime.log";
@@ -269,7 +273,30 @@ int main(int argc, char** argv) {
                 dw, dh, g_font_scale);
         dump_surface_ppm();
       }
-      ottsel_metal_present(g_metal, g_rgba.data(), g_surf_w, g_surf_h);
+      // S2.2: once the game backend has decoded a frame (the game's texture
+      // uploads through the Metal Gfx module), present that instead of the
+      // shell log surface.  The texture is scaled to the drawable.
+      const unsigned char* game_frame = nullptr;
+      int gw = 0, gh = 0;
+      if (ottsel_metal_gfx_game_frame(&game_frame, &gw, &gh)) {
+        static std::vector<unsigned char> scaled;
+        scaled.resize((size_t)g_surf_w * g_surf_h * 4);
+        for (int y = 0; y < g_surf_h; y++) {
+          for (int x = 0; x < g_surf_w; x++) {
+            int sx = gw <= 1 ? 0 : (x * gw / g_surf_w);
+            int sy = gh <= 1 ? 0 : (y * gh / g_surf_h);
+            const unsigned char* src = game_frame + ((size_t)sy * gw + sx) * 4;
+            unsigned char* dst = scaled.data() + ((size_t)y * g_surf_w + x) * 4;
+            dst[0] = src[0];
+            dst[1] = src[1];
+            dst[2] = src[2];
+            dst[3] = 255;
+          }
+        }
+        ottsel_metal_present(g_metal, scaled.data(), g_surf_w, g_surf_h);
+      } else {
+        ottsel_metal_present(g_metal, g_rgba.data(), g_surf_w, g_surf_h);
+      }
       if ((g_frame++ % 300) == 0) {
         dump_surface_ppm();
       }

@@ -189,11 +189,12 @@ xcrun --sdk "$SDK" clang "${COMMON_FLAGS[@]}" -c "$SLICE_DIR/slice.s" -o "$OBJ/a
 compile "$REPO_DIR/src/shell/main.cpp" "$OBJ/shell_main.o"
 compile "$REPO_DIR/src/shell/ios_boot.cpp" "$OBJ/ios_boot.o"
 compile_objc "$REPO_DIR/src/shell/metal_shell.mm" "$OBJ/metal_shell.o"
+compile_objc "$REPO_DIR/src/shell/metal_gfx.mm" "$OBJ/metal_gfx.o"
 xcrun --sdk "$SDK" clang++ "${COMMON_FLAGS[@]}" -fobjc-arc \
   "${INCS[@]}" -I"$SLICE_DIR" -c "$REPO_DIR/src/shell/a11_slice_runner.mm" -o "$OBJ/a11_slice_runner.o"
 
 xcrun --sdk "$SDK" clang++ "${COMMON_FLAGS[@]}" \
-  "$OBJ/shell_main.o" "$OBJ/ios_boot.o" "$OBJ/metal_shell.o" \
+  "$OBJ/shell_main.o" "$OBJ/ios_boot.o" "$OBJ/metal_shell.o" "$OBJ/metal_gfx.o" \
   "$OBJ/a11_slice_runner.o" "$OBJ/a11_slice.o" \
   -I"$SLICE_DIR" \
   "$APP_BUILD/libottsel-runtime.a" "$SDL_BUILD/libSDL3.a" \

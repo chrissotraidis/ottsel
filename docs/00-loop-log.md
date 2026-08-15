@@ -1,5 +1,24 @@
 # 00 — Loop log
 
+## 2026-08-15 — BOT14: S2.2 Metal Gfx backend wired (first game-driven present)
+
+- **Acted:** implemented + wired a Metal GfxRendererModule
+  (`src/shell/metal_gfx.mm`) into the iOS runtime's Gfx backend (previously
+  stubbed -> game draw/upload calls were dropped).  The game's texture
+  uploads now decode/present through the CAMetalLayer (bundle log
+  "OTTSEL GFX: presented game frame 64x64"; the shell log surface is
+  replaced by game-driven content).  Fixed the `bad_function_call` crash
+  (unset `set_pmode_alp`).
+- **Verified:** one boot, zero faults, dispatcher past 86k iterations, the
+  present path works (screenshot shows the game texture scaled fullscreen).
+- **Honest boundary:** the decoded 64x64 frame is not a correct Jak image --
+  the tpage's segment data is not the raw texels (the GS texels arrive via
+  the DMA-chain GIF IMAGE packets into the converter's VRAM), and the PSMT8
+  CLUT heuristic picks the wrong palette.  The renderer texture-data flow
+  (send_chain IMAGE -> VRAM + tpage format -> download_rgba8888) is the next
+  step; the title backdrop (tpage-1609) is the expected first correct frame.
+- **Docs:** evidence `s22-bot14-metal-backend.md` + png/log; BOT15 handoff
+  written.
 ## 2026-08-15 — BOT13: title-state fix — stable title boot (S2.1 boundary)
 
 - **Acted:** fixed the deterministic `enter-state` fault (state 0 -> `blr`

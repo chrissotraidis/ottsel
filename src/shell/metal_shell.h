@@ -31,6 +31,16 @@ int ottsel_metal_drawable_size(OttselMetal* m, int* w, int* h);
 
 void ottsel_metal_destroy(OttselMetal* m);
 
+// Ottsel S2.2: register the shell's Metal instance as the Gfx renderer
+// backend so the game's texture uploads (pc_texture_upload_now) decode and
+// present through the CAMetalLayer.  Returns the registered renderer pointer
+// (or nullptr if the shell has no Metal instance).
+const void* ottsel_metal_gfx_register(void* metal);
+
+// S2.2: if the game backend decoded a frame, return it (RGBA8, top-left
+// origin) and 1; otherwise return 0.
+int ottsel_metal_gfx_game_frame(const unsigned char** rgba, int* w, int* h);
+
 #ifdef __cplusplus
 }
 #endif
