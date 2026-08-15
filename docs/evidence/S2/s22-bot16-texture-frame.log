@@ -1,0 +1,31 @@
+[57:49] [debug] OTTSEL_IOS: EE main memory mapped at 0x0000007000000000
+[57:49] [info] gkernel: global heap 0x0013fd20 to 0x03eb82e0 (size 61.470 MB)
+[57:49] [info] Initialized GOAL heap in 0.04 ms
+[57:49] [warn] OTTSEL_NO_EMIT: listener code receive is disabled
+[57:49] [info] OTTSEL_IOS: reading KERNEL.CGO from /Users/chrissotraidis/Library/Developer/CoreSimulator/Devices/08636791-2675-4675-8335-EF72EF954DCF/data/Containers/Bundle/Application/4DCC01F3-8EBE-4DAF-92EB-7E03286C5808/OttselShell.app/KERNEL.CGO
+[57:49] [info] OTTSEL_IOS: KERNEL.CGO has 8 objects
+[57:49] [info] OTTSEL_IOS: linking object 0 (gcommon) size 77662
+[57:49] [info] OTTSEL_IOS dbg: obj_data=0x3cba35a code_infos[0].offset=0x3cc25e6 size=0x8c38
+[57:49] [info] OTTSEL no-emit: dedicated code region 0x3ebc000..0x4ee0000 (page 0x4000)
+[57:49] [debug] OTTSEL no-emit: stub arena A flipped RX (13320 bytes used)
+[57:49] [debug] link finish: gcommon
+[57:49] [debug] OTTSEL no-emit: top-level seg 2 offset 0x3cb0000 size 0x4184
+[57:49] [debug] OTTSEL no-emit: top-level code pages flipped RX (481099972608..481099988992)
+[57:49] [debug] OTTSEL no-emit: main seg 0 offset 0x3ebc000 size 0x8c38 code 0x8000
+[57:49] [debug] OTTSEL n...
+[57:51] [info] OTTSEL TPAGE probe: id=0x1cf len=122 size=56320 mip0=14016 mode=-1
+[57:51] [info] OTTSEL GFX: presented game frame 128x64 (tpage 0x1cf tex 44)
+[57:51] [info] OTTSEL TPAGE probe: id=0x2 len=55 size=36864 mip0=4352 mode=-1
+[57:51] [info] OTTSEL GFX: presented game frame 128x128 (tpage 0x2 tex 43)
+[57:51] [info] OTTSEL TPAGE probe: id=0x370 len=1 size=1600 mip0=1024 mode=-1
+[57:51] [info] OTTSEL TPAGE probe: id=0x100 len=4 size=3840 mip0=0 mode=-1
+[57:51] [info] OTTSEL TPAGE probe: id=0x4fe len=4 size=41024 mip0=0 mode=-1
+[57:51] [info] OTTSEL GFX: presented game frame 256x512 (tpage 0x4fe tex 2)
+[57:51] [info] OTTSEL TPAGE probe: id=0x3e len=13 size=7360 mip0=0 mode=-1
+[57:51] [info] OTTSEL TPAGE probe: id=0x5fc len=10 size=4288 mip0=896 mode=-1
+[57:51] [info] OTTSEL GFX: presented game frame 256x512 (tpage 0x4fe tex 2)
+[57:51] [info] OTTSEL TPAGE probe: id=0x408 len=9 size=61696 mip0=0 mode=-1
+[57:51] [info] OTTSEL GFX: presented game frame 256x512 (tpage 0x408 tex 3)
+[57:51] [info] OTTSEL TPAGE probe: id=0x1a0 len=1 size=4096 mip0=0 mode=2
+GAMEPLAY: enter title
+GAMEPLAY: enter title
