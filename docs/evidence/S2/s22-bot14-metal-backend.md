@@ -85,3 +85,26 @@ TextureConverter's VRAM by the renderer), and the tpage
 (texture_upload_now) supplies the format.  The minimal Metal renderer must
 implement: DmaFollower walk -> GifTag parse -> register-setup state ->
 IMAGE texel -> VRAM swizzle -> draw rasterize (direct/background first).
+
+
+## GS register-setup decode (verified 2026-08-15, third pass)
+
+The chain walk in the Metal backend now decodes the PACKED GIF AD records
+(value = bytes[0..7], register address = byte[8], per the DirectRenderer's
+handle_ad).  The first transfer's registers (verified live, zero faults):
+
+- ALPHA_1 (0x42) = 0x44
+- ZBUF_1   (0x4e) = 0x10001c0
+- TEST_1   (0x47) = 0x5000e
+- PABE     (0x49) = 0
+- CLAMP_1  (0x08) = 5
+- TEX1_1   (0x14) = 0x60
+- TEXA     (0x3b) = 0x80000000
+- TEXCLUT  (0x1c) = 4
+- FOGCOL   (0x3d) = 0xc88029
+
+The first chain (32-transfer walk) contains only these register-setup
+packets (repeated per bucket); the draw packets (PACKED nreg=3 with vertex
+floats, REGLIST nreg=9) and the GIF IMAGE texture payloads appear in the
+later per-frame chains.  The draw packet decode + IMAGE->VRAM routing +
+rasterization are the remaining renderer core.
