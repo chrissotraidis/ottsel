@@ -54,3 +54,34 @@ needs the renderer texture-data flow).
 - `scripts/build-ios.sh`: compiles/links metal_gfx.mm.
 - Evidence: `s22-bot14-metal-backend.png`, `s22-bot14-metal-backend.log`
   (head/tail sample), fault log 0 bytes.
+
+
+## DMA chain structure (decoded 2026-08-15, second pass)
+
+The first submitted chain (bank-off 0x50c810, captured by the OTTSEL CHAIN
+probe) has this structure (DmaTag kinds per common/dma/dma.h):
+
+- 0x50c810: tag {0x50000000, addr 0x506310} = kind CALL (qwc=0) -> jumps to
+  the default-registers chain at 0x506310; the renderer expects this first
+  CALL to be the common GS register setup ("The first thing the DMA chain
+  should be a call to a common default-registers chain" -
+  OpenGLRenderer::dispatch_buckets_jak1).
+- 0x50c820+: tags {0x20000000, addr 0xce8360..} = kind NEXT (qwc=0) -> the
+  bucket draw data (each NEXT points at a tag list like
+  {CALL 0x506310, NEXT 0x50c830, ...}).
+- At 0x506310: {0x1000000a, 0x00000000} = DmaTag kind CNT (qwc=0x000a = 10
+  qwords) -> the transfer data = 160 bytes at 0x506320; followed by
+  {0x60000000,...} = kind RET (returns from the CALL).
+- The transfer at 0x506320 begins with a GifTag {data[0]=0x9000000000008001:
+  nloop=1, eop=1, flg=2 (IMAGE), nreg=2}, then the A+D register values
+  (0x44=DIMX, 0x42=ALPHA_1, 0x4e=ZBUF_1, 0x0e=TEX1_1?/0x47=TEST_1,
+  0x49=PABE, 0x3b=TEXA, 0x3d=FOGCOL, 0x1c=TEXCLUT, 0x60=SIGNAL ...) - the
+  per-frame GS register setup.
+
+The bucket draws (the NEXT-tagged data) are what the renderer's
+bucket dispatcher rasterizes; the background/direct draws come first.  The
+texture texels arrive as GIF IMAGE payloads (routed into the
+TextureConverter's VRAM by the renderer), and the tpage
+(texture_upload_now) supplies the format.  The minimal Metal renderer must
+implement: DmaFollower walk -> GifTag parse -> register-setup state ->
+IMAGE texel -> VRAM swizzle -> draw rasterize (direct/background first).
