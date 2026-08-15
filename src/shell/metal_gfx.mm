@@ -179,10 +179,10 @@ void gfx_send_chain(const void* data, u32 offset) {
   if (!data) {
     return;
   }
-  static bool ottsel_dma_logged = false;
-  bool log_dma = !ottsel_dma_logged;
+  static int ottsel_dma_logged = 0;
+  bool log_dma = ottsel_dma_logged < 3;
   if (log_dma) {
-    ottsel_dma_logged = true;
+    ottsel_dma_logged++;
   }
   const u8* base = (const u8*)data;
   DmaFollower dma(base, offset);
