@@ -1,5 +1,23 @@
 # 00 — Loop log
 
+## 2026-08-15 — BOT13: title-state fix — stable title boot (S2.1 boundary)
+
+- **Acted:** fixed the deterministic `enter-state` fault (state 0 -> `blr`
+  EE+0).  Evidence chain: in-process probes disproved the BOT12
+  "state-symbol mislink" (all target state symbols correct); the fault was
+  `(go target-title)` reading a zero symbol value because title-obs.gc (the
+  defining object) was never linked -- the raw ISO TIT.DGO's PS2-v3 GOAL
+  objects were skipped by the DGO serve tag test, and GAME.CGO has no
+  title-obs.  Runtime-side fixes: recompiled TIT.DGO shipped (no-emit v3
+  title-obs/static-screen), DGO serve accepts the "GOAL" magic tag, and
+  `link_begin` completes v3 links synchronously.
+- **Verified:** zero faults; title-obs/static-screen link + top-levels run;
+  target executes title-obs code; "GAMEPLAY: enter title" twice; village1
+  load boundary handled ROM-safely; full process tree (24 nodes); dispatcher
+  past 121k iterations; Metal surface presenting.  Evidence:
+  `docs/evidence/S2/s21-bot13-titlefix.md` + `s21-bot13-titlefix-*`.
+- **Docs:** STATUS / 13-current-state updated; BOT14 handoff written at
+  `docs/reports/2026-08-15-bot14-handoff.md`.
 ## 2026-08-11 — BOT12: boot reaches the title screen; state-symbol mislink
 
 - **Acted:** three verified fixes advanced the boot from the display-spawn

@@ -214,7 +214,13 @@ for f in ART.CGO COMMON.CGO; do
   cp "$WORKTREE/iso_data/jak1/CGO/$f" "$APP/iso_data/CGO/" 2>/dev/null || true
 done
 for f in TIT.DGO; do
-  cp "$WORKTREE/iso_data/jak1/DGO/$f" "$APP/iso_data/DGO/" 2>/dev/null || true
+  # S2.1: prefer the recompiled TIT.DGO (no-emit "GOAL"-format title-obs /
+  # static-screen objects define target-title); fall back to the ISO data.
+  if [ -f "$WORKTREE/out/jak1/iso/$f" ]; then
+    cp "$WORKTREE/out/jak1/iso/$f" "$APP/iso_data/DGO/" 2>/dev/null || true
+  else
+    cp "$WORKTREE/iso_data/jak1/DGO/$f" "$APP/iso_data/DGO/" 2>/dev/null || true
+  fi
 done
 cp "$WORKTREE/iso_data/jak1/VIS/TIT.VIS" "$APP/iso_data/TIT.VIS" 2>/dev/null || true
 plutil -lint "$APP/Info.plist" >/dev/null

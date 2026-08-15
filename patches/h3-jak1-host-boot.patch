@@ -1341,7 +1341,7 @@ index 859b7e13a..db8984015 100644
        // use a hack to just run the listener function if there's no GOAL kernel.
        if (ListenerFunction->value != s7.offset) {
 diff --git a/game/kernel/jak1/klink.cpp b/game/kernel/jak1/klink.cpp
-index fd7199959..e7098e364 100644
+index fd7199959..79a86d763 100644
 --- a/game/kernel/jak1/klink.cpp
 +++ b/game/kernel/jak1/klink.cpp
 @@ -14,7 +14,34 @@
@@ -1379,7 +1379,7 @@ index fd7199959..e7098e364 100644
  /*!
   * Make progress on linking.
   */
-@@ -74,7 +101,54 @@ uint32_t cross_seg_dist_link_v3(Ptr<uint8_t> link,
+@@ -74,7 +101,63 @@ uint32_t cross_seg_dist_link_v3(Ptr<uint8_t> link,
    // both 32-bit and 64-bit pointer links are supported, though 64-bit ones are no longer in use.
    // we still support it just in case we want to run ancient code.
    if (size == 4) {
@@ -1406,6 +1406,15 @@ index fd7199959..e7098e364 100644
 +      int64_t target_addr = int64_t(mine) + diff;
 +      int64_t pc_addr = int64_t(mine);
 +      int64_t page_delta = (target_addr >> 12) - (pc_addr >> 12);
++#ifdef OTTSEL_IOS
++      if (target_seg == MAIN_SEGMENT && link_data[1] >= 0x10000) {
++        lg::info("OTTSEL LINKSTAT: seg {} mine=0x{:x} tgt_off=0x{:x} patch=0x{:x} "
++                 "target_addr=0x{:x} page_delta={} lo12=0x{:x}",
++                 (int)current_seg, link_data[0], link_data[1], link_data[2],
++                 (uint32_t)target_addr, (int64_t)page_delta,
++                 (uint32_t)(target_addr & 0xFFF));
++      }
++#endif
 +      ASSERT(page_delta >= -(1 << 20) && page_delta < (1 << 20));
 +      uint32_t immlo = (uint32_t(page_delta) >> 0) & 0x3;
 +      uint32_t immhi = (uint32_t(page_delta) >> 2) & 0x7FFFF;
@@ -1434,7 +1443,7 @@ index fd7199959..e7098e364 100644
    } else if (size == 8) {
      *Ptr<int64_t>(offset_of_patch).c() = diff;
    } else {
-@@ -160,6 +234,8 @@ uint32_t symlink_v3(Ptr<uint8_t> link, Ptr<uint8_t> data) {
+@@ -160,6 +243,8 @@ uint32_t symlink_v3(Ptr<uint8_t> link, Ptr<uint8_t> data) {
      uint32_t offset = offsets.c()[i];
      seek += 4;
      auto data_ptr = (data + offset).cast<int32_t>();
@@ -1443,7 +1452,7 @@ index fd7199959..e7098e364 100644
  
      if (*data_ptr == -1) {
        // a "-1" indicates that we should store the address.
-@@ -168,6 +244,8 @@ uint32_t symlink_v3(Ptr<uint8_t> link, Ptr<uint8_t> data) {
+@@ -168,6 +253,8 @@ uint32_t symlink_v3(Ptr<uint8_t> link, Ptr<uint8_t> data) {
        // otherwise store the offset to st.  Eventually this should become an s16 instead.
        *(data + offset).cast<int32_t>() = sym_offset;
      }
@@ -1452,7 +1461,7 @@ index fd7199959..e7098e364 100644
    }
  
    return seek;
-@@ -217,7 +295,35 @@ uint32_t link_control::jak1_work_v3() {
+@@ -217,7 +304,35 @@ uint32_t link_control::jak1_work_v3() {
          if (ofh->code_infos[seg_id].size == 0) {
            ofh->code_infos[seg_id].offset = 0;
          } else {
@@ -1488,7 +1497,7 @@ index fd7199959..e7098e364 100644
            ofh->code_infos[seg_id].offset =
                kmalloc(m_heap, ofh->code_infos[seg_id].size, 0, "main-segment").offset;
            if (ofh->code_infos[seg_id].offset == 0) {
-@@ -225,6 +331,7 @@ uint32_t link_control::jak1_work_v3() {
+@@ -225,6 +340,7 @@ uint32_t link_control::jak1_work_v3() {
                     ofh->code_infos[seg_id].size);
              return 1;
            }
@@ -1496,7 +1505,7 @@ index fd7199959..e7098e364 100644
            jak1::ultimate_memcpy(Ptr<u8>(ofh->code_infos[seg_id].offset).c(), src.c(),
                                  ofh->code_infos[seg_id].size);
          }
-@@ -233,6 +340,26 @@ uint32_t link_control::jak1_work_v3() {
+@@ -233,6 +349,26 @@ uint32_t link_control::jak1_work_v3() {
            ofh->code_infos[seg_id].offset = 0;
          } else {
            Ptr<u8> src(ofh->code_infos[seg_id].offset);
@@ -1523,7 +1532,7 @@ index fd7199959..e7098e364 100644
            ofh->code_infos[seg_id].offset =
                kmalloc(m_heap, ofh->code_infos[seg_id].size, KMALLOC_TOP, "top-level-segment")
                    .offset;
-@@ -241,6 +368,7 @@ uint32_t link_control::jak1_work_v3() {
+@@ -241,6 +377,7 @@ uint32_t link_control::jak1_work_v3() {
                     ofh->code_infos[seg_id].size);
              return 1;
            }
@@ -1531,7 +1540,7 @@ index fd7199959..e7098e364 100644
            jak1::ultimate_memcpy(Ptr<u8>(ofh->code_infos[seg_id].offset).c(), src.c(),
                                  ofh->code_infos[seg_id].size);
          }
-@@ -514,6 +642,17 @@ uint32_t link_control::jak1_work_v2() {
+@@ -514,6 +651,17 @@ uint32_t link_control::jak1_work_v2() {
   * Complete linking. This will execute the top-level code for v3 object files, if requested.
   */
  void link_control::jak1_finish(bool jump_from_c_to_goal) {
@@ -1549,7 +1558,7 @@ index fd7199959..e7098e364 100644
    CacheFlush(m_code_start.c(), m_code_size);
    auto old_debug_segment = DebugSegment;
    if (m_keep_debug) {
-@@ -527,6 +666,8 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
+@@ -527,6 +675,8 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
  
    ObjectFileHeader* ofh = m_link_block_ptr.cast<ObjectFileHeader>().c();
    lg::debug("link finish: {}", m_object_name);
@@ -1558,7 +1567,7 @@ index fd7199959..e7098e364 100644
    if (ofh->object_file_version == 3) {
      // todo check function type of entry
  
-@@ -540,12 +681,104 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
+@@ -540,12 +690,118 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
  
      // execute top level!
      if (m_entry.offset && (m_flags & LINK_FLAG_EXECUTE)) {
@@ -1618,6 +1627,20 @@ index fd7199959..e7098e364 100644
 +#endif
        if (jump_from_c_to_goal) {
 -        u64 goal_stack = u64(g_ee_main_mem) + EE_MAIN_MEM_SIZE - 8;
++#ifdef OTTSEL_IOS
++        if (!strcmp(m_object_name, "target-death")) {
++          // BOT12 diagnostic: dump the patched top-level code (first 0x600
++          // bytes) so the state symbol-set sequence can be decoded offline.
++          u8* tl = g_ee_main_mem + ofh->code_infos[TOP_LEVEL_SEGMENT].offset;
++          lg::info("OTTSEL TOPDUMP {} base=0x{:x} size=0x{:x}", m_object_name,
++                   ofh->code_infos[TOP_LEVEL_SEGMENT].offset,
++                   ofh->code_infos[TOP_LEVEL_SEGMENT].size);
++          for (int i = 0; i < 0x600 && i + 4 <= (int)ofh->code_infos[TOP_LEVEL_SEGMENT].size;
++               i += 4) {
++            lg::info("OTTSEL TOPW {:04x} {:08x}", i, *(u32*)(tl + i));
++          }
++        }
++#endif
 +        u64 goal_stack = u64(g_ee_main_mem) + EE_MAIN_MEM_SIZE -
 +#ifdef __aarch64__
 +                      // ARM64 stp/ldp and vector spills require 16-byte SP alignment.
@@ -1646,7 +1669,7 @@ index fd7199959..e7098e364 100644
 +        printf("OTTSEL link: executing top-level (no stack switch) of %s\n", m_object_name);
          call_goal(m_entry.cast<Function>(), 0, 0, 0, s7.offset, g_ee_main_mem);
 +        printf("OTTSEL link: top-level (no stack switch) of %s returned\n", m_object_name);
-+      }
+       }
 +#ifdef OTTSEL_NO_EMIT
 +      // Top-level code is one-shot: after it returns, give the pages back to
 +      // the heap so the next object's top-level segment (same page-aligned
@@ -1659,12 +1682,12 @@ index fd7199959..e7098e364 100644
 +          }
 +        }
 +        lg::debug("OTTSEL no-emit: top-level code pages back to RW ({}..{})", tl_lo, tl_hi);
-       }
++      }
 +#endif
      }
  
      // inform compiler that we loaded.
-@@ -581,6 +814,16 @@ Ptr<uint8_t> link_and_exec(Ptr<uint8_t> data,
+@@ -581,6 +837,16 @@ Ptr<uint8_t> link_and_exec(Ptr<uint8_t> data,
                             Ptr<kheapinfo> heap,
                             uint32_t flags,
                             bool jump_from_c_to_goal) {
@@ -1681,6 +1704,35 @@ index fd7199959..e7098e364 100644
    link_control lc;
    lc.jak1_jak2_begin(data, name, size, heap, flags);
    uint32_t done;
+@@ -610,14 +876,20 @@ uint64_t link_begin(u64* args) {
+   // object data, name size, heap flags
+   saved_link_control.jak1_jak2_begin(Ptr<u8>(args[0]), Ptr<char>(args[1]).c(), args[2],
+                                      Ptr<kheapinfo>(args[3]), args[4]);
+-  auto work_result = saved_link_control.jak1_work();
+-  // if we managed to finish in one shot, take care of calling finish
+-  if (work_result) {
+-    // called from goal
+-    saved_link_control.jak1_finish(false);
+-  }
+-
+-  return work_result != 0;
++  // S2.1: complete the link synchronously.  The game's goal-side linker
++  // expects either "finished (that was fast)" (link-begin returns nonzero) or
++  // a multi-frame resume driven by the level's `linking` flag + link-resume.
++  // The v2/v4 path already finishes in the single work call; the v3 no-emit
++  // objects need several work steps (state 0 copy -> state 1 link), and the
++  // goal-side `linking`-flag resume never fires for them on this port, so the
++  // objects were left half-linked (top-level never ran -> target-title 0).
++  // Finishing here matches the game's first (fast) branch exactly.
++  uint32_t work_result;
++  do {
++    work_result = saved_link_control.jak1_work();
++  } while (!work_result);
++  saved_link_control.jak1_finish(false);
++  return 1;
+ }
+ 
+ /*!
 diff --git a/game/kernel/jak1/klisten.cpp b/game/kernel/jak1/klisten.cpp
 index 0731d5272..209a11baa 100644
 --- a/game/kernel/jak1/klisten.cpp
@@ -2909,7 +2961,7 @@ index 4f7cc5e18..cc2d2e926 100644
    }
  
 diff --git a/game/sce/sif_ee.cpp b/game/sce/sif_ee.cpp
-index d40922a9a..9a6ca70eb 100644
+index d40922a9a..2306b87c6 100644
 --- a/game/sce/sif_ee.cpp
 +++ b/game/sce/sif_ee.cpp
 @@ -6,17 +6,48 @@
@@ -2996,7 +3048,7 @@ index d40922a9a..9a6ca70eb 100644
  void sceSifInitRpc(unsigned int mode) {
    (void)mode;
  }
-@@ -80,24 +139,286 @@ s32 sceSifCallRpc(sceSifClientData* bd,
+@@ -80,24 +139,292 @@ s32 sceSifCallRpc(sceSifClientData* bd,
                    s32 rsize,
                    void* end_func,
                    void* end_para) {
@@ -3184,7 +3236,13 @@ index d40922a9a..9a6ca70eb 100644
 +      while (s_dgo.next_obj < s_dgo.entries.size()) {
 +        const auto& e = s_dgo.entries[s_dgo.next_obj];
 +        u32 tag = e.data.size() >= 4 ? *(const u32*)e.data.data() : 0;
-+        if (tag == 0xffffffffu) {
++        // S2.1: a GOAL link block starts with either the v2/v4 type tag -1
++        // (raw records like title-vis, tpage pages) or the no-emit v3 "GOAL"
++        // magic (recompiled objects like title-obs/static-screen, whose
++        // top-levels define the title state symbols).  Both are linkable;
++        // anything else (e.g. the ISO's "texture-upload" data record) is
++        // raw data and must be skipped.
++        if (tag == 0xffffffffu || tag == 0x4c414f47u) {
 +          break;
 +        }
 +        lg::info("OTTSEL DGO RPC: skip non-GOAL obj {} ({}, {} bytes, tag=0x{:x})",

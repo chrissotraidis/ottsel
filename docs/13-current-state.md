@@ -1,5 +1,45 @@
 # 13 — Current state (handoff snapshot)
 
+## 2026-08-15 update (BOT13) — stable title boot; enter-state fault fixed
+
+The previous deterministic blocker is FIXED and verified (one boot, one
+Simulator, Windowed, zero faults).  Root cause, evidence chain, and fix are
+in `docs/evidence/S2/s21-bot13-titlefix.md`; short version:
+
+- The BOT12 "state-symbol mislink" reading was disproven by in-process
+  probes: `target-continue` -> 0x19818c -> value 0x4624074 (correct, no
+  duplicates) right up to the fault.
+- The fault was `enter-state` (gstate+0x2d4) entering the TARGET process
+  (pid 12) with `pp->state = pp->next-state = 0`: the second `go` in
+  target-continue's `:code` is `(go target-title)`, and `target-title` had
+  value 0 because its defining object (title-obs.gc) was never linked.
+- Why: title-obs lives in TIT.DGO.  The port served the raw ISO TIT.DGO,
+  whose GOAL objects use the PS2 v3 header (first word 0x0); the DGO serve
+  skip test (`tag == 0xffffffff`) skipped them as "non-GOAL".  GAME.CGO does
+  not contain title-obs (upstream packs it in `dgos/tit.gd`).
+- Fix (runtime-side, no game source patched): build + ship the recompiled
+  TIT.DGO (no-emit v3 static-screen.o/title-obs.o), accept the "GOAL" magic
+  (0x4c414f47) in the DGO serve skip test, and make `link_begin` complete the
+  v3 link synchronously (the goal-side multi-frame resume path never fired
+  for the v3 DGO objects).
+
+Verified outcome: zero faults; `link finish: static-screen` / `title-obs`;
+the target process executes title-obs code (pc 0x492a9fc in the title state
+machine); `GAMEPLAY: enter title` twice; the boot then requests village1
+(`begin load village1-vis [vi1.DGO]` -- not in the bundle, the ROM-safe
+boundary the game tolerates); full process tree (24 nodes: target, camera,
+display, HUD, subtitle, etc.); dispatcher stable past 121,000 iterations.
+The only repeated activity is the STR subtitle/text RPC emulation returning
+the ROM-safe no-data response.
+
+Next gate: S2.2 -- first real Jak frame via Metal (the Metal shell still
+presents the log surface; the game's GfxRendererModule seam is the
+connection point).  See `docs/reports/2026-08-15-bot14-handoff.md`.
+
+---
+
+# 13 — Current state (handoff snapshot)
+
 ## 2026-08-11 update (BOT12) — boot reaches the title screen
 
 The engine-integration boot now advances past every earlier boundary to the
