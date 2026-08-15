@@ -200,6 +200,22 @@ void gfx_send_chain(const void* data, u32 offset) {
       lg::info("OTTSEL DMA: t{} size={} off=0x{:x} flg={} nloop={} eop={} nreg={}", count,
                t.size_bytes, off, (int)tag.flg(), tag.nloop(), (int)tag.eop(), tag.nreg());
     }
+    // PACKED mode: nloop x nreg qwords of register data.  Decode the AD
+    // records (value = bytes[0..7], register address = byte[8]) and log the
+    // register-setup writes for the first chain.
+    if (log_dma && tag.flg() == GifTag::Format::PACKED && tag.nreg() <= 16) {
+      u32 reg_count = tag.nreg() ? tag.nreg() : 16;
+      const u8* rec = g + 16;
+      for (u32 i = 0; i < tag.nloop() && i < 4; i++) {
+        for (u32 r = 0; r < reg_count && r < 16; r++) {
+          u64 value = 0;
+          memcpy(&value, rec + (i * reg_count + r) * 16, 8);
+          u8 addr = rec[(i * reg_count + r) * 16 + 8];
+          lg::info("OTTSEL DMA: t{} reg[{}] addr=0x{:02x} value=0x{:016x}", count, r, addr,
+                   value);
+        }
+      }
+    }
     if (log_dma && tag.flg() == GifTag::Format::IMAGE) {
       u32 qw = tag.nloop();
       lg::info("OTTSEL DMA: t{} IMAGE {} qwords at 0x{:x}: {:08x} {:08x} {:08x} {:08x}", count, qw,
