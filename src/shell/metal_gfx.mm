@@ -607,7 +607,15 @@ struct OttselGifDecoder {
   }
 
   // Consume one vertex set (RGBAQ+XYZ) and build prims per GsPrim kind.
-  void push_vertex(u32 x, u32 y, u32 z) {
+  // restart = the GIF xyz2 bit 47: SET starts a new primitive (the GS
+  // inserts degenerate restart vertices; the OpenGOAL DirectRenderer
+  // emits a UINT32_MAX index for these).  Dropping the strip on a restart
+  // keeps only real triangles.
+  void push_vertex(u32 x, u32 y, u32 z, bool restart = false) {
+    if (restart) {
+      // restart marker: begin a fresh primitive with this vertex.
+      vert_count = 0;
+    }
     on_vertex();
     OttselVertex& v = verts[vert_count - 1];
     v.x = x;
@@ -753,7 +761,8 @@ void decode_gif_packets(const u8* g, u32 size, OttselGifDecoder& dec) {
               u32 z = (reg_desc[r] == GifTag::RegisterDescriptor::XYZF2)
                           ? (u32)((upper >> 4) & 0xffffff)
                           : (u32)upper;
-              dec.push_vertex(x << 16, y << 16, z);
+              bool restart = (upper & (1ull << 47)) != 0;
+              dec.push_vertex(x << 16, y << 16, z, restart);
             } break;
             case GifTag::RegisterDescriptor::PRIM: {
               u64 v = 0;
@@ -803,7 +812,8 @@ void decode_gif_packets(const u8* g, u32 size, OttselGifDecoder& dec) {
               u32 x = (u32)(val & 0xffff);
               u32 y = (u32)((val >> 16) & 0xffff);
               u32 z = (u32)((val >> 32) & 0xffffff);
-              dec.push_vertex(x << 16, y << 16, z);
+              bool restart = (val & (1ull << 47)) != 0;
+              dec.push_vertex(x << 16, y << 16, z, restart);
             } break;
             case GifTag::RegisterDescriptor::ST:
               memcpy(&dec.st.st[0], rec, 4);
@@ -900,6 +910,13 @@ void gfx_send_chain(const void* data, u32 offset) {
     ottsel_metal_present(g_metal, g_raster.fb.data(), g_raster.fb_w, g_raster.fb_h);
     lg::info("OTTSEL RASTER: presented composed {}x{} (draws={})", g_raster.fb_w, g_raster.fb_h,
              g_raster.draw_count);
+  }
+  if (g_chain_no % 45 == 0) {
+    static u32 ottsel_dc_logged = 0;
+    if (ottsel_dc_logged++ < 6) {
+      lg::info("OTTSEL RSTR: chain={} draw_count={} fb={}x{}", g_chain_no, g_raster.draw_count,
+               g_raster.fb_w, g_raster.fb_h);
+    }
   }
   // S2.2 BOT20: keep the last decoded texture on screen (the game uploads
   // tpages continuously; the composed-raster path is not drawing yet).  This
