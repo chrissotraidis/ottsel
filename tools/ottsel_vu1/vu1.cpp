@@ -198,11 +198,16 @@ void write_vf(VfReg& dst, uint32_t mask, const float* vals) {
 // The VIF "top" register: the address of the first qword after the microcode
 // (the game's data region starts there).  Set by the caller.
 static uint32_t g_vu_top = 0x400;
+static int g_trace = 0;
 
 void set_top(uint32_t top) { g_vu_top = top; }
+void ottsel_vu1_set_trace(int on) { g_trace = on; }
 
 void execute(Vu1State& st, int max_instructions) {
   int executed = 0;
+  if (g_trace) {
+    printf("TRACE: top=0x%x\n", g_vu_top);
+  }
   while (st.pc >= 0 && st.pc < st.code_len && executed < max_instructions) {
     executed++;
     uint64_t raw = st.code[st.pc];
@@ -213,6 +218,9 @@ void execute(Vu1State& st, int max_instructions) {
 
     Op uop = up_kind(upper);
     Op lop = lo_kind(lower);
+    if (g_trace && executed < 220) {
+      printf("pc=%d u=%d l=%d up=0x%08x lo=0x%08x\n", this_pc, (int)uop, (int)lop, upper, lower);
+    }
     if (uop == Op::INVALID || lop == Op::INVALID) {
       std::fprintf(stderr, "VU1: invalid op at pc=%d uop=%d lop=%d up=0x%08x lo=0x%08x\n",
                    this_pc, (int)uop, (int)lop, upper, lower);
@@ -223,9 +231,9 @@ void execute(Vu1State& st, int max_instructions) {
     int ufs = up_fs(upper);
     int ufd = up_fd(upper);
     int ubc = up_bc(upper);
-    int lit = lo_it(lower);
-    int lis = lo_is(lower);
-    int lid = lo_id(lower);
+    int lit = lo_it(lower) & 0xf;
+    int lis = lo_is(lower) & 0xf;
+    int lid = lo_id(lower) & 0xf;
     int limm11 = lo_imm11(lower);
 
     // The I register: set by i-type upper ops from the lower word.
@@ -453,47 +461,47 @@ void execute(Vu1State& st, int max_instructions) {
       case Op::NOP:
         break;
       case Op::LQ: {
-        uint32_t addr = (st.vi[lis] + limm11) & 0xfff;
+        uint32_t addr = ((int32_t)(int16_t)st.vi[lis] + limm11) & 0xfff;
         memcpy(&st.vf[lit].u[0], &st.data[addr * 4], 16);
       } break;
       case Op::LQD: {
-        uint32_t addr = (st.vi[lis] - 1) & 0xfff;
+        uint32_t addr = ((int32_t)(int16_t)st.vi[lis] - 1) & 0xfff;
         st.vi[lis] = addr;
         memcpy(&st.vf[lit].u[0], &st.data[addr * 4], 16);
       } break;
       case Op::LQI: {
-        uint32_t addr = st.vi[lis];
+        uint32_t addr = st.vi[lis] & 0xfff;
         st.vi[lis] = (st.vi[lis] + 1) & 0xfff;
         memcpy(&st.vf[lit].u[0], &st.data[addr * 4], 16);
       } break;
       case Op::SQ: {
-        uint32_t addr = (st.vi[lis] + limm11) & 0xfff;
+        uint32_t addr = ((int32_t)(int16_t)st.vi[lis] + limm11) & 0xfff;
         memcpy(&st.data[addr * 4], &st.vf[lit].u[0], 16);
       } break;
       case Op::SQD: {
-        uint32_t addr = (st.vi[lis] - 1) & 0xfff;
+        uint32_t addr = ((int32_t)(int16_t)st.vi[lis] - 1) & 0xfff;
         st.vi[lis] = addr;
         memcpy(&st.data[addr * 4], &st.vf[lit].u[0], 16);
       } break;
       case Op::SQI: {
-        uint32_t addr = st.vi[lis];
+        uint32_t addr = st.vi[lis] & 0xfff;
         st.vi[lis] = (st.vi[lis] + 1) & 0xfff;
         memcpy(&st.data[addr * 4], &st.vf[lit].u[0], 16);
       } break;
       case Op::ILW: {
-        uint32_t addr = (st.vi[lis] + limm11) & 0xfff;
+        uint32_t addr = ((int32_t)(int16_t)st.vi[lis] + limm11) & 0xfff;
         st.vi[lit] = st.data[addr * 4] >> 16;
       } break;
       case Op::ISW: {
-        uint32_t addr = (st.vi[lis] + limm11) & 0xfff;
+        uint32_t addr = ((int32_t)(int16_t)st.vi[lis] + limm11) & 0xfff;
         st.data[addr * 4] = (uint32_t)st.vi[lit] << 16;
       } break;
       case Op::ILWR: {
-        uint32_t addr = st.vi[lis];
+        uint32_t addr = st.vi[lis] & 0xfff;
         st.vi[lit] = st.data[addr * 4] >> 16;
       } break;
       case Op::ISWR: {
-        uint32_t addr = st.vi[lis];
+        uint32_t addr = st.vi[lis] & 0xfff;
         st.data[addr * 4] = (uint32_t)st.vi[lit] << 16;
       } break;
       case Op::IADD:

@@ -47,6 +47,27 @@ microcode loops on synthetic data (no XGKICK reached) until the real entry
 3. Verify a visible composed frame (title-vis tfrag page 416) on the
    Simulator, zero faults.
 
+## BOT18b update (same day) — entry + addressing findings
+
+- All 3460 tfrag draws run `MSCALF/MSCAL imm=0`: the VU starts at the TOP
+  register (the code end), i.e. the jump table, which dispatches to the case
+  handlers (L1-L10).  The observed draw path is the L3 case (`bal vi15, L12`
+  strip transform, `bal L26` fan, `bal L48` output).
+- The dump (`tfrag-vu-data.bin`, written by the shell probe) contains one
+  record per UNPACK {imm, num, size}+payload plus MSCALF markers.  The imm
+  values are 5/0x14d/0x290 (the once-per-frame init: mtx-0, mtx-1,
+  tfrag-data) and 0x160/0x381/0x384/0x3d4 (per-draw: vertex batch, the
+  10-qword per-draw block, and two frag/page batches).
+- The microcode's vi14 = 0x2a0 = TOP - OFST (the VIF data base); vf03 (from
+   mfir vi14/vi01) feeds the XGKICK address, so 0x2a0 is the output area too.
+  The exact dest formula for the per-draw unpacks (absolute vs base+imm) is
+  the remaining open question; both mappings were tested in the tool.
+- Interpreter robustness fixes: VI register indices are 5-bit but only 16
+  registers exist (mask & 0xf); VU data addresses must be masked to 0xfff
+  (the LQI/SQ family and XGKICK); the dump loader bounds-checks records.
+  The interpreter now runs the full microcode on the real dump without
+  crashing (pc=127 = instruction cap on the synthetic frag count).
+
 ## Files
 
 - `tools/ottsel_vu1/` (interpreter + loader).

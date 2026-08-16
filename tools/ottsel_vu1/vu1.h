@@ -41,6 +41,7 @@ struct Vu1State {
 
 // Set the VIF "top" register (the first qword after the microcode).
 void set_top(uint32_t top);
+void ottsel_vu1_set_trace(int on);
 void execute(Vu1State& st, int max_instructions = 400000);
 
 }  // namespace ottsel_vu1
