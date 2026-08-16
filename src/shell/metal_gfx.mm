@@ -19,6 +19,7 @@
 
 #include "metal_shell.h"
 #include "tfrag_microcode.h"
+#include "generic_microcode.h"
 
 #include "vu1.h"
 
@@ -972,7 +973,11 @@ void gfx_send_chain(const void* data, u32 offset) {
   // memory and run the tfrag microcode on MSCAL/MSCALF, feeding the XGKICK
   // output (gif_out) through the same GIF decoder/rasterizer as DIRECT data.
   static ottsel_vu1::Vu1State g_vu;
+  static ottsel_vu1::Vu1State g_vu_generic;
   static bool g_vu_init = false;
+  static bool g_vu_generic_init = false;
+  static bool g_chain_has_generic = false;
+  g_chain_has_generic = false;
   static bool g_ottsel_spr_ran = false;
   static bool g_readlog_hook_set = false;
   if (!g_readlog_hook_set) {
@@ -987,6 +992,13 @@ void gfx_send_chain(const void* data, u32 offset) {
     g_vu.code_len = ottsel_vu1::kTfragCodeWords;
     for (int i = 0; i < g_vu.code_len; i++) {
       g_vu.code[i] = ottsel_vu1::kTfragMicrocode[i];
+    }
+  }
+  if (!g_vu_generic_init) {
+    g_vu_generic_init = true;
+    g_vu_generic.code_len = ottsel_vu1::kGenericCodeWords;
+    for (int i = 0; i < g_vu_generic.code_len; i++) {
+      g_vu_generic.code[i] = ottsel_vu1::kGenericMicrocode[i];
     }
   }
   // S2.2 BOT21c: the game's mips2c ln stashes the first tfragment's
@@ -1096,7 +1108,27 @@ void gfx_send_chain(const void* data, u32 offset) {
         // The microcode's XTOP reads the VIF TOP register; run it with the
         // current frag-list base.
         static u32 ottsel_vu1_runs = 0;
+        static u32 ottsel_generic_runs = 0;
         ottsel_vu1::set_top(g_vu_top);
+        if (g_chain_has_generic) {
+          // The generic (tie/merc) program: entry pc=0 (b L4 dispatch).
+          ottsel_vu1::Vu1State& gv = g_vu_generic;
+          // The chain's UNPACKs wrote VU data into g_vu.data; share it.
+          memcpy(gv.data, g_vu.data, sizeof(gv.data));
+          gv.pc = (v.immediate * 2) & 0x7ff;
+          gv.gif_out.clear();
+          ottsel_vu1::execute(gv, 200000);
+          if (ottsel_generic_runs < 6) {
+            ottsel_generic_runs++;
+            lg::info("OTTSEL GENERIC: run#{} pc={} gif_out={} c381_0={:08x} c381_1={:08x}",
+                     ottsel_generic_runs, gv.pc, gv.gif_out.size(), gv.data[0x381 * 4],
+                     gv.data[0x381 * 4 + 1]);
+          }
+          if (!gv.gif_out.empty()) {
+            decode_gif_packets((const u8*)gv.gif_out.data(), (u32)gv.gif_out.size() * 4, g_dec);
+          }
+          break;
+        }
         // BOT21d: the tfrag microcode's real entry is pc=8 (the
         // `b L3 | xtop vi14` dispatch -- frag-list at XTOP/TOP); pc=0 is the
         // L11 header path (hardcoded 0x2a0 base) used by other variants.
@@ -1145,6 +1177,12 @@ void gfx_send_chain(const void* data, u32 offset) {
         u32 qwords = std::min(payload_size / 16, 4096u - dest);
         if (qwords && dest < 4096) {
           memcpy(&g_vu.data[dest * 4], payload, qwords * 16);
+          // The generic (tie/merc) renderer's const block is at VU 0x381;
+          // when a chain uploads it, the MSCALFs in that chain run the
+          // generic microcode, not the far tfrag program.
+          if (dest == 0x381 && qwords >= 4) {
+            g_chain_has_generic = true;
+          }
         }
         break;
       }
