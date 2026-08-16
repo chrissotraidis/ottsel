@@ -935,6 +935,14 @@ void gfx_send_chain(const void* data, u32 offset) {
     u32 off = (u32)(g - base);
     VifCode v1(t.vif1());
     VifCode v0(t.vif0());
+    // Full-transfer capture of the first tfrag-bearing chain (all vif kinds,
+    // including qwc=0 base/offset and any frag-list unpacks).
+    static u32 ottsel_full_chain = 0;
+    if (g_chain_no <= 4) {
+      lg::info("OTTSEL FULL: chain={} t{} size={} v0=0x{:x}(k{}) v1=0x{:x}(k{}) off=0x{:x}",
+               g_chain_no, count, t.size_bytes, t.vif0(), (u32)v0.kind, t.vif1(), (u32)v1.kind,
+               off);
+    }
     // qwc=0 transfers carry the VIF base/offset commands - log the first few.
     static u32 ottsel_vifctl = 0;
     if (ottsel_vifctl < 12 && t.size_bytes == 0 &&
@@ -956,8 +964,10 @@ void gfx_send_chain(const void* data, u32 offset) {
       fwrite(t.data, t.size_bytes, 1, g_tfrag_dump);
     }
     // Also capture the small DIRECT GIF transfers (possible frag-list data).
-    if (g_tfrag_dump && g_tfrag_dump_recs < 4000 && t.size_bytes <= 224 &&
-        (v1.kind == VifCode::Kind::DIRECT || v0.kind == VifCode::Kind::DIRECT)) {
+    if (g_tfrag_dump && g_tfrag_dump_recs < 4000 && t.size_bytes <= 256 &&
+        (v1.kind == VifCode::Kind::DIRECT || v0.kind == VifCode::Kind::DIRECT ||
+         v1.kind == VifCode::Kind::DIRECTHL || v0.kind == VifCode::Kind::DIRECTHL ||
+         v1.kind == VifCode::Kind::PC_PORT || v0.kind == VifCode::Kind::PC_PORT)) {
       g_tfrag_dump_recs++;
       u32 rec[4] = {0x80000000 | (u32)v1.kind, v1.num, t.size_bytes, 0};
       fwrite(rec, 16, 1, g_tfrag_dump);
