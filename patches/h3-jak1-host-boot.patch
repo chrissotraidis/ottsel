@@ -1941,7 +1941,7 @@ index 459a21562..e7cf3b0a5 100644
    if (DiskBoot) {
      intern_from_c("*kernel-boot-message*")->value = intern_from_c(DebugBootMessage).offset;
 diff --git a/game/kernel/jak1/kscheme.cpp b/game/kernel/jak1/kscheme.cpp
-index c8287de5a..e7b81904c 100644
+index c8287de5a..2867d0acc 100644
 --- a/game/kernel/jak1/kscheme.cpp
 +++ b/game/kernel/jak1/kscheme.cpp
 @@ -1,6 +1,10 @@
@@ -2338,7 +2338,7 @@ index c8287de5a..e7b81904c 100644
    if (method_id > 127)
      printf("[METHOD SET ERROR] tried to set method %d\n", method_id);
  
-@@ -1117,7 +1399,87 @@ u64 call_method_of_type_arg2(u32 arg, Ptr<Type> type, u32 method_id, u32 a1, u32
+@@ -1117,7 +1399,98 @@ u64 call_method_of_type_arg2(u32 arg, Ptr<Type> type, u32 method_id, u32 a1, u32
      auto type_tag = Ptr<Ptr<Type>>(type.offset - 4);
      if ((*type_tag).offset == *(s7 + FIX_SYM_TYPE_TYPE)) {
        // return type->get_method(method_id).cast<u64 (u32,u32,u32)>().c()(arg,a1,a2);
@@ -2418,8 +2418,19 @@ index c8287de5a..e7b81904c 100644
 +                       *(u32*)(::g_ee_main_mem + bh + 40), *(u32*)(::g_ee_main_mem + bh + 44),
 +                       *(u32*)(::g_ee_main_mem + bh + 48), *(u32*)(::g_ee_main_mem + bh + 52),
 +                       *(u32*)(::g_ee_main_mem + bh + 56), *(u32*)(::g_ee_main_mem + bh + 60));
-+              lg::info("OTTSEL RELOC7RET: loading-level ref in bsp-hdr at +{}", bf);
++            lg::info("OTTSEL RELOC7RET: loading-level ref in bsp-hdr at +{}", bf);
++            // Also check the level0/level1 inline slots' bsp fields at this
++            // moment (the relocate's write may target a slot, not the
++            // loading-level).
++            for (int slot = 0; slot < 2; slot++) {
++              u32 so = 0x3fdc1b4u + 92 + slot * 0xa30;
++              if (so + 0x50 < 0x08000000u) {
++                lg::info("OTTSEL RELOC7RET: slot{} bsp@44=0x{:x} name=0x{:x} status=0x{:x}",
++                         slot, *(u32*)(::g_ee_main_mem + so + 44),
++                         *(u32*)(::g_ee_main_mem + so + 4), *(u32*)(::g_ee_main_mem + so + 20));
++              }
 +            }
++          }
 +          }
 +        }
 +      }
@@ -2427,7 +2438,7 @@ index c8287de5a..e7b81904c 100644
      } else {
        cprintf("#<#x%x has invalid type ptr #x%x, bad type #x%x>\n", arg, type.offset,
                (*type_tag).offset);
-@@ -1744,13 +2106,29 @@ s32 InitHeapAndSymbol() {
+@@ -1744,13 +2117,29 @@ s32 InitHeapAndSymbol() {
    intern_from_c("*boot-video-mode*")->value = 0;  // (u32)BootVideoMode;
  
    lg::info("Initialized GOAL heap in {:.2} ms", heap_init_timer.getMs());
@@ -2457,7 +2468,7 @@ index c8287de5a..e7b81904c 100644
      method_set_symbol->value--;
  
      // check the kernel version!
-@@ -1768,6 +2146,7 @@ s32 InitHeapAndSymbol() {
+@@ -1768,6 +2157,7 @@ s32 InitHeapAndSymbol() {
      }
    }
  
@@ -2465,7 +2476,7 @@ index c8287de5a..e7b81904c 100644
    // setup deci2count for message counter.
    protoBlock.deci2count = intern_from_c("*deci-count*").cast<s32>();
  
-@@ -1779,6 +2158,7 @@ s32 InitHeapAndSymbol() {
+@@ -1779,6 +2169,7 @@ s32 InitHeapAndSymbol() {
  
    // testing stuff:
    make_function_symbol_from_c("test-function", (void*)test_function);
