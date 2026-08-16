@@ -1941,7 +1941,7 @@ index 459a21562..e7cf3b0a5 100644
    if (DiskBoot) {
      intern_from_c("*kernel-boot-message*")->value = intern_from_c(DebugBootMessage).offset;
 diff --git a/game/kernel/jak1/kscheme.cpp b/game/kernel/jak1/kscheme.cpp
-index c8287de5a..2a13bc996 100644
+index c8287de5a..e7b81904c 100644
 --- a/game/kernel/jak1/kscheme.cpp
 +++ b/game/kernel/jak1/kscheme.cpp
 @@ -1,6 +1,10 @@
@@ -2338,7 +2338,96 @@ index c8287de5a..2a13bc996 100644
    if (method_id > 127)
      printf("[METHOD SET ERROR] tried to set method %d\n", method_id);
  
-@@ -1744,13 +2026,29 @@ s32 InitHeapAndSymbol() {
+@@ -1117,7 +1399,87 @@ u64 call_method_of_type_arg2(u32 arg, Ptr<Type> type, u32 method_id, u32 a1, u32
+     auto type_tag = Ptr<Ptr<Type>>(type.offset - 4);
+     if ((*type_tag).offset == *(s7 + FIX_SYM_TYPE_TYPE)) {
+       // return type->get_method(method_id).cast<u64 (u32,u32,u32)>().c()(arg,a1,a2);
+-      return call_goal(type->get_method(method_id), arg, a1, a2, s7.offset, g_ee_main_mem);
++      u64 rv = call_goal(type->get_method(method_id), arg, a1, a2, s7.offset, g_ee_main_mem);
++      // Ottsel S2.2 BOT21s: log the relocate result (method 7) so the
++      // bsp-header relocate's outcome is known (nonzero = checks passed and
++      // the level bsp was set; the bsp read 0 afterwards, so a nonzero
++      // result here proves the level died later and unload! cleared it).
++      if (method_id == 7) {
++        lg::info("OTTSEL RELOC7RET: arg=0x{:x} type=0x{:x} ret=0x{:x}", arg, type.offset, rv);
++        // Read the level-group's loading-level field (group 0x3fdc1b4
++        // verified) + its bsp right after the relocate to confirm WHERE the
++        // relocate's bsp write landed (the group+8 loading-level may differ
++        // from the previously-hardcoded 0x3fdd674 at this moment).
++        if (::g_ee_main_mem) {
++          u32 grp = 0x3fdc1b4u;
++          u32 ll = *(u32*)(::g_ee_main_mem + grp + 8);
++          lg::info("OTTSEL RELOC7RET: group=0x{:x} loading-level=0x{:x} bsp@40=0x{:x} "
++                   "bsp@44=0x{:x} bsp@48=0x{:x}",
++                   grp, ll, ll >= 0x080000 ? *(u32*)(::g_ee_main_mem + ll + 40) : 0,
++                   ll >= 0x080000 ? *(u32*)(::g_ee_main_mem + ll + 44) : 0,
++                   ll >= 0x080000 ? *(u32*)(::g_ee_main_mem + ll + 48) : 0);
++          if (ll >= 0x080000 && ll < 0x08000000) {
++            lg::info("OTTSEL RELOC7RET: lvl +0..127 = {:08x} {:08x} {:08x} {:08x} | {:08x} "
++                     "{:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} "
++                     "{:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | "
++                     "{:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
++                     *(u32*)(::g_ee_main_mem + ll + 0), *(u32*)(::g_ee_main_mem + ll + 4),
++                     *(u32*)(::g_ee_main_mem + ll + 8), *(u32*)(::g_ee_main_mem + ll + 12),
++                     *(u32*)(::g_ee_main_mem + ll + 16), *(u32*)(::g_ee_main_mem + ll + 20),
++                     *(u32*)(::g_ee_main_mem + ll + 24), *(u32*)(::g_ee_main_mem + ll + 28),
++                     *(u32*)(::g_ee_main_mem + ll + 32), *(u32*)(::g_ee_main_mem + ll + 36),
++                     *(u32*)(::g_ee_main_mem + ll + 40), *(u32*)(::g_ee_main_mem + ll + 44),
++                     *(u32*)(::g_ee_main_mem + ll + 48), *(u32*)(::g_ee_main_mem + ll + 52),
++                     *(u32*)(::g_ee_main_mem + ll + 56), *(u32*)(::g_ee_main_mem + ll + 60),
++                     *(u32*)(::g_ee_main_mem + ll + 64), *(u32*)(::g_ee_main_mem + ll + 68),
++                     *(u32*)(::g_ee_main_mem + ll + 72), *(u32*)(::g_ee_main_mem + ll + 76),
++                     *(u32*)(::g_ee_main_mem + ll + 80), *(u32*)(::g_ee_main_mem + ll + 84),
++                     *(u32*)(::g_ee_main_mem + ll + 88), *(u32*)(::g_ee_main_mem + ll + 92),
++                     *(u32*)(::g_ee_main_mem + ll + 96), *(u32*)(::g_ee_main_mem + ll + 100),
++                     *(u32*)(::g_ee_main_mem + ll + 104), *(u32*)(::g_ee_main_mem + ll + 108),
++                     *(u32*)(::g_ee_main_mem + ll + 112), *(u32*)(::g_ee_main_mem + ll + 116),
++                     *(u32*)(::g_ee_main_mem + ll + 120), *(u32*)(::g_ee_main_mem + ll + 124));
++            // Scan the whole level object for the bsp-header (0x2ef80c0..)
++            // to find where the relocate's bsp write landed.
++            int found = -1;
++            for (int off = 0; off < 0xa30; off += 4) {
++              u32 w = *(u32*)(::g_ee_main_mem + ll + off);
++              if (w >= 0x2ef8000u && w < 0x2ef9000u) {
++                found = off;
++                break;
++              }
++            }
++            lg::info("OTTSEL RELOC7RET: bsp-hdr ref at lvl+{}", found);
++            // Scan the bsp-header (the relocate's 'this', entry 0x2ef80d4)
++            // for the loading-level ref (the second relocate write:
++            // (set! (-> this level) s5-0)) + dump its first words.
++            u32 bh = 0x2ef80d0u;
++            if (bh >= 0x080000 && bh < 0x08000000) {
++              int bf = -1;
++              for (int off = 0; off < 0x200; off += 4) {
++                u32 w = *(u32*)(::g_ee_main_mem + bh + off);
++                if (w == 0x3fdd674u) {
++                  bf = off;
++                  break;
++                }
++              }
++              lg::info("OTTSEL RELOC7RET: bsp-hdr+0..63 = {:08x} {:08x} {:08x} {:08x} | {:08x} "
++                       "{:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} "
++                       "{:08x} {:08x}",
++                       *(u32*)(::g_ee_main_mem + bh + 0), *(u32*)(::g_ee_main_mem + bh + 4),
++                       *(u32*)(::g_ee_main_mem + bh + 8), *(u32*)(::g_ee_main_mem + bh + 12),
++                       *(u32*)(::g_ee_main_mem + bh + 16), *(u32*)(::g_ee_main_mem + bh + 20),
++                       *(u32*)(::g_ee_main_mem + bh + 24), *(u32*)(::g_ee_main_mem + bh + 28),
++                       *(u32*)(::g_ee_main_mem + bh + 32), *(u32*)(::g_ee_main_mem + bh + 36),
++                       *(u32*)(::g_ee_main_mem + bh + 40), *(u32*)(::g_ee_main_mem + bh + 44),
++                       *(u32*)(::g_ee_main_mem + bh + 48), *(u32*)(::g_ee_main_mem + bh + 52),
++                       *(u32*)(::g_ee_main_mem + bh + 56), *(u32*)(::g_ee_main_mem + bh + 60));
++              lg::info("OTTSEL RELOC7RET: loading-level ref in bsp-hdr at +{}", bf);
++            }
++          }
++        }
++      }
++      return rv;
+     } else {
+       cprintf("#<#x%x has invalid type ptr #x%x, bad type #x%x>\n", arg, type.offset,
+               (*type_tag).offset);
+@@ -1744,13 +2106,29 @@ s32 InitHeapAndSymbol() {
    intern_from_c("*boot-video-mode*")->value = 0;  // (u32)BootVideoMode;
  
    lg::info("Initialized GOAL heap in {:.2} ms", heap_init_timer.getMs());
@@ -2368,7 +2457,7 @@ index c8287de5a..2a13bc996 100644
      method_set_symbol->value--;
  
      // check the kernel version!
-@@ -1768,6 +2066,7 @@ s32 InitHeapAndSymbol() {
+@@ -1768,6 +2146,7 @@ s32 InitHeapAndSymbol() {
      }
    }
  
@@ -2376,7 +2465,7 @@ index c8287de5a..2a13bc996 100644
    // setup deci2count for message counter.
    protoBlock.deci2count = intern_from_c("*deci-count*").cast<s32>();
  
-@@ -1779,6 +2078,7 @@ s32 InitHeapAndSymbol() {
+@@ -1779,6 +2158,7 @@ s32 InitHeapAndSymbol() {
  
    // testing stuff:
    make_function_symbol_from_c("test-function", (void*)test_function);
