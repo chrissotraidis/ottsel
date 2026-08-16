@@ -7,28 +7,27 @@ composed frame (the S2.2 gate).
 
 ## Targeted goal prompt (feed this to the next bot)
 
-> Investigate the Ottsel (native Jak 1 on the iPad Pro 11-inch M4
-> Simulator via Metal) S2.2 blocker: the game boots and runs with zero
-> faults and Metal presents real Jak textures, but NO composed geometry
-> frame appears because the village1 level never activates.  The
-> bsp-header relocate returns success yet the level slots end
-> `'inactive` with bsp=0, and the background-work list stays empty every
-> frame (tfrag-count=0, tie-count=0) so the bsp's 11 drawable trees
-> (including the tie instances 6+42/2+14) are never drawn.  Deeply
-> investigate what is working and what is not (read the evidence trail:
-> docs/evidence/S2/s22-reorientation.md + s22-bot21*.md/log + the handoff
-> below), fix the smallest falsifiable fault so the level reaches
-> `'alive`/`'active` and the background engine draws the bsp's trees (the
-> tie bucket chains appear), OR — per Track B — compose a visible frame
-> from the LOADED tie geometry through the shell's renderer (tie
-> instances + tie.txt microcode + the proven VU1/GIF/rasterizer path).
-> Verify every claim against the running app, bundle logs, and compiled
-> ground truth (type-system offsets minus the basic offset, checked
-> against disassembly).  One Simulator, one runtime, Windowed.  Record
-> milestones in docs/evidence/S2/ and update STATUS.md / 13-current-state.md
-> / 00-loop-log.md only after a verified gate.  Never patch game source
-> to mask runtime bugs; never commit ROMs/ISOs/assets.  Stop and report
-> honestly at any gate that repeats three consecutive blockers.
+> Investigate the Ottsel (Jak 1 on the iPad Pro M4 Simulator via Metal)
+> S2.2 blocker: the game boots with zero faults and Metal shows real Jak
+> textures, but no composed geometry frame appears because the village1
+> level never activates.  The bsp-header relocate returns success, yet
+> the level slots end 'inactive with bsp=0 and the background-work list
+> stays empty (tfrag-count=0, tie-count=0), so the bsp's 11 drawable
+> trees (incl. the tie instances 6+42/2+14) are never drawn.  Deeply
+> investigate what works and what doesn't (read
+> docs/evidence/S2/s22-reorientation.md, s22-bot21*.md/log, and this
+> handoff), fix the smallest falsifiable fault so the level reaches
+> 'alive/'active and the tie bucket chains appear, OR — per Track B —
+> compose a visible frame from the LOADED tie geometry via the shell
+> renderer (tie instances + tie.txt microcode + the proven
+> VU1/GIF/rasterizer path).  Verify every claim against the running app,
+> bundle logs, and compiled ground truth (type-system offsets minus the
+> basic offset, checked against disassembly).  One Simulator, one
+> runtime, Windowed.  Record milestones in docs/evidence/S2/ and update
+> STATUS.md / 13-current-state.md / 00-loop-log.md only after a verified
+> gate.  Never patch game source to mask runtime bugs; never commit
+> ROMs/ISOs/assets.  Stop and report honestly at any gate that repeats
+> three consecutive blockers.
 
 ## The blocker chain (all verified live)
 
