@@ -1271,6 +1271,9 @@ void gfx_send_chain(const void* data, u32 offset) {
          (v0.kind == VifCode::Kind::MSCAL || v0.kind == VifCode::Kind::MSCALF)) &&
         (v1.immediate == 0 || v0.immediate == 0)) {
       ottsel_tw_dumped = true;
+      // BOT21i: after the level load, read the linked village1-vis object
+      // (the last vi1.DGO object = the bsp-header file per the decompiler's
+      // get_bsp_file) + the level bsp field.
       // S2.2 BOT21b probe: dump the compiled draw-drawable-tree-tfrag
       // function so the per-draw VIF emission can be attributed (the
       // goal_src mips2c ln call is commented out, yet per-draw UNPACKs
@@ -1381,6 +1384,50 @@ void gfx_send_chain(const void* data, u32 offset) {
                      "qwc[0..3] = {:02x} {:02x} {:02x} {:02x}",
                      tf, *(u32*)(f + 12), *(u32*)(f + 16), *(u32*)(f + 20), *(u8*)(f + 44),
                      *(u8*)(f + 45), *(u8*)(f + 46), *(u8*)(f + 47));
+          }
+        }
+      }
+    }
+    // BOT21i: after the level load, read the linked village1-vis object
+    // (the last vi1.DGO object = the bsp-header file per the decompiler's
+    // get_bsp_file) so the BSP load result can be checked.  Runs every
+    // frame until the served data appears (v4 tag at +64).
+    static bool ottsel_obj64_dumped = false;
+    if (!ottsel_obj64_dumped && g_ee_main_mem) {
+      u32 o = 0x2ef8080u;
+      // Wait until the object is LINKED (the v2 link table fixes code[0] =
+      // the bsp-header type, so +80 becomes a valid type pointer).
+      if (o >= 0x080000 && o < 0x08000000 && *(u32*)(g_ee_main_mem + o + 64) == 0xffffffffu &&
+          *(u32*)(g_ee_main_mem + o + 80) >= 0x080000u &&
+          *(u32*)(g_ee_main_mem + o + 80) < 0x08000000u) {
+        ottsel_obj64_dumped = true;
+        lg::info("OTTSEL OBJ64: obj=0x{:x} +56..96 = {:08x} {:08x} {:08x} {:08x} | {:08x} "
+                 "{:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
+                 o, *(u32*)(g_ee_main_mem + o + 56), *(u32*)(g_ee_main_mem + o + 60),
+                 *(u32*)(g_ee_main_mem + o + 64), *(u32*)(g_ee_main_mem + o + 68),
+                 *(u32*)(g_ee_main_mem + o + 72), *(u32*)(g_ee_main_mem + o + 76),
+                 *(u32*)(g_ee_main_mem + o + 80), *(u32*)(g_ee_main_mem + o + 84),
+                 *(u32*)(g_ee_main_mem + o + 88), *(u32*)(g_ee_main_mem + o + 92),
+                 *(u32*)(g_ee_main_mem + o + 96), *(u32*)(g_ee_main_mem + o + 100));
+        // BOT21i: the linked bsp-header candidate: type at +80, then the
+        // file-info overlay: file-type sym @+84, file-name @+88,
+        // major-version @+92, minor-version @+96.
+        u32 type = *(u32*)(g_ee_main_mem + o + 80);
+        lg::info("OTTSEL BSPHDR: type=0x{:x} info-filetype=0x{:x} major=0x{:x} minor=0x{:x} "
+                 "b0={:02x} b1={:02x}",
+                 type, *(u32*)(g_ee_main_mem + o + 84), *(u32*)(g_ee_main_mem + o + 92),
+                 *(u32*)(g_ee_main_mem + o + 96), *(u8*)(g_ee_main_mem + o + 84),
+                 *(u8*)(g_ee_main_mem + o + 85));
+        if (type >= 0x080000 && type < 0x08000000) {
+          const u8* t = g_ee_main_mem + type;
+          lg::info("OTTSEL BSPTYPE: +0..31 = {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} "
+                   "{:08x}",
+                   *(u32*)(t + 0), *(u32*)(t + 4), *(u32*)(t + 8), *(u32*)(t + 12),
+                   *(u32*)(t + 16), *(u32*)(t + 20), *(u32*)(t + 24), *(u32*)(t + 28));
+          u32 nm = *(u32*)(t + 4);
+          if (nm >= 0x080000 && nm < 0x08000000) {
+            const char* s = (const char*)(g_ee_main_mem + nm);
+            lg::info("OTTSEL BSPTYPE name-str(0x{:x}): '{}'", nm, std::string(s, strnlen(s, 48)));
           }
         }
       }
@@ -1576,11 +1623,49 @@ void gfx_texture_upload_now(const u8* tpage, int mode, u32 s7_ptr) {
           u32 status = *(u32*)(lev + 20);
           u32 name = *(u32*)(lev + 4);
           u32 load_name = *(u32*)(lev + 8);
-          u32 bsp = *(u32*)(lev + 48);
+          u32 bsp = *(u32*)(lev + 44);
           lg::info("OTTSEL LEVEL0: name=0x{:x} load-name=0x{:x} status=0x{:x} bsp=0x{:x} "
                    "heap=0x{:x}/0x{:x}/0x{:x}/0x{:x}",
                    name, load_name, status, bsp, *(u32*)(lev + 28), *(u32*)(lev + 32),
                    *(u32*)(lev + 36), *(u32*)(lev + 40));
+          // BOT21i: scan the level-group's inline level slots (after the
+          // level0 at +92) for the level objects (type tag 0x507c84) and
+          // report each one's name/status/bsp so the ACTIVE village1 level
+          // (and whether its bsp is set) can be identified directly.
+          for (int off = 92; off < 3000; off += 4) {
+            u32 t = *(u32*)(g + off);
+            if (t == 0x507c84u) {
+              const u8* lv = g + off;
+              u32 nm = *(u32*)(lv + 4);
+              u32 st = *(u32*)(lv + 20);
+              u32 bsp = *(u32*)(lv + 44);
+              u32 ag = *(u32*)(lv + 48);
+              if (nm != 0x18fe04u || bsp || st) {
+                lg::info("OTTSEL LVLSLOT: off=+{} name=0x{:x} status=0x{:x} bsp=0x{:x} "
+                         "art-group=0x{:x}",
+                         off, nm, st, bsp, ag);
+              }
+            }
+          }
+          // BOT21i: the loading-level (group+8) bsp candidate 0x1c83994:
+          // dump the bsp-header object (type + drawable-trees count).
+          u32 lv = 0;
+          memcpy(&lv, g + 8, 4);
+          if (lv >= 0x080000 && lv < 0x08000000) {
+            u32 bsp = *(u32*)(g_ee_main_mem + lv + 40);
+            lg::info("OTTSEL LLOAD: loading-level=0x{:x} bsp=0x{:x}", lv, bsp);
+            if (bsp >= 0x080000 && bsp < 0x08000000) {
+              const u8* b = g_ee_main_mem + bsp;
+              lg::info("OTTSEL BSPOBJ: +0..79 = {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} "
+                       "{:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} "
+                       "{:08x} | {:08x} {:08x} {:08x} {:08x}",
+                       *(u32*)(b + 0), *(u32*)(b + 4), *(u32*)(b + 8), *(u32*)(b + 12),
+                       *(u32*)(b + 16), *(u32*)(b + 20), *(u32*)(b + 24), *(u32*)(b + 28),
+                       *(u32*)(b + 32), *(u32*)(b + 36), *(u32*)(b + 40), *(u32*)(b + 44),
+                       *(u32*)(b + 48), *(u32*)(b + 52), *(u32*)(b + 56), *(u32*)(b + 60),
+                       *(u32*)(b + 64), *(u32*)(b + 68), *(u32*)(b + 72), *(u32*)(b + 76));
+            }
+          }
           auto sym_name = [&](u32 sptr) -> std::string {
             if (sptr < 0x080000 || sptr >= 0x08000000) {
               return "?";
@@ -1600,7 +1685,10 @@ void gfx_texture_upload_now(const u8* tpage, int mode, u32 s7_ptr) {
           // fields hold symbol pointers; match them against known names.
           for (const char* cn : {"village1", "village1-vis", "vi1", "title", "loading",
                                  "loading-bt", "loading-done", "login", "loaded", "alive",
-                                 "active", "inactive", "none", "global"}) {
+                                 "active", "inactive", "none", "global", "bsp-header",
+                                 "file-info", "level-vis-info", "drawable-tree-tfrag",
+                                 "link-block", "#f", "level-default", "default-level",
+                                 "title", "demo", "target"}) {
             auto s = g_pc_port_funcs.intern_from_c(cn);
             if (s.offset) {
               lg::info("OTTSEL LVLSYMADDR: '{}' sym=0x{:x}", cn, s.offset);
@@ -1611,8 +1699,14 @@ void gfx_texture_upload_now(const u8* tpage, int mode, u32 s7_ptr) {
           // can be identified (bsp-header vs vis data).
           for (u32 o : {0x2ef8080u, 0x2821200u}) {
             if (o >= 0x080000 && o < 0x08000000) {
-              u32 tag = *(u32*)(g_ee_main_mem + o - 4);
-              lg::info("OTTSEL OBJTYPE: obj=0x{:x} type-tag=0x{:x}", o, tag);
+              // The served object = {u32 size, char name[60]} then the link
+              // data; the GOAL dgo-header puts the object data at +64 and
+              // the linker's basic type tag at data-4 = obj+60.
+              u32 tag = *(u32*)(g_ee_main_mem + o + 60);
+              lg::info("OTTSEL OBJTYPE: obj=0x{:x} type-tag=0x{:x} tag[0..3]=0x{:x}/0x{:x}/0x{:x}/"
+                       "0x{:x}",
+                       o, tag, *(u32*)(g_ee_main_mem + o + 56), tag,
+                       *(u32*)(g_ee_main_mem + o + 64), *(u32*)(g_ee_main_mem + o + 68));
             }
           }
           if (bsp >= 0x080000 && bsp < 0x08000000) {
