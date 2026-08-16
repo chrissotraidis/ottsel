@@ -38,6 +38,25 @@ count, data[1].z = 26 vertex base, data[0].w = 14 strip count).
   stream is not yet uploaded; the far path's loop counters come from that
   data).
 
+
+## BOT21e update (same day) — tnear/observed-group attribution
+
+The tnear microcode (`test/decompiler/vu_reference/tnear.txt`, 957
+instructions) ALSO hardcodes the frag-list base `iaddiu vi14, vi00, 0x2a0`
+and reads the tfrag-data at 656-665 (0x290-0x299) — it never reads the
+observed per-draw UNPACK destinations (0x160/0x381/0x3d4/0x384).  So the
+66 per-draw groups in the DMA chains are neither the far nor the near tfrag
+data; they are another renderer (tie-class) whose microcode the shell does
+not embed.  Combined with the vis-bit finding (the far tfragment is
+legitimately invisible: the level uploads `lev->vis-bits` into the
+scratchpad vis-list via `dma-send-to-spr-no-flush`, and the far LOD is
+empty), the composed village frame requires the GAME's runtime-built
+0x2a0-based tfrag data (the mips2c `ln` VIF assembly the port does not
+emulate) AND, for the real mesh, the near path (tnear microcode + the
+unimplemented draw-inline-array-tfrag-near).  The direct-bucket prims are
+raw placeholder strips (y constant 0x7910), so the rasterizer's
+to_screen/restart fixes await real data.
+
 ## Next step
 
 Upload the complete per-draw data the far path references (the frags at
