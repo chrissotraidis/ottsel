@@ -127,3 +127,16 @@ In order, with the macOS-proven stack as the reference:
   jak3 long-term): generationamiga.com 2026-07-04 article
 - In-tree: docs/setup/system/macos.md (Rosetta x86_64 official;
   arm64 preset experimental/unsupported)
+
+## 7. Addendum — host-boot verification attempt (same day)
+
+The stale Aug-8 host gk was rebuilt from the current tree (one fix needed:
+the mips2c table guard was iOS-only — now `OTTSEL_IOS || OTTSEL_NO_EMIT`,
+since the host h1 gk uses the same no-emit AOT flow).  The rebuilt gk
+links deep into KERNEL.CGO but the **nondeterministic no-emit link-phase
+fault killed 6/6 host boot attempts today** (death points vary:
+pc-debug-methods/pad, vif-h — same class as the Simulator's 1-in-3
+SIGILL).  This confirms the link-phase fault as the single gating bug for
+the M1 macOS gate — it is now the top-priority runtime investigation.
+Everything else for M1 is in place: fr3 assets, full iso, renderer,
+IOP/overlord, native arm64 binaries.
