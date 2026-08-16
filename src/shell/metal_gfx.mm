@@ -1455,6 +1455,21 @@ void gfx_send_chain(const void* data, u32 offset) {
                    "{:08x}",
                    *(u32*)(t + 32), *(u32*)(t + 36), *(u32*)(t + 40), *(u32*)(t + 44),
                    *(u32*)(t + 48), *(u32*)(t + 52), *(u32*)(t + 56), *(u32*)(t + 60));
+          // BOT21q: dump the bsp-header relocate method code (the type's
+          // method-table[7] = 0x041e01b4) for offline disassembly -- the
+          // checks (file-type/version) + the (-> loading-level bsp) set.
+          u32 reloc = *(u32*)(t + 48);
+          if (reloc >= 0x080000 && reloc < 0x08000000) {
+            const u8* rc = g_ee_main_mem + reloc;
+            lg::info("OTTSEL BSPRELOC: fn=0x{:x} code[0..79] = {:08x} {:08x} {:08x} {:08x} | "
+                     "{:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} "
+                     "{:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
+                     reloc, *(u32*)(rc + 0), *(u32*)(rc + 4), *(u32*)(rc + 8), *(u32*)(rc + 12),
+                     *(u32*)(rc + 16), *(u32*)(rc + 20), *(u32*)(rc + 24), *(u32*)(rc + 28),
+                     *(u32*)(rc + 32), *(u32*)(rc + 36), *(u32*)(rc + 40), *(u32*)(rc + 44),
+                     *(u32*)(rc + 48), *(u32*)(rc + 52), *(u32*)(rc + 56), *(u32*)(rc + 60),
+                     *(u32*)(rc + 64), *(u32*)(rc + 68), *(u32*)(rc + 72), *(u32*)(rc + 76));
+          }
           u32 nm = *(u32*)(t + 4);
           if (nm >= 0x080000 && nm < 0x08000000) {
             const char* s = (const char*)(g_ee_main_mem + nm);
