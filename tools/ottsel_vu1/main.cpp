@@ -114,10 +114,11 @@ int main(int argc, char** argv) {
   // Frag list at vi14 = 0x2a0: word0>>16 = count, word1>>16 = vertex offset.
   st.data[0x2a0 * 4 + 0] = 0x00010000;  // count = 1
   st.data[0x2a1 * 4 + 0] = 0x01600000;  // vertex list at 0x2a0 + 0x160 = 0x400
-  // Fan path pointers (L26 reads vi14+2/+3/+4 as vertex/page pointers).
-  st.data[0x2a2 * 4 + 0] = 0x04000000;
-  st.data[0x2a3 * 4 + 0] = 0x04000000;
-  st.data[0x2a4 * 4 + 0] = 0x04000000;
+  // Fan path pointers (L26/L37 read vi14+2/+3/+4 as page-data pointers and
+  // access them at +0x148, landing on the real page batches at 0x674/0x624).
+  st.data[0x2a2 * 4 + 0] = 0x052c0000;  // 0x52c + 0x148 = 0x674 (the 0x3d4 batch)
+  st.data[0x2a3 * 4 + 0] = 0x04dc0000;  // 0x4dc + 0x148 = 0x624 (the 0x384 batch)
+  st.data[0x2a4 * 4 + 0] = 0x04dc0000;
   // Per-frag matrix at vi14+5..+8 (identity, w = 1).
   float mtx[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
   memcpy(&st.data[0x2a5 * 4], mtx, 16);
@@ -125,7 +126,7 @@ int main(int argc, char** argv) {
   float verts[16] = {-100, 0, -100, 1, 100, 0, -100, 1,
                      -100, 0, 100,  1, 100, 0, 100,  1};
   memcpy(&st.data[0x400 * 4], verts, 16);
-  ottsel_vu1_set_readlog(1);
+  ottsel_vu1_set_readlog(0);
   execute(st, 200000);
   printf("executed; pc=%d gif_out_words=%zu\n", st.pc, st.gif_out.size());
   for (size_t i = 0; i < st.gif_out.size() && i < 64; i++) {

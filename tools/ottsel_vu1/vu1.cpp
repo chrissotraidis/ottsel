@@ -24,13 +24,17 @@ inline int lo_is(uint32_t in) { return 0b11111 & (in >> 11); }
 inline int lo_id(uint32_t in) { return 0b11111 & (in >> 6); }
 inline int lo_imm11(uint32_t in) { return (int)(in & 0b11111111111); }
 inline int lo_imm5(uint32_t in) {
-  int v = (int)((in >> 21) & 0b11111);
+  // The IADDI immediate lives in bits 6-10 (the id field), sign-extended.
+  int v = (int)((in >> 6) & 0b11111);
   if (v & 0b10000) {
     v -= 32;  // sign extend
   }
   return v;
 }
-inline int lo_imm15(uint32_t in) { return (int)(in & 0b111111111111111); }
+inline int lo_imm15(uint32_t in) {
+  // The disassembler's upper_imm15_unsigned: bits 0-10 + bits 21-24.
+  return (int)((in & 0x7ff) | (((in >> 21) & 0xf) << 11));
+}
 
 enum class Op {
   NOP, ADD, ADDi, ADDq, ADDbc, ADDA, ADDAbc, SUB, SUBi, SUBbc, MUL, MULi, MULq,
@@ -536,10 +540,10 @@ void execute(Vu1State& st, int max_instructions) {
         st.vi[lid] = (uint16_t)(st.vi[lis] + st.vi[lit]);
         break;
       case Op::IADDI:
-        st.vi[lid] = (uint16_t)(st.vi[lis] + (int16_t)(lo_imm5(lower) << 11 >> 11));
+        st.vi[lit] = (uint16_t)(st.vi[lis] + (int16_t)(lo_imm5(lower) << 11 >> 11));
         break;
       case Op::IADDIU:
-        st.vi[lid] = (uint16_t)(st.vi[lis] + lo_imm15(lower));
+        st.vi[lit] = (uint16_t)(st.vi[lis] + lo_imm15(lower));
         break;
       case Op::IAND:
         st.vi[lid] = st.vi[lis] & st.vi[lit];
@@ -551,7 +555,7 @@ void execute(Vu1State& st, int max_instructions) {
         st.vi[lid] = (uint16_t)(st.vi[lis] - st.vi[lit]);
         break;
       case Op::ISUBIU:
-        st.vi[lid] = (uint16_t)(st.vi[lis] - lo_imm15(lower));
+        st.vi[lit] = (uint16_t)(st.vi[lis] - lo_imm15(lower));
         break;
       case Op::MOVE:
         memcpy(st.vf[lit].u, st.vf[lis].u, 16);
