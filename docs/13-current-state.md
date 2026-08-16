@@ -76,7 +76,19 @@ next step (see `docs/reports/2026-08-15-bot15-handoff.md`).
 
 ---
 
-# 13 — Current state (handoff snapshot)
+## 2026-08-16 update (BOT21d) — VU1 entry + ILW component fixes; far path reaches the output phase
+
+Two falsifiable VU1-interpreter fixes, verified against the running app:
+(1) the tfrag MSCAL entry is pc=8 (`b L3 | xtop vi14`), not pc=0 (the L11
+hardcoded-0x2a0 header) -- with the correct entry the far path reads the
+frag-list at VU 0-4, the matrix at VU 5-8 and the tfrag-data at 0x290; (2)
+the ILW/ISW integer loads ignored the 16-bit component (always .y) -- the
+component is the dest-mask bits 21-24 (reversed bit0=w..bit3=x).  The far
+path now runs into the strip-output loop (run#10 exits pc=1707 vs the skip
+path before).  gif_out is still 0: the frags' referenced page/vertex data
+beyond the 128-qword stored stream is not yet uploaded.  Evidence:
+docs/evidence/S2/s22-bot21d-microcode-fixes.md.
+
 
 ## 2026-08-15 update (BOT13) — stable title boot; enter-state fault fixed
 

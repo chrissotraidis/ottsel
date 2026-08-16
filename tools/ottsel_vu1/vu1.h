@@ -43,6 +43,7 @@ struct Vu1State {
 void set_top(uint32_t top);
 void ottsel_vu1_set_trace(int on);
 void ottsel_vu1_set_readlog(int on);
+void ottsel_vu1_set_readlog_hook(void (*hook)(const char* msg));
 void execute(Vu1State& st, int max_instructions = 400000);
 
 }  // namespace ottsel_vu1

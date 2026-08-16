@@ -1,3 +1,20 @@
+## 2026-08-16 — BOT21d: VU1 microcode entry + ILW component fixes
+
+- **Acted:** fixed the VU1 interpreter (tools/ottsel_vu1): the tfrag MSCAL
+  entry is pc=8 (the L3/xtop dispatch) not pc=0 (the L11 header); ILW/ISW
+  now honor the 16-bit component (dest-mask bits 21-24, reversed).  The
+  shell's SPR scaffold uploads the frag-list (VU 0-4) + the stored
+  geometry (VU 26+); a readlog hook routes the VU memory-read trace into
+  the runtime log.
+- **Verified:** one boot, zero faults; run#10 (the tfrag draw after the
+  SPR) reaches the strip-output loop (pc=1707) reading the frag-list,
+  matrix (VU 5-8), tfrag-data (0x290) and vertices (VU 26+) with correct
+  components.
+- **Honest boundary:** gif_out still 0 -- the strip-output loop runs to the
+  instruction cap (the frags' referenced page/vertex data beyond the
+  128-qword stream is not yet uploaded).  S2.2 composed frame not reached.
+- **Docs:** evidence s22-bot21d-microcode-fixes.md; 13-current-state updated.
+
 ## 2026-08-16 — BOT21c: mips2c ln restored (game tfrag pipeline runs); SPR->VIF1 scaffold
 
 - **Acted:** restored the 4 commented `(draw-inline-array-tfrag ...)` calls

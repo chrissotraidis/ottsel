@@ -948,6 +948,12 @@ void gfx_send_chain(const void* data, u32 offset) {
   // output (gif_out) through the same GIF decoder/rasterizer as DIRECT data.
   static ottsel_vu1::Vu1State g_vu;
   static bool g_vu_init = false;
+  static bool g_ottsel_spr_ran = false;
+  static bool g_readlog_hook_set = false;
+  if (!g_readlog_hook_set) {
+    g_readlog_hook_set = true;
+    ottsel_vu1::ottsel_vu1_set_readlog_hook([](const char* msg) { lg::info("{}", msg); });
+  }
   static u32 g_vu_top = 0;   // VIF TOP register (frag-list base, XTOP)
   static u32 g_vu_tops = 0;  // VIF TOPS register
   static u32 g_vu_vu_stcycl = 0x404;  // STCYCL cl<<8|wl
@@ -982,6 +988,13 @@ void gfx_send_chain(const void* data, u32 offset) {
             u32 nwords = qwcv * 4;
             u32 i = 0;
             int unpacks = 0, mscals = 0;
+            // BOT21d: the far path's frag-list points at VU 26+ (the
+            // geometry).  The stored dma data's geometry region (qword 20+,
+            // byte 0x140) maps to VU 26+; upload it so the strips have
+            // vertices.
+            if (qwcv >= 128) {
+              memcpy(&g_vu.data[26 * 4], &w[20 * 4], (qwcv - 20) * 16);
+            }
             while (i + 1 < nwords) {
               u32 vw = w[i];
               VifCode v(vw);
@@ -1035,6 +1048,7 @@ void gfx_send_chain(const void* data, u32 offset) {
             }
             lg::info("OTTSEL SPR done: unpacks={} mscals={} gif_out_total={}", unpacks, mscals,
                      (int)g_vu.gif_out.size());
+            g_ottsel_spr_ran = true;
           }
         }
       }
@@ -1058,14 +1072,29 @@ void gfx_send_chain(const void* data, u32 offset) {
         // current frag-list base.
         static u32 ottsel_vu1_runs = 0;
         ottsel_vu1::set_top(g_vu_top);
-        g_vu.pc = (v.immediate * 2) & 0x7ff;
+        // BOT21d: the tfrag microcode's real entry is pc=8 (the
+        // `b L3 | xtop vi14` dispatch -- frag-list at XTOP/TOP); pc=0 is the
+        // L11 header path (hardcoded 0x2a0 base) used by other variants.
+        g_vu.pc = (8 + v.immediate * 2) & 0x7ff;
         g_vu.gif_out.clear();
+        // BOT21d: trace the first tfrag draw after the SPR upload so the
+        // far path's data reads can be verified against the frag-list.
+        static bool ottsel_traced = false;
+        bool trace_this = g_ottsel_spr_ran && !ottsel_traced && ottsel_vu1_runs >= 9;
+        if (trace_this) {
+          ottsel_traced = true;
+          ottsel_vu1::ottsel_vu1_set_readlog(1);
+        }
         // S2.2 BOT20: the empty frag list makes the microcode loop to the
         // cap, burning the game thread (95% CPU, 18-min boot).  The skip
         // path (ibeq vi00, vi02, L32) exits far earlier; a 50k cap keeps the
         // thread responsive while still allowing real frag data (validated
         // runs reached the output phase well within it).
-        ottsel_vu1::execute(g_vu, 50000);
+        // BOT21d: the far path's output loop needs more than the 50k cap
+        // (it reaches the strip-output phase at pc~1687 but hits the cap
+        // before the XGKICK).  Use the original cap for tfrag runs.
+        ottsel_vu1::execute(g_vu, g_ottsel_spr_ran ? 400000 : 50000);
+        ottsel_vu1::ottsel_vu1_set_readlog(0);
         if (ottsel_vu1_runs < 20) {
           ottsel_vu1_runs++;
           lg::info("OTTSEL VU1: run#{} mscal imm=0x{:x} top=0x{:x} pc={} gif_out={} "

@@ -7,6 +7,11 @@ namespace ottsel_vu1 {
 
 namespace {
 
+// S2.2 BOT21d: readlog output hook.  The shell sets this to route the VU
+// memory-read trace into the runtime log; the standalone tool keeps it null
+// and falls back to printf.
+void (*g_readlog_hook)(const char* msg) = nullptr;
+
 // -------------------------------------------------------------------------
 // Decode (mirrors decompiler/VuDisasm/VuDisassembler.cpp field extraction).
 // -------------------------------------------------------------------------
@@ -221,6 +226,7 @@ static int g_readlog = 0;
 void set_top(uint32_t top) { g_vu_top = top; }
 void ottsel_vu1_set_trace(int on) { g_trace = on; }
 void ottsel_vu1_set_readlog(int on) { g_readlog = on; }
+void ottsel_vu1_set_readlog_hook(void (*hook)(const char*)) { g_readlog_hook = hook; }
 
 void execute(Vu1State& st, int max_instructions) {
   int executed = 0;
@@ -490,7 +496,13 @@ void execute(Vu1State& st, int max_instructions) {
       case Op::LQ: {
         uint32_t addr = ((int32_t)(int16_t)st.vi[lis] + limm11) & 0xfff;
         if (g_readlog) {
-          printf("R LQ 0x%x -> vf%d\n", addr, lit);
+          char buf[96];
+          snprintf(buf, sizeof(buf), "VU1R LQ pc=%d addr=0x%x -> vf%d", st.pc - 1, addr, lit);
+          if (g_readlog_hook) {
+            g_readlog_hook(buf);
+          } else {
+            printf("%s\n", buf);
+          }
         }
         memcpy(&st.vf[lit].u[0], &st.data[addr * 4], 16);
       } break;
@@ -503,7 +515,14 @@ void execute(Vu1State& st, int max_instructions) {
         uint32_t addr = st.vi[lis] & 0xfff;
         set_vi(st, lis, (st.vi[lis] + 1) & 0xfff);
         if (g_readlog) {
-          printf("R LQI 0x%x -> vf%d (vi%d)\n", addr, lit, lis);
+          char buf[96];
+          snprintf(buf, sizeof(buf), "VU1R LQI pc=%d addr=0x%x -> vf%d (vi%d)", st.pc - 1, addr,
+                   lit, lis);
+          if (g_readlog_hook) {
+            g_readlog_hook(buf);
+          } else {
+            printf("%s\n", buf);
+          }
         }
         memcpy(&st.vf[lit].u[0], &st.data[addr * 4], 16);
       } break;
@@ -523,25 +542,75 @@ void execute(Vu1State& st, int max_instructions) {
       } break;
       case Op::ILW: {
         uint32_t addr = ((int32_t)(int16_t)st.vi[lis] + limm11) & 0xfff;
-        if (g_readlog) {
-          printf("R ILW 0x%x -> vi%d\n", addr, lit);
+        // The 16-bit component is selected by the dest-mask bits 21-24
+        // (reversed: bit0=w, bit1=z, bit2=y, bit3=x).
+        uint32_t comp = (lower >> 21) & 0xf;
+        uint32_t word = st.data[addr * 4 + (comp >= 0b0010 ? 1 : 0)];
+        uint16_t val = (uint16_t)((comp & 0b1) ? (word >> 16) : (word & 0xffff));
+        if ((comp & 0b0100) && !(comp & 0b0010)) {  // y: word0 high
+          val = (uint16_t)(st.data[addr * 4] >> 16);
         }
-        set_vi(st, lit, st.data[addr * 4] >> 16);
+        if ((comp & 0b1000)) {  // x: word0 low
+          val = (uint16_t)(st.data[addr * 4] & 0xffff);
+        }
+        if (g_readlog) {
+          char buf[96];
+          snprintf(buf, sizeof(buf), "VU1R ILW pc=%d addr=0x%x -> vi%d", st.pc - 1, addr, lit);
+          if (g_readlog_hook) {
+            g_readlog_hook(buf);
+          } else {
+            printf("%s\n", buf);
+          }
+        }
+        set_vi(st, lit, val);
       } break;
       case Op::ISW: {
         uint32_t addr = ((int32_t)(int16_t)st.vi[lis] + limm11) & 0xfff;
-        st.data[addr * 4] = (uint32_t)st.vi[lit] << 16;
+        uint32_t comp = (lower >> 21) & 0xf;
+        if (comp & 0b1000) {  // x
+          st.data[addr * 4] = (st.data[addr * 4] & 0xffff0000u) | (st.vi[lit] & 0xffff);
+        } else if (comp & 0b0100) {  // y
+          st.data[addr * 4] = (st.data[addr * 4] & 0xffffu) | ((uint32_t)st.vi[lit] << 16);
+        } else if (comp & 0b0010) {  // z
+          st.data[addr * 4 + 1] = (st.data[addr * 4 + 1] & 0xffff0000u) | (st.vi[lit] & 0xffff);
+        } else {  // w
+          st.data[addr * 4 + 1] = (st.data[addr * 4 + 1] & 0xffffu) | ((uint32_t)st.vi[lit] << 16);
+        }
       } break;
       case Op::ILWR: {
         uint32_t addr = st.vi[lis] & 0xfff;
-        if (g_readlog) {
-          printf("R ILWR 0x%x -> vi%d (vi%d=0x%x)\n", addr, lit, lis, st.vi[lis]);
+        uint32_t comp = (lower >> 21) & 0xf;
+        uint32_t word = st.data[addr * 4 + (comp >= 0b0010 ? 1 : 0)];
+        uint16_t val = (uint16_t)((comp & 0b1) ? (word >> 16) : (word & 0xffff));
+        if ((comp & 0b0100) && !(comp & 0b0010)) {
+          val = (uint16_t)(st.data[addr * 4] >> 16);
         }
-        set_vi(st, lit, st.data[addr * 4] >> 16);
+        if ((comp & 0b1000)) {
+          val = (uint16_t)(st.data[addr * 4] & 0xffff);
+        }
+        if (g_readlog) {
+          char buf[96];
+          snprintf(buf, sizeof(buf), "VU1R ILWR pc=%d addr=0x%x -> vi%d", st.pc - 1, addr, lit);
+          if (g_readlog_hook) {
+            g_readlog_hook(buf);
+          } else {
+            printf("%s\n", buf);
+          }
+        }
+        set_vi(st, lit, val);
       } break;
       case Op::ISWR: {
         uint32_t addr = st.vi[lis] & 0xfff;
-        st.data[addr * 4] = (uint32_t)st.vi[lit] << 16;
+        uint32_t comp = (lower >> 21) & 0xf;
+        if (comp & 0b1000) {  // x
+          st.data[addr * 4] = (st.data[addr * 4] & 0xffff0000u) | (st.vi[lit] & 0xffff);
+        } else if (comp & 0b0100) {  // y
+          st.data[addr * 4] = (st.data[addr * 4] & 0xffffu) | ((uint32_t)st.vi[lit] << 16);
+        } else if (comp & 0b0010) {  // z
+          st.data[addr * 4 + 1] = (st.data[addr * 4 + 1] & 0xffff0000u) | (st.vi[lit] & 0xffff);
+        } else {  // w
+          st.data[addr * 4 + 1] = (st.data[addr * 4 + 1] & 0xffffu) | ((uint32_t)st.vi[lit] << 16);
+        }
       } break;
       case Op::IADD:
         set_vi(st, lid, (uint16_t)(st.vi[lis] + st.vi[lit]));
