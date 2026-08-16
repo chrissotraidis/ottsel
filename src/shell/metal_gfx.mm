@@ -901,6 +901,12 @@ void gfx_send_chain(const void* data, u32 offset) {
     lg::info("OTTSEL RASTER: presented composed {}x{} (draws={})", g_raster.fb_w, g_raster.fb_h,
              g_raster.draw_count);
   }
+  // S2.2 BOT20: keep the last decoded texture on screen (the game uploads
+  // tpages continuously; the composed-raster path is not drawing yet).  This
+  // gives a persistent visible frame instead of the clear color.
+  if (g_chain_no % 90 == 45 && g_metal && g_fw > 0 && g_fh > 0 && !g_frame.empty()) {
+    ottsel_metal_present(g_metal, g_frame.data(), g_fw, g_fh);
+  }
   static int ottsel_dma_logged = 0;
   bool log_dma = ottsel_dma_logged < 3;
   if (log_dma) {
@@ -972,7 +978,12 @@ void gfx_send_chain(const void* data, u32 offset) {
         ottsel_vu1::set_top(g_vu_top);
         g_vu.pc = (v.immediate * 2) & 0x7ff;
         g_vu.gif_out.clear();
-        ottsel_vu1::execute(g_vu, 400000);
+        // S2.2 BOT20: the empty frag list makes the microcode loop to the
+        // cap, burning the game thread (95% CPU, 18-min boot).  The skip
+        // path (ibeq vi00, vi02, L32) exits far earlier; a 50k cap keeps the
+        // thread responsive while still allowing real frag data (validated
+        // runs reached the output phase well within it).
+        ottsel_vu1::execute(g_vu, 50000);
         if (ottsel_vu1_runs < 8) {
           ottsel_vu1_runs++;
           lg::info("OTTSEL VU1: run#{} mscal imm=0x{:x} top=0x{:x} pc={} gif_out={} "
@@ -1355,17 +1366,53 @@ void gfx_texture_upload_now(const u8* tpage, int mode, u32 s7_ptr) {
   rgba.resize(4096 * 4096 * 4);
   u32 tex_idx = 0;
   if (decode_largest_texture(tpage, mode, s7_ptr, rgba.data(), w, h, &tex_idx)) {
-    // Present the largest texture seen so far (the title backdrop should
-    // replace the boot ocean texture when the title screen draws).
-    static int g_best_area = 0;
-    if (w * h >= g_best_area) {
-      g_best_area = w * h;
-      g_frame.assign(rgba.begin(), rgba.begin() + (size_t)w * h * 4);
-      g_fw = w;
-      g_fh = h;
-      ottsel_metal_present(g_metal, g_frame.data(), g_fw, g_fh);
-      lg::info("OTTSEL GFX: presented game frame {}x{} (tpage 0x{:x} tex {})", w, h, page_id(tpage),
-               tex_idx);
+    // S2.2 BOT21: present decoded textures, but skip UNIFORM (empty) pages.
+    // The village boot uploads small all-black/all-gray tpage regions
+    // (e.g. tpage 0x2 tex 43 and 0x100 tex 0 decode to a single color); the
+    // BOT20 every-decode gate let the LAST such page clobber the visible
+    // frame, so the window went black even though presents were firing.  A
+    // real game texture is never perfectly uniform, so keeping the previous
+    // frame for uniform decodes preserves the last real image.  The
+    // best-area gate from BOT16 had the opposite flaw (smaller real village
+    // textures never replaced the title backdrop), so both heuristics are
+    // replaced by the uniformity check.
+    bool uniform = true;
+    if (w > 0 && h > 0) {
+      const size_t n = (size_t)w * h;
+      const u8 r0 = rgba[0], g0 = rgba[1], b0 = rgba[2];
+      size_t stride = n / 256 + 1;  // sample ~256 pixels across the page
+      for (size_t i = 0; i < n; i += stride) {
+        const u8* p = rgba.data() + i * 4;
+        if (p[0] != r0 || p[1] != g0 || p[2] != b0) {
+          uniform = false;
+          break;
+        }
+      }
+    }
+    if (uniform) {
+      static u32 ottsel_gfx_uniform = 0;
+      if (ottsel_gfx_uniform++ < 4) {
+        lg::info("OTTSEL GFX: skip uniform {}x{} tpage=0x{:x} tex={} (px0={:02x}{:02x}{:02x}); "
+                 "keeping the last real frame",
+                 w, h, page_id(tpage), tex_idx, rgba[0], rgba[1], rgba[2]);
+      }
+      return;
+    }
+    static u32 ottsel_gfx_presents = 0;
+    static u32 ottsel_decode_logged = 0;
+    if (ottsel_decode_logged++ < 4) {
+      lg::info("OTTSEL GFX: decode tpage=0x{:x} tex={} {}x{} px0-3={:02x}{:02x}{:02x} "
+               "{:02x}{:02x}{:02x} {:02x}{:02x}{:02x} {:02x}{:02x}{:02x}",
+               page_id(tpage), tex_idx, w, h, rgba[0], rgba[1], rgba[2], rgba[4], rgba[5],
+               rgba[6], rgba[8], rgba[9], rgba[10], rgba[12], rgba[13], rgba[14]);
+    }
+    g_frame.assign(rgba.begin(), rgba.begin() + (size_t)w * h * 4);
+    g_fw = w;
+    g_fh = h;
+    ottsel_metal_present(g_metal, g_frame.data(), g_fw, g_fh);
+    if ((ottsel_gfx_presents++ & 0x3f) == 0) {
+      lg::info("OTTSEL GFX: presented game frame {}x{} (tpage 0x{:x} tex {})", w, h,
+               page_id(tpage), tex_idx);
     }
   } else {
     static int ottsel_gfx_fail = 0;

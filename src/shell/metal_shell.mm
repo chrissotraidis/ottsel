@@ -104,6 +104,33 @@ NSString* kShaderSource = @""
   if (!rgba) {
     return;
   }
+  // Keep the CAMetalLayer drawableSize in sync with the actual layer bounds
+  // (the simulator's windowed presentation reports the pre-layout 480x320
+  // value at creation; SDL also syncs it on layout, this covers late resizes).
+  CGSize layer_bounds = self.layer.bounds.size;
+  CGFloat layer_scale = self.layer.contentsScale;
+  if (layer_bounds.width > 0 && layer_bounds.height > 0) {
+    CGSize want = CGSizeMake(layer_bounds.width * layer_scale, layer_bounds.height * layer_scale);
+    if (!CGSizeEqualToSize(self.layer.drawableSize, want)) {
+      self.layer.drawableSize = want;
+    }
+  }
+  // Present-path probe: log the first few presents (drawable size + first
+  // pixels) so a black screen can be traced to the layer vs the content.
+  static int ottsel_present_logged = 0;
+  if (ottsel_present_logged++ < 8) {
+    CGSize ds = self.layer.drawableSize;
+    NSLog(@"ottsel metal presentRGBA %dx%d layer-drawable=%.0fx%.0f w=%d h=%d pipeline=%d",
+          (int)self.layer.bounds.size.width, (int)self.layer.bounds.size.height, ds.width, ds.height,
+          w, h, self.pipeline != nil);
+    if (w >= 4 && h >= 1) {
+      NSLog(@"ottsel metal px0-15: %02x%02x%02x %02x%02x%02x %02x%02x%02x %02x%02x%02x "
+            "%02x%02x%02x %02x%02x%02x %02x%02x%02x %02x%02x%02x",
+            rgba[0], rgba[1], rgba[2], rgba[3], rgba[4], rgba[5], rgba[6], rgba[7], rgba[8],
+            rgba[9], rgba[10], rgba[11], rgba[12], rgba[13], rgba[14], rgba[15], rgba[16],
+            rgba[17], rgba[18], rgba[19], rgba[20], rgba[21], rgba[22], rgba[23]);
+    }
+  }
   // Recreate the upload texture if the surface size changed (rotation or
   // first frame after the caller adopts the drawable size).
   if (!self.logTex || self.logTex.width != (NSUInteger)w ||
