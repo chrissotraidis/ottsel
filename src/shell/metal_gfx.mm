@@ -1271,6 +1271,16 @@ void gfx_send_chain(const void* data, u32 offset) {
          (v0.kind == VifCode::Kind::MSCAL || v0.kind == VifCode::Kind::MSCALF)) &&
         (v1.immediate == 0 || v0.immediate == 0)) {
       ottsel_tw_dumped = true;
+      // BOT21m: the *vu1-enable-user* mask at the draw phase (the tie draw
+      // is gated on its tie/generic bits).
+      {
+        auto v1s = g_pc_port_funcs.intern_from_c("*vu1-enable-user*");
+        u32 v = 0;
+        if (v1s.offset) {
+          memcpy(&v, g_ee_main_mem + v1s.offset, 4);
+        }
+        lg::info("OTTSEL VU1MASK: draw-phase *vu1-enable-user* = 0x{:x}", v);
+      }
       // BOT21i: after the level load, read the linked village1-vis object
       // (the last vi1.DGO object = the bsp-header file per the decompiler's
       // get_bsp_file) + the level bsp field.
@@ -1755,10 +1765,15 @@ void gfx_texture_upload_now(const u8* tpage, int mode, u32 s7_ptr) {
                                  "draw-inline-array-prototype-tie-asm",
                                  "draw-inline-array-prototype-tie-near-asm",
                                  "draw-node-cull", "drawable-tree-instance-tie",
-                                 "drawable-inline-array-instance-tie"}) {
+                                 "drawable-inline-array-instance-tie", "*vu1-enable-user*",
+                                 "*vu1-enable-user-menu*"}) {
             auto s = g_pc_port_funcs.intern_from_c(cn);
             if (s.offset) {
-              lg::info("OTTSEL LVLSYMADDR: '{}' sym=0x{:x}", cn, s.offset);
+              u32 v = 0;
+              if (g_ee_main_mem && s.offset < 0x08000000) {
+                memcpy(&v, g_ee_main_mem + s.offset, 4);
+              }
+              lg::info("OTTSEL LVLSYMADDR: '{}' sym=0x{:x} val=0x{:x}", cn, s.offset, v);
             }
           }
           // BOT21i: the vi1.DGO last object (village1-vis) links at the

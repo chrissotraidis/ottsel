@@ -2505,6 +2505,41 @@ index 6baf04440..8468f2f59 100644
      // nop                                            // sll r0, r0, 0
    }
  
+diff --git a/game/mips2c/jak1_functions/tie_methods.cpp b/game/mips2c/jak1_functions/tie_methods.cpp
+index 010033390..72b6e6a41 100644
+--- a/game/mips2c/jak1_functions/tie_methods.cpp
++++ b/game/mips2c/jak1_functions/tie_methods.cpp
+@@ -2,7 +2,9 @@
+ //--------------------------MIPS2C---------------------
+ #include "game/kernel/jak1/kscheme.h"
+ #include "game/mips2c/mips2c_private.h"
++#include "common/log/log.h"
+ using namespace jak1;
++extern u8* g_ee_main_mem;  // global EE mapping
+ namespace Mips2C::jak1 {
+ namespace draw_inline_array_instance_tie {
+ struct Cache {
+@@ -168,6 +170,20 @@ void init_background(ExecutionContext* c) {
+ u64 execute(void* ctxt) {
+   auto* c = (ExecutionContext*)ctxt;
+   init_background(c);
++  // Ottsel S2.2 BOT21m probe: log the restored tie instance draw so the
++  // vis-list / instance count can be verified (a0=vis-list, a1=instances,
++  // a2=count, a3=dma-buffer).
++  {
++    u32 a0v = (u32)c->sgpr64(a0);
++    u32 a1v = (u32)c->sgpr64(a1);
++    s64 a2v = (s64)c->sgpr64(a2);
++    u32 vis0 = 0;
++    if (a0v >= 0x080000 && a0v < 0x08000000) {
++      vis0 = *(u32*)(g_ee_main_mem + a0v);
++    }
++    lg::info("OTTSEL TIELN: a0=0x{:x} vis0=0x{:x} a1=0x{:x} a2={} a3=0x{:x}", a0v, vis0, a1v,
++             a2v, (u32)c->sgpr64(a3));
++  }
+   bool bc = false;
+   u16 vi01 = 0;
+ 
 diff --git a/game/mips2c/mips2c_private.h b/game/mips2c/mips2c_private.h
 index f3124154e..e43a4fc93 100644
 --- a/game/mips2c/mips2c_private.h
