@@ -647,7 +647,7 @@ void execute(Vu1State& st, int max_instructions) {
         branch = true;
         break;
       case Op::IBEQ: {
-        if (g_trace && this_pc >= 105 && this_pc <= 145) {
+        if (g_trace) {
           printf("IBEQ pc=%d vi%d vs vi%d (vals %d %d) tgt=%d\n", this_pc, lis, lit, st.vi[lis],
                  st.vi[lit], (this_pc + 1 + (int)(limm11 << 21 >> 21)) & 0x7ff);
         }

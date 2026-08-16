@@ -975,7 +975,13 @@ void gfx_send_chain(const void* data, u32 offset) {
     }
     // Dump the tfrag-work once the tfrag draws are actually running.
     static bool ottsel_tw_dumped = false;
-    if (!ottsel_tw_dumped && g_ee_main_mem &&
+    static u32 ottsel_mscal_count = 0;
+    if (g_ee_main_mem &&
+        ((v1.kind == VifCode::Kind::MSCAL || v1.kind == VifCode::Kind::MSCALF) ||
+         (v0.kind == VifCode::Kind::MSCAL || v0.kind == VifCode::Kind::MSCALF))) {
+      ottsel_mscal_count++;
+    }
+    if (!ottsel_tw_dumped && ottsel_mscal_count >= 60 && g_ee_main_mem &&
         ((v1.kind == VifCode::Kind::MSCAL || v1.kind == VifCode::Kind::MSCALF) ||
          (v0.kind == VifCode::Kind::MSCAL || v0.kind == VifCode::Kind::MSCALF)) &&
         (v1.immediate == 0 || v0.immediate == 0)) {
@@ -990,10 +996,24 @@ void gfx_send_chain(const void* data, u32 offset) {
                  *(u32*)(g_ee_main_mem + info.offset + 12), val);
         if (val) {
           const u8* tw = g_ee_main_mem + val;
-          lg::info("OTTSEL TFRAGWORK: +160..184 = {:08x} {:08x} {:08x} {:08x} {:08x} {:08x} "
-                   "{:08x}",
+          lg::info("OTTSEL TFRAGWORK: +0..63 = {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} "
+                   "{:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
+                   *(u32*)(tw + 0), *(u32*)(tw + 4), *(u32*)(tw + 8), *(u32*)(tw + 12),
+                   *(u32*)(tw + 16), *(u32*)(tw + 20), *(u32*)(tw + 24), *(u32*)(tw + 28),
+                   *(u32*)(tw + 32), *(u32*)(tw + 36), *(u32*)(tw + 40), *(u32*)(tw + 44),
+                   *(u32*)(tw + 48), *(u32*)(tw + 52), *(u32*)(tw + 56), *(u32*)(tw + 60));
+          lg::info("OTTSEL TFRAGWORK: +64..127 = {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} "
+                   "{:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
+                   *(u32*)(tw + 64), *(u32*)(tw + 68), *(u32*)(tw + 72), *(u32*)(tw + 76),
+                   *(u32*)(tw + 80), *(u32*)(tw + 84), *(u32*)(tw + 88), *(u32*)(tw + 92),
+                   *(u32*)(tw + 96), *(u32*)(tw + 100), *(u32*)(tw + 104), *(u32*)(tw + 108),
+                   *(u32*)(tw + 112), *(u32*)(tw + 116), *(u32*)(tw + 120), *(u32*)(tw + 124));
+          lg::info("OTTSEL TFRAGWORK: +128..191 = {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} "
+                   "{:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
+                   *(u32*)(tw + 128), *(u32*)(tw + 132), *(u32*)(tw + 136), *(u32*)(tw + 140),
+                   *(u32*)(tw + 144), *(u32*)(tw + 148), *(u32*)(tw + 152), *(u32*)(tw + 156),
                    *(u32*)(tw + 160), *(u32*)(tw + 164), *(u32*)(tw + 168), *(u32*)(tw + 172),
-                   *(u32*)(tw + 176), *(u32*)(tw + 180), *(u32*)(tw + 184));
+                   *(u32*)(tw + 176), *(u32*)(tw + 180), *(u32*)(tw + 184), *(u32*)(tw + 188));
           u32 tf = 0;
           memcpy(&tf, tw + 168, 4);
           if (tf) {
