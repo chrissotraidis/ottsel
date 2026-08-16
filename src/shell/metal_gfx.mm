@@ -1281,6 +1281,22 @@ void gfx_send_chain(const void* data, u32 offset) {
         }
         lg::info("OTTSEL VU1MASK: draw-phase *vu1-enable-user* = 0x{:x}", v);
       }
+      // BOT21n: the background-work tree counts (tfrag @+0, tie @+476 per
+      // the goal type field order) -- whether the tie trees were added to
+      // the background work list.
+      {
+        auto bws = g_pc_port_funcs.intern_from_c("*background-work*");
+        u32 bw = 0;
+        if (bws.offset) {
+          memcpy(&bw, g_ee_main_mem + bws.offset, 4);
+        }
+        if (bw >= 0x080000 && bw < 0x08000000) {
+          lg::info("OTTSEL BGWORK: bg=0x{:x} tfrag-count=0x{:x} tie-count@476=0x{:x} "
+                   "@480=0x{:x} @484=0x{:x}",
+                   bw, *(u32*)(g_ee_main_mem + bw), *(u32*)(g_ee_main_mem + bw + 476),
+                   *(u32*)(g_ee_main_mem + bw + 480), *(u32*)(g_ee_main_mem + bw + 484));
+        }
+      }
       // BOT21i: after the level load, read the linked village1-vis object
       // (the last vi1.DGO object = the bsp-header file per the decompiler's
       // get_bsp_file) + the level bsp field.
