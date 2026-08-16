@@ -1189,14 +1189,14 @@ void gfx_send_chain(const void* data, u32 offset) {
     DmaTransfer t = dma.read_and_advance();
     count++;
     if (t.size_bytes == 0) {
-      if (g_vif_replay && g_vif_replay_recs < 30000) {
+      if (g_vif_replay && g_vif_replay_recs < 200000) {
         u32 rec[4] = {t.vif0(), t.vif1(), 0, 0};
         fwrite(rec, 16, 1, g_vif_replay);
         g_vif_replay_recs++;
       }
       continue;
     }
-    if (g_vif_replay && g_vif_replay_recs < 30000 && t.size_bytes <= 8192) {
+    if (g_vif_replay && g_vif_replay_recs < 200000 && t.size_bytes <= 8192) {
       u32 rec[4] = {t.vif0(), t.vif1(), t.size_bytes, 0};
       fwrite(rec, 16, 1, g_vif_replay);
       fwrite(t.data, t.size_bytes, 1, g_vif_replay);
@@ -1470,6 +1470,25 @@ void gfx_send_chain(const void* data, u32 offset) {
                          *(u32*)(t + 28), *(u32*)(t + 32), *(u32*)(t + 36), *(u32*)(t + 40),
                          *(u32*)(t + 44), *(u32*)(t + 48), *(u32*)(t + 52), *(u32*)(t + 56),
                          *(u32*)(t + 60));
+                // BOT21j: the tie trees' drawables (the tree's children at
+                // +28..+40): dump the first drawable's type + length.
+                if (ti >= 1) {
+                  for (int ci = 0; ci < 2; ci++) {
+                    u32 dp = *(u32*)(t + 28 + ci * 4);
+                    if (dp >= 0x080000 && dp < 0x08000000) {
+                      const u8* dd = g_ee_main_mem + dp;
+                      lg::info("OTTSEL TIEDRAW[{}][{}]: ptr=0x{:x} type-tag=0x{:x} +0..31 = "
+                               "{:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | "
+                               "{:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
+                               ti, ci, dp, *(u32*)(dd - 4), *(u32*)(dd + 0), *(u32*)(dd + 4),
+                               *(u32*)(dd + 8), *(u32*)(dd + 12), *(u32*)(dd + 16),
+                               *(u32*)(dd + 20), *(u32*)(dd + 24), *(u32*)(dd + 28),
+                               *(u32*)(dd + 32), *(u32*)(dd + 36), *(u32*)(dd + 40),
+                               *(u32*)(dd + 44), *(u32*)(dd + 48), *(u32*)(dd + 52),
+                               *(u32*)(dd + 56), *(u32*)(dd + 60));
+                    }
+                  }
+                }
               }
             }
           }
@@ -1732,7 +1751,11 @@ void gfx_texture_upload_now(const u8* tpage, int mode, u32 s7_ptr) {
                                  "active", "inactive", "none", "global", "bsp-header",
                                  "file-info", "level-vis-info", "drawable-tree-tfrag",
                                  "link-block", "#f", "level-default", "default-level",
-                                 "title", "demo", "target"}) {
+                                 "title", "demo", "target", "draw-inline-array-instance-tie",
+                                 "draw-inline-array-prototype-tie-asm",
+                                 "draw-inline-array-prototype-tie-near-asm",
+                                 "draw-node-cull", "drawable-tree-instance-tie",
+                                 "drawable-inline-array-instance-tie"}) {
             auto s = g_pc_port_funcs.intern_from_c(cn);
             if (s.offset) {
               lg::info("OTTSEL LVLSYMADDR: '{}' sym=0x{:x}", cn, s.offset);
