@@ -1,5 +1,32 @@
 # 13 — Current state (handoff snapshot)
 
+## 2026-08-16 update (BOT21) — black-window present regression fixed; frag-list blocker root-caused
+
+The BOT19-BOT20 black window is FIXED and verified (one boot, one Simulator,
+Windowed, zero faults; committed c6b7104).  The presents were always
+reaching the layer; the BOT20 "present every decode" gate let uniform
+(empty) tpages -- tpage 0x2 tex 43 (128x128 all-zero), 0x100 tex 0 (64x64
+all-zero), 0x370 tex 0 (64x64 all-0x80) -- overwrite `g_frame`, so the
+window showed the last decoded black page (614,400 px all (0,0,0)).
+`gfx_texture_upload_now` now samples ~256 pixels and skips uniform pages
+("keeping the last real frame"); the real village tpage 0x1cf tex 44 stays
+visible (s22-bot21-texture-visible.png).  The simulator's floating-window
+("Move & Resize") mode was ruled out as a red herring (it blanks every app
+in the framebuffer capture, and the layer geometry was always correct).
+
+S2.2 composed-frame blocker root cause (s22-bot21b-fraglist-rootcause.md):
+the ported `goal_src/.../tfrag-methods.gc` comments out the mips2c
+`(draw-inline-array-tfrag ...)` calls that the retail game makes (the
+retail reference has them), so the recompiled GAME.CGO's
+draw-drawable-tree-tfrag (live disassembly: init-buffer -> perf-stats ->
+end-buffer -> bucket-insert, no `ln` call) never builds the frag-list
+header (VU words 0-4).  The VIF emulation is correct (TOP=0; matrix lands
+at VU 0x5 and tfrag-data at 0x290, exactly where the microcode reads
+them); the game-side frag-list construction is simply absent.  Next:
+restore the `ln` calls, recompile GAME.CGO, and feed the frag-list into
+the shell's VU1.
+
+
 ## 2026-08-15 update (BOT16) — S2.2 texture decode verified; composed frame next
 
 The BOT15 "pixel noise" frame is FIXED and verified (one boot, one Simulator,

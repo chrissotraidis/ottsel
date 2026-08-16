@@ -1103,6 +1103,17 @@ void gfx_send_chain(const void* data, u32 offset) {
          (v0.kind == VifCode::Kind::MSCAL || v0.kind == VifCode::Kind::MSCALF)) &&
         (v1.immediate == 0 || v0.immediate == 0)) {
       ottsel_tw_dumped = true;
+      // S2.2 BOT21b probe: dump the compiled draw-drawable-tree-tfrag
+      // function so the per-draw VIF emission can be attributed (the
+      // goal_src mips2c ln call is commented out, yet per-draw UNPACKs
+      // flow).  Disassemble the ARM64 words offline.
+      for (const char* nm : {"draw-drawable-tree-tfrag", "ln", "tfrag-init-buffer",
+                             "draw-drawable-tree-trans-tfrag"}) {
+        auto fn = g_pc_port_funcs.intern_from_c(nm);
+        lg::info("OTTSEL FNSYM: {} sym=0x{:x} val=0x{:x} val4=0x{:x}", nm, fn.offset,
+                 fn.offset ? *(u32*)(g_ee_main_mem + fn.offset) : 0,
+                 fn.offset ? *(u32*)(g_ee_main_mem + fn.offset + 4) : 0);
+      }
       auto info = g_pc_port_funcs.intern_from_c("*tfrag-work*");
       if (info.offset) {
         u32 val = 0;

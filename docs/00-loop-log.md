@@ -1,5 +1,36 @@
 # 00 — Loop log
 
+## 2026-08-16 — BOT21: black-window present regression fixed; frag-list blocker root-caused
+
+- **Acted (present path):** the BOT19-BOT20 black window was NOT a layer or
+  simulator issue (the CAMetalLayer composited fine; geometry probes showed
+  the 480x320 window attached, visible, opacity 1).  The BOT20
+  every-decode gate let uniform (empty) tpages (0x2 tex 43, 0x100 tex 0,
+  0x370 tex 0) overwrite `g_frame`, so the window showed the last decoded
+  black page while presents fired with real pixels every frame.  Fix in
+  `gfx_texture_upload_now`: skip uniform pages (sampled ~256 px); the real
+  tpage 0x1cf tex 44 texture stays visible.
+- **Verified:** one boot, one Simulator, Windowed, zero faults; window region
+  shows 598,612 non-black px (5,192 colors, dominant 254,227,92), pixel-
+  identical across screenshots 25s apart; uniform pages logged as skipped.
+- **Acted (frag-list root cause):** disassembled the RUNNING
+  draw-drawable-tree-tfrag (0x42c4244, live dump) — its calls are
+  init-buffer, perf-stats x3, end-buffer, bucket-insert; NO mips2c `ln`.
+  The retail reference (tfrag-methods_REF.gc) calls `draw-inline-array-
+  tfrag`, but the rewritten goal_src comments every call out, so the
+  recompiled GAME.CGO never builds the frag-list header (VU words 0-4) and
+  every tfrag MSCAL takes the ibeq-skip path (gif_out=0).  VIF TOP=0 is
+  correct (matrix at VU 0x5, tfrag-data at 0x290 — both match the microcode
+  reads).  The per-draw UNPACK groups (0x160/0x381/0x3d4/0x384) are other
+  VU1 programs (the tfrag microcode never reads those addresses) and appear
+  after tfrag-end-buffer in the chain.
+- **Honest boundary:** S2.2 composed frame still not reached; the next step
+  is restoring the `ln` calls in goal_src + recompiling GAME.CGO + feeding
+  the frag-list to the shell VU1.  No game source patched; ROM-safe.
+- **Docs:** evidence s22-bot21-present-path-fixed.md + texture-visible.png/log
+  + s22-bot21b-fraglist-rootcause.md; STATUS + 13-current-state updated.
+
+
 ## 2026-08-15 — BOT16: S2.2 texture decode verified (first real Jak frame via Metal)
 
 - **Acted:** fixed the BOT15 noise-frame bug.  Jak textures are
