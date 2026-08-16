@@ -1,3 +1,21 @@
+## 2026-08-16 — BOT22b: strategy audit + macOS local-launch proof
+
+- **Acted:** audited the fork vs upstream (base 2026-07-31; ARM64 emitter
+  is upstream's, extended here), researched upstream's ARM64/mobile
+  stance, ran the fr3 level extraction (25 files, 5.5 s), built the full
+  out/jak1/iso (1317 targets, 18 s, 321 files), and launched the native
+  arm64 host gk (full OpenGL renderer + IOP/overlord + no-emit AOT link).
+- **Verified:** the complete upstream render/audio/streaming stack runs on
+  this Mac; the iOS "no STR" wall was a bundle-pruning artifact.
+- **Decided (documented in 14-roadmap-to-playable.md):** retire the
+  software-rasterizer/VU1 product path; adopt fr3 + C++ renderers
+  (ANGLE/Metal for iOS); un-stub the IOP on iOS with the real
+  overlord/989snd; keep the no-emit AOT runtime as the iOS moat.
+- **Honest boundary:** the host boot dies ~1-in-3 in the no-emit link
+  phase (same nondeterministic fault as the Simulator) — promoted to
+  top-priority runtime bug; a clean host boot to the rendered title is
+  the next gate (M1).
+
 ## 2026-08-16 — BOT22: village1 activates; the level-activation blocker resolved
 
 - **Acted:** disproved the handoff's premise with corrected type-system

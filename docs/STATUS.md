@@ -1,8 +1,14 @@
 # STATUS — Ottsel
 
-Date: 2026-08-09
+Date: 2026-08-16
 Repo: `ottsel`
-Mode: Phase 2 build loop — **Gate A1 active (signed-native execution proof)**
+Mode: Phase 2 build loop — **strategy reset: fr3 + upstream renderers (see docs/14-roadmap-to-playable.md)**
+
+> 2026-08-16: read `docs/14-roadmap-to-playable.md` first.  The renderer
+> strategy changed: the software-rasterizer/VU1-interpreter track is
+> retired as a product path; rendering adopts upstream's fr3 mesh assets +
+> C++ bucket renderers (proven live on this Mac, native arm64, GL 4.1).
+> Next gate M1 = verified playable title→village1 on macOS host.
 
 Read `docs/15-progress-audit.md` before resuming. The Simulator RX-blob path is
 a research transport, not the H2.5 product execution model.

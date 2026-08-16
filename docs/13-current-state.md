@@ -1,3 +1,25 @@
+## 2026-08-16 update (BOT22b) — strategy audit: the smart path to playable is in the tree
+
+Full project audit + external review (see docs/14-roadmap-to-playable.md).
+Key facts established live: the fork base is upstream 2026-07-31 (the ARM64
+emitter exists UPSTREAM; upstream is landing ARM64 itself, jak1 "in strong
+shape", but says "no plans to ever make a mobile release" — iOS is our
+moat).  The complete upstream stack is in-tree and works on this Mac:
+the fr3 level extractor produced all 25 renderer asset files in 5.5 s
+(`decompiler ... --config-override '{"decompile_code": false}'`), the full
+`out/jak1/iso` (321 files incl. STR/VIS/audio) built in 18 s
+(`goalc --isa arm64 ... (mi)`), and the native arm64 host `gk` launches
+with the real OpenGL renderer (GL 4.1 on Apple M1), SDL3, and the real
+IOP/overlord thread — while linking KERNEL.CGO through the no-emit AOT
+path.  The iOS bundle's "no STR files" wall was a hand-pruned bundle, not
+missing data (iso_data/jak1 holds the full 1.4 GB extraction).
+Consequence: the S2.2 software-rasterizer/VU1-interpreter track is retired
+as a product path (kept as debug tooling); rendering adopts the fr3 +
+C++ bucket-renderer pipeline (ANGLE or Metal port for iOS).  Known issue
+carried forward: the nondeterministic no-emit link-phase fault also kills
+host boots (~1-in-3) — now a top-priority runtime bug since it gates every
+platform.
+
 ## 2026-08-16 update (BOT22) — village1 ACTIVATES; the S2.2 "level never activates" blocker is resolved
 
 The blocker's premise was false: the bsp-header relocate's write always
