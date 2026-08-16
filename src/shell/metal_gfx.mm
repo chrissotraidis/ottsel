@@ -1424,10 +1424,54 @@ void gfx_send_chain(const void* data, u32 offset) {
                    "{:08x}",
                    *(u32*)(t + 0), *(u32*)(t + 4), *(u32*)(t + 8), *(u32*)(t + 12),
                    *(u32*)(t + 16), *(u32*)(t + 20), *(u32*)(t + 24), *(u32*)(t + 28));
+          lg::info("OTTSEL BSPTYPE: +32..63 = {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} "
+                   "{:08x}",
+                   *(u32*)(t + 32), *(u32*)(t + 36), *(u32*)(t + 40), *(u32*)(t + 44),
+                   *(u32*)(t + 48), *(u32*)(t + 52), *(u32*)(t + 56), *(u32*)(t + 60));
           u32 nm = *(u32*)(t + 4);
           if (nm >= 0x080000 && nm < 0x08000000) {
             const char* s = (const char*)(g_ee_main_mem + nm);
             lg::info("OTTSEL BSPTYPE name-str(0x{:x}): '{}'", nm, std::string(s, strnlen(s, 48)));
+          }
+          // The bsp-header's file-type symbol (obj+0 = 0x2ef8264): dump it.
+          u32 ftsym = *(u32*)(g_ee_main_mem + o + 84);
+          if (ftsym >= 0x080000 && ftsym < 0x08000000) {
+            const u8* s2 = g_ee_main_mem + ftsym;
+            lg::info("OTTSEL BSPFT: filetype-sym=0x{:x} +0..15 = {:08x} {:08x} {:08x} {:08x}",
+                     ftsym, *(u32*)(s2 + 0), *(u32*)(s2 + 4), *(u32*)(s2 + 8), *(u32*)(s2 + 12));
+            u32 strp = *(u32*)(s2 + 4);
+            if (strp >= 0x080000 && strp < 0x08000000) {
+              const char* s3 = (const char*)(g_ee_main_mem + strp + 4);
+              lg::info("OTTSEL BSPFT name-str: '{}'", std::string(s3, strnlen(s3, 40)));
+            }
+          }
+          // The bsp-header drawable-trees (entry+36 rel; the linked object
+          // fields start at the entry = o+84): dump the tree array.
+          u32 dt = *(u32*)(g_ee_main_mem + o + 84 + 36);
+          lg::info("OTTSEL BSPDT: drawable-trees=0x{:x}", dt);
+          if (dt >= 0x080000 && dt < 0x08000000) {
+            const u8* d = g_ee_main_mem + dt;
+            lg::info("OTTSEL BSPDT: +0..63 = {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} "
+                     "{:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
+                     *(u32*)(d + 0), *(u32*)(d + 4), *(u32*)(d + 8), *(u32*)(d + 12),
+                     *(u32*)(d + 16), *(u32*)(d + 20), *(u32*)(d + 24), *(u32*)(d + 28),
+                     *(u32*)(d + 32), *(u32*)(d + 36), *(u32*)(d + 40), *(u32*)(d + 44),
+                     *(u32*)(d + 48), *(u32*)(d + 52), *(u32*)(d + 56), *(u32*)(d + 60));
+            // The first 3 trees: dump their type tags and first words.
+            for (int ti = 0; ti < 3; ti++) {
+              u32 tp = *(u32*)(d + 32 + ti * 4);
+              if (tp >= 0x080000 && tp < 0x08000000) {
+                const u8* t = g_ee_main_mem + tp;
+                lg::info("OTTSEL BSPTREE[{}]: ptr=0x{:x} type-tag=0x{:x} +0..31 = {:08x} {:08x} "
+                         "{:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} "
+                         "{:08x} | {:08x} {:08x} {:08x} {:08x}",
+                         ti, tp, *(u32*)(t - 4), *(u32*)(t + 0), *(u32*)(t + 4), *(u32*)(t + 8),
+                         *(u32*)(t + 12), *(u32*)(t + 16), *(u32*)(t + 20), *(u32*)(t + 24),
+                         *(u32*)(t + 28), *(u32*)(t + 32), *(u32*)(t + 36), *(u32*)(t + 40),
+                         *(u32*)(t + 44), *(u32*)(t + 48), *(u32*)(t + 52), *(u32*)(t + 56),
+                         *(u32*)(t + 60));
+              }
+            }
           }
         }
       }
