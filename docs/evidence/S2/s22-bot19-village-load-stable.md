@@ -186,3 +186,23 @@ interpreter, the XGKICK capture and the rasterizer are all wired and
 validated.  Next: decode the game's frag-list/page construction from
 draw-inline-array-tfrag (the mips2c tfrag.cpp path) and feed the real
 count/pointers into the live VU1.
+
+## BOT19g update (same day) — draw-inline-array-tfrag (mips2c) never runs
+
+The `draw-inline-array-tfrag` symbol resolves to the mips2c stub arena
+(0x4f10994: pushes {ctx-ptr, index 0x200} and branches to the mips2c bridge,
+whose table[0x200] = `draw_inline_array_tfrag::execute`).  A probe added to
+that execute() (lg::info "OTTSEL TFASM") NEVER fires across a 3-minute stable
+boot while the tfrag DMA chains flow (MSCAL runs, per-draw UNPACKs at
+0x160/0x381/0x3d4/0x384 every frame).  So the game's compiled
+draw-drawable-tree-tfrag does NOT call the mips2c draw-inline-array-tfrag;
+the per-draw UNPACKs come from the compiled code path, which never writes the
+frag-list header (VU words 0-4) and leaves the far-LOD vertex batch (0x160)
+empty.  The real village mesh lives in the page batch (0x3d4, 16-bit), which
+only the near (L6/L7) microcode path consumes.
+
+Implication for the frame: the S2.2 gate needs either (a) the far-LOD vertex
+data populated (the level/tfrag login path), or (b) the near path triggered
+with a valid frag-list (count + page pointers).  The app-side VIF/VU1/raster
+emulation is complete and validated; the remaining work is on the game's
+draw-state side.
