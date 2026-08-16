@@ -207,21 +207,23 @@ cp "$APP_BUILD/OttselShell" "$APP/"
 cp "$REPO_DIR/src/shell/Info.plist" "$APP/"
 cp "$WORKTREE/out/jak1/iso/KERNEL.CGO" "$APP/KERNEL.CGO"
 cp "$WORKTREE/out/jak1/iso/GAME.CGO" "$APP/GAME.CGO"
-# Ottsel S2.1 (BOT11): the iOS DGO-loader emulation serves real DGO/CGO data.
-# The host iso_data tree is not inside the Simulator sandbox, so copy the
-# title-boot subset (art + common + title level + vis) into the bundle.
+# Ottsel S2.1+ (BOT11/BOT18): the iOS DGO-loader emulation serves real
+# DGO/CGO data.  The host iso_data tree is not inside the Simulator sandbox,
+# so copy the game data (all DGOs + CGOs + the title VIS) into the bundle.
+# The game needs the level DGOs (e.g. VI1.DGO for the demo) to leave the
+# title; without them the title stays stuck with empty tfrag geometry.
 mkdir -p "$APP/iso_data/DGO" "$APP/iso_data/CGO"
-for f in ART.CGO COMMON.CGO; do
-  cp "$WORKTREE/iso_data/jak1/CGO/$f" "$APP/iso_data/CGO/" 2>/dev/null || true
+for f in "$WORKTREE"/iso_data/jak1/CGO/*.CGO; do
+  cp "$f" "$APP/iso_data/CGO/" 2>/dev/null || true
 done
-for f in TIT.DGO; do
+for f in "$WORKTREE"/iso_data/jak1/DGO/*.DGO; do
+  base=$(basename "$f")
   # S2.1: prefer the recompiled TIT.DGO (no-emit "GOAL"-format title-obs /
   # static-screen objects define target-title); fall back to the ISO data.
-  if [ -f "$WORKTREE/out/jak1/iso/$f" ]; then
-    cp "$WORKTREE/out/jak1/iso/$f" "$APP/iso_data/DGO/" 2>/dev/null || true
-  else
-    cp "$WORKTREE/iso_data/jak1/DGO/$f" "$APP/iso_data/DGO/" 2>/dev/null || true
+  if [ "$base" = "TIT.DGO" ] && [ -f "$WORKTREE/out/jak1/iso/TIT.DGO" ]; then
+    cp "$WORKTREE/out/jak1/iso/$base" "$APP/iso_data/DGO/" 2>/dev/null || true
   fi
+  cp "$f" "$APP/iso_data/DGO/" 2>/dev/null || true
 done
 cp "$WORKTREE/iso_data/jak1/VIS/TIT.VIS" "$APP/iso_data/TIT.VIS" 2>/dev/null || true
 plutil -lint "$APP/Info.plist" >/dev/null
