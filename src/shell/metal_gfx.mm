@@ -319,13 +319,193 @@ struct OttselDrawState {
   u32 uv_u = 0, uv_v = 0;
 };
 
+// ---------------------------------------------------------------------------
+// Direct-bucket rasterizer (S2.2 renderer core, second piece).
+// Rasterizes the decoded TRI/TRI_STRIP/SPRITE prims into a 512x448 RGBA
+// buffer using the reference DirectRenderer math, samples textures from the
+// fake VRAM via the TEX0 state, and presents the composed frame.
+// ---------------------------------------------------------------------------
+
+struct OttselTexCache {
+  u32 tbp = 0;
+  u32 w = 0, h = 0;
+  u32 psm = 0, cpsm = 0, cbp = 0;
+  std::vector<u8> rgba;  // linear RGBA8
+};
+
+struct OttselRaster {
+  std::vector<u8> fb;  // 512x448 RGBA8
+  int fb_w = 512, fb_h = 448;
+  float x_off = 0, y_off = 0;
+  u32 scissor[4] = {0, 0x7ff, 0, 0x7ff};
+  bool scissor_enable = false;
+  OttselTexCache tex;
+  int draw_count = 0;
+
+  void clear(u32 rgb = 0) {
+    std::fill(fb.begin(), fb.end(), (u8)rgb);
+    draw_count = 0;
+  }
+
+  // Convert GS 16.16 x/y to screen pixels (reference DirectRenderer shader).
+  void to_screen(u32 x16, u32 y16, float& sx, float& sy) const {
+    float gx = (float)x16 / (float)UINT32_MAX + x_off;
+    float gy = (float)y16 / (float)UINT32_MAX + y_off;
+    float ndc_x = (gx - 0.5f) * 16.f;
+    float ndc_y = -(gy - 0.5f) * 32.f;
+    sx = (ndc_x + 1.f) * 0.5f * (float)fb_w;
+    sy = (ndc_y + 1.f) * 0.5f * (float)fb_h;
+  }
+
+  // Decode the texture referenced by the current TEX0 state from fake VRAM.
+  void load_tex(u32 tbp, u32 tw, u32 th, u32 psm, u32 cbp, u32 cpsm) {
+    u32 w = 1u << tw;
+    u32 h = 1u << th;
+    if (tex.tbp == tbp && tex.w == w && tex.h == h && tex.psm == psm && tex.cbp == cbp &&
+        tex.cpsm == cpsm && !tex.rgba.empty()) {
+      return;
+    }
+    tex.tbp = tbp;
+    tex.w = w;
+    tex.h = h;
+    tex.psm = psm;
+    tex.cbp = cbp;
+    tex.cpsm = cpsm;
+    tex.rgba.assign((size_t)w * h * 4, 0);
+    if (w > 2048 || h > 2048 || w == 0 || h == 0) {
+      return;
+    }
+    // The TEX0 width in 64-texel units for download_texture_rgba8888.
+    u32 tw64 = w / 64;
+    download_texture_rgba8888(tex.rgba.data(), tbp, tw64, w, h, psm, cpsm, cbp);
+  }
+
+  void blend_px(int x, int y, u8 r, u8 g, u8 b, u8 a) {
+    if (x < 0 || y < 0 || x >= fb_w || y >= fb_h) {
+      return;
+    }
+    u8* o = fb.data() + ((size_t)y * fb_w + x) * 4;
+    if (a >= 255) {
+      o[0] = r;
+      o[1] = g;
+      o[2] = b;
+      o[3] = 255;
+      return;
+    }
+    u32 ia = 255 - a;
+    o[0] = (u8)(((u32)r * a + o[0] * ia) / 255);
+    o[1] = (u8)(((u32)g * a + o[1] * ia) / 255);
+    o[2] = (u8)(((u32)b * a + o[2] * ia) / 255);
+    o[3] = 255;
+  }
+
+  // Rasterize a triangle with per-vertex xyz(16.16), stq, rgba.
+  // tex_mode: 0 = untextured flat color, 1 = textured ST, 2 = textured UV.
+  void tri(const OttselVertex& a,
+           const OttselVertex& b,
+           const OttselVertex& c,
+           bool tme,
+           bool fst,
+           bool abe,
+           u8 ta0) {
+    float ax, ay, bx, by, cx, cy;
+    to_screen(a.x, a.y, ax, ay);
+    to_screen(b.x, b.y, bx, by);
+    to_screen(c.x, c.y, cx, cy);
+    float area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+    if (area == 0.f) {
+      return;
+    }
+    float minx = std::max(0.f, std::min(ax, std::min(bx, cx)));
+    float maxx = std::min((float)fb_w - 1.f, std::max(ax, std::max(bx, cx)));
+    float miny = std::max(0.f, std::min(ay, std::min(by, cy)));
+    float maxy = std::min((float)fb_h - 1.f, std::max(ay, std::max(by, cy)));
+    // Sample only fragments that pass the scissor.
+    if (scissor_enable) {
+      float s0 = (float)scissor[0], s1 = (float)scissor[1];
+      float t0 = (float)scissor[2], t1 = (float)scissor[3];
+      minx = std::max(minx, s0);
+      maxx = std::min(maxx, s1);
+      miny = std::max(miny, t0);
+      maxy = std::min(maxy, t1);
+      if (minx > maxx || miny > maxy) {
+        return;
+      }
+    }
+    for (int y = (int)miny; y <= (int)maxy; y++) {
+      for (int x = (int)minx; x <= (int)maxx; x++) {
+        float px = (float)x + 0.5f, py = (float)y + 0.5f;
+        float wa = ((bx - px) * (cy - py) - (by - py) * (cx - px)) / area;
+        float wb = ((cx - px) * (ay - py) - (cy - py) * (ax - px)) / area;
+        float wc = 1.f - wa - wb;
+        if (wa < 0.f || wb < 0.f || wc < 0.f) {
+          continue;
+        }
+        // interpolate rgba (gouraud)
+        float r = wa * a.r + wb * b.r + wc * c.r;
+        float g = wa * a.g + wb * b.g + wc * c.g;
+        float bl = wa * a.b + wb * b.b + wc * c.b;
+        float al = wa * a.a + wb * b.a + wc * c.a;
+        u8 out_r = (u8)(r * 0.5f), out_g = (u8)(g * 0.5f), out_b = (u8)(bl * 0.5f);
+        u8 out_a = (u8)(al);
+        if (tme) {
+          // perspective-correct ST or direct UV
+          float s, t;
+          if (fst) {
+            // UV mode: u,v in 1/16 texel units, no perspective correction.
+            float u = wa * (float)(a.uv_u >> 4) + wb * (float)(b.uv_u >> 4) +
+                      wc * (float)(c.uv_u >> 4);
+            float v = wa * (float)(a.uv_v >> 4) + wb * (float)(b.uv_v >> 4) +
+                      wc * (float)(c.uv_v >> 4);
+            s = u / (float)tex.w;
+            t = v / (float)tex.h;
+          } else {
+            float sq = wa * (a.s / a.q) + wb * (b.s / b.q) + wc * (c.s / c.q);
+            float tq = wa * (a.t / a.q) + wb * (b.t / b.q) + wc * (c.t / c.q);
+            float iq = wa * (1.f / a.q) + wb * (1.f / b.q) + wc * (1.f / c.q);
+            s = (iq != 0.f) ? sq / iq : 0.f;
+            t = (iq != 0.f) ? tq / iq : 0.f;
+          }
+          int tx = (int)(s * (float)tex.w);
+          int ty = (int)(t * (float)tex.h);
+          tx = tx < 0 ? 0 : (tx >= (int)tex.w ? (int)tex.w - 1 : tx);
+          ty = ty < 0 ? 0 : (ty >= (int)tex.h ? (int)tex.h - 1 : ty);
+          if (!tex.rgba.empty()) {
+            const u8* tp = tex.rgba.data() + ((size_t)ty * tex.w + tx) * 4;
+            // modulate: color = frag_color * tex * 2 (the reference shader
+            // doubles after modulation); alpha from TCC/TA0.
+            out_r = (u8)std::min(255.f, r * 2.f * tp[0] / 255.f);
+            out_g = (u8)std::min(255.f, g * 2.f * tp[1] / 255.f);
+            out_b = (u8)std::min(255.f, bl * 2.f * tp[2] / 255.f);
+            out_a = tp[3] != 0 ? (u8)std::min(255.f, al * 2.f * tp[3] / 255.f) : ta0;
+          }
+        }
+        if (abe) {
+          blend_px(x, y, out_r, out_g, out_b, out_a);
+        } else {
+          if (x >= 0 && x < fb_w && y >= 0 && y < fb_h) {
+            u8* o = fb.data() + ((size_t)y * fb_w + x) * 4;
+            o[0] = out_r;
+            o[1] = out_g;
+            o[2] = out_b;
+            o[3] = 255;
+          }
+        }
+      }
+    }
+    draw_count++;
+  }
+};
+
 // The draw decoder: tracks GS registers and emits completed prims.
 struct OttselGifDecoder {
   OttselDrawState st;
+  OttselRaster* rst = nullptr;
   OttselVertex verts[8];
   int vert_count = 0;
   u32 prims_logged = 0;
   u32 chain_no = 0;
+  u32 reglist_dumps = 0;
 
   void on_prim_start(u64 prim) {
     st.prim = prim;
@@ -360,11 +540,17 @@ struct OttselGifDecoder {
 
   void emit_completed() {
     GsPrim gp(st.prim);
+    GsTex0 gt(st.tex0);
+    if (rst && vert_count >= 3) {
+      GsTexa gta(st.texa);
+      rst->load_tex(gt.tbp0(), gt.tw(), gt.th(), (u32)gt.psm(), gt.cbp(), gt.cpsm());
+      rst->tri(verts[0], verts[1], verts[2], gp.tme(), gp.fst(), gp.abe(), gta.ta0());
+    }
     if (prims_logged >= 300) {
+      vert_count = 0;
       return;
     }
     prims_logged++;
-    GsTex0 gt(st.tex0);
     lg::info("OTTSEL PRIM: chain={} kind={} tme={} abe={} fst={} tex0(tbp=0x{:x} tw={} th={} "
              "psm=0x{:x} cbp=0x{:x} cpsm=0x{:x} tcc={}) nv={}",
              chain_no, (int)gp.kind(), (int)gp.tme(), (int)gp.abe(), (int)gp.fst(), gt.tbp0(),
@@ -380,11 +566,16 @@ struct OttselGifDecoder {
 
   void log_triangle_strip() {
     GsPrim gp(st.prim);
+    GsTex0 gt(st.tex0);
+    if (rst && vert_count >= 3) {
+      GsTexa gta(st.texa);
+      rst->load_tex(gt.tbp0(), gt.tw(), gt.th(), (u32)gt.psm(), gt.cbp(), gt.cpsm());
+      rst->tri(verts[0], verts[1], verts[2], gp.tme(), gp.fst(), gp.abe(), gta.ta0());
+    }
     if (prims_logged >= 300) {
       return;
     }
     prims_logged++;
-    GsTex0 gt(st.tex0);
     lg::info("OTTSEL PRIM: chain={} kind=TRI_STRIP tme={} abe={} tex0(tbp=0x{:x} tw={} th={} "
              "psm=0x{:x}) nv=3",
              chain_no, (int)gp.tme(), (int)gp.abe(), gt.tbp0(), gt.tw(), gt.th(),
@@ -458,9 +649,24 @@ struct OttselGifDecoder {
         break;
       case GsRegisterAddress::XYOFFSET_1:
         st.xyoffset = value;
+        if (rst) {
+          // ofx/ofy are 16.16 values in the upper 16 bits of each 32-bit half.
+          s32 ofx = (s32)((value >> 16) & 0xffff);
+          s32 ofy = (s32)((value >> 48) & 0xffff);
+          rst->x_off = -65536.f * ((float)(ofx - 0x7000) / (float)UINT32_MAX);
+          rst->y_off = -65536.f * ((float)(ofy - 0x7300) / (float)UINT32_MAX);
+        }
         break;
       case GsRegisterAddress::SCISSOR_1:
         st.scissor = value;
+        if (rst) {
+          GsScissor sc(value);
+          rst->scissor[0] = sc.x0();
+          rst->scissor[1] = sc.x1();
+          rst->scissor[2] = sc.y0();
+          rst->scissor[3] = sc.y1();
+          rst->scissor_enable = true;
+        }
         break;
       case GsRegisterAddress::TEXA:
         st.texa = value;
@@ -548,6 +754,15 @@ void decode_gif_packets(const u8* g, u32 size, OttselGifDecoder& dec) {
         }
       }
     } else if (tag.flg() == GifTag::Format::REGLIST) {
+      if (dec.reglist_dumps < 12) {
+        dec.reglist_dumps++;
+        for (u32 r = 0; r < nreg && r < 9; r++) {
+          u64 rv = 0;
+          memcpy(&rv, g + offset + (size_t)r * 8, 8);
+          lg::info("OTTSEL REGLIST: chain={} reg[{}] desc={} val=0x{:016x}", dec.chain_no, r,
+                   (int)tag.reg(r), rv);
+        }
+      }
       for (u32 loop = 0; loop < tag.nloop(); loop++) {
         for (u32 r = 0; r < nreg; r++) {
           const u8* rec = g + offset;
@@ -649,14 +864,35 @@ void gfx_send_chain(const void* data, u32 offset) {
     return;
   }
   static OttselGifDecoder g_dec;
+  static OttselRaster g_raster;
+  if (g_raster.fb.empty()) {
+    g_raster.fb.assign((size_t)g_raster.fb_w * g_raster.fb_h * 4, 0);
+  }
+  g_dec.rst = &g_raster;
   static u32 g_chain_no = 0;
   g_chain_no++;
   g_dec.chain_no = g_chain_no;
+  // Clear the composed frame once per ~90 chains (a coarse frame boundary)
+  // and present it periodically so the rasterizer output is visible.
+  if (g_chain_no % 90 == 1) {
+    g_raster.clear(0);
+  }
+  if (g_chain_no % 90 == 0 && g_metal && g_raster.draw_count > 0) {
+    ottsel_metal_present(g_metal, g_raster.fb.data(), g_raster.fb_w, g_raster.fb_h);
+    lg::info("OTTSEL RASTER: presented composed {}x{} (draws={})", g_raster.fb_w, g_raster.fb_h,
+             g_raster.draw_count);
+  }
   static int ottsel_dma_logged = 0;
   bool log_dma = ottsel_dma_logged < 3;
   if (log_dma) {
     ottsel_dma_logged++;
   }
+  // TFRAG probe: dump VIF UNPACK payloads (the 3D bucket data) for the first
+  // few batches so the tfrag format can be reverse-engineered from ground
+  // truth.  Also count the transfer mix per chain.
+  static u32 ottsel_tfrag_dumps = 0;
+  static u32 ottsel_chain_transfers = 0;
+  static u32 ottsel_chain_unpacks = 0;
   const u8* base = (const u8*)data;
   DmaFollower dma(base, offset);
   int count = 0;
@@ -669,6 +905,33 @@ void gfx_send_chain(const void* data, u32 offset) {
     const u8* g = t.data;
     GifTag tag(g);
     u32 off = (u32)(g - base);
+    VifCode v1(t.vif1());
+    if (v1.kind == VifCode::Kind::UNPACK_V4_32 || v1.kind == VifCode::Kind::UNPACK_V4_16 ||
+        v1.kind == VifCode::Kind::UNPACK_V4_8 || v1.kind == VifCode::Kind::UNPACK_V3_32 ||
+        v1.kind == VifCode::Kind::UNPACK_V2_16) {
+      ottsel_chain_unpacks++;
+      if (ottsel_tfrag_dumps < 14) {
+        ottsel_tfrag_dumps++;
+        lg::info("OTTSEL VIF: chain={} t{} off=0x{:x} size={} v1kind=0x{:x} num={} v0kind=0x{:x} "
+                 "data: {:08x} {:08x} {:08x} {:08x} {:08x} {:08x} {:08x} {:08x}",
+                 g_chain_no, count, off, t.size_bytes, (u32)v1.kind, v1.num,
+                 (u32)VifCode(t.vif0()).kind, *(u32*)(g + 0), *(u32*)(g + 4), *(u32*)(g + 8),
+                 *(u32*)(g + 12), *(u32*)(g + 16), *(u32*)(g + 20), *(u32*)(g + 24),
+                 *(u32*)(g + 28));
+        if (t.size_bytes >= 64) {
+          lg::info("OTTSEL VIF:   + {:08x} {:08x} {:08x} {:08x} {:08x} {:08x} {:08x} {:08x}",
+                   *(u32*)(g + 32), *(u32*)(g + 36), *(u32*)(g + 40), *(u32*)(g + 44),
+                   *(u32*)(g + 48), *(u32*)(g + 52), *(u32*)(g + 56), *(u32*)(g + 60));
+        }
+      }
+    }
+    if (g_chain_no <= 6) {
+      ottsel_chain_transfers++;
+    }
+    if (g_chain_no == 6 && count == 1) {
+      lg::info("OTTSEL VIF: chain 6 transfer mix: {} transfers, {} unpacks", ottsel_chain_transfers,
+               ottsel_chain_unpacks);
+    }
     if (log_dma) {
       lg::info("OTTSEL DMA: t{} size={} off=0x{:x} flg={} nloop={} eop={} nreg={} vif0=0x{:x} "
                "vif1=0x{:x}",
