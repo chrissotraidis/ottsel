@@ -127,3 +127,23 @@ microcode loops on synthetic data (no XGKICK reached) until the real entry
   (candidate: the tfrag-work scratchpad handoff) - the next probe should log
   the VU data-memory READ addresses the microcode touches (instrument the
   interpreter's LQ/ILW) to discover the expected layout empirically.
+
+## BOT18f update (same day) — interpreter now runs the full tfrag pipeline
+
+Four real VU-semantics bugs fixed (all verified against the disassembler's
+decode):
+1. Branch delay slots were skipped (the jump-table `xtop vi14` never ran).
+2. IADDI dest = the `it` field (bits 16-20), not `id`.
+3. IADDI imm5 = bits 6-10 sign-extended; IADDIU/ISUBIU imm15 = bits 0-10 +
+   21-24.
+4. vi0 is hardwired to 0 (writes ignored) - the microcode's delay-slot NOPs
+   were corrupting the count comparisons.
+
+With these, the tfrag microcode now runs the complete pipeline with a crafted
+frag list at vi14 = 0x2a0 (XTOP base): the strip transform (vertex list at
+0x400, matrix rows at 0x2a5..0x2a8), the fan/level-0 quad loop (counts
+4,3,2,1,0), and reaches the output phase's perspective-divide loop
+(pc=1396).  The XGKICK GIF emission still needs the real page-data loop
+bounds (the game's boot-time frag-list/page writes).  The last mile:
+populate the output loop bounds (vi05/vi06) from the real 0x384/0x3d4
+batches and capture the GIF output.
