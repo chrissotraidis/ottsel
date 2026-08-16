@@ -64,6 +64,31 @@ level's bsp becomes nonzero, the tfrag tree's fragment count grows past 1
 with real far/near LOD data, and the per-draw VIF gains the frag-list
 header (gif_out > 0).
 
+## REVISION (BOT21i rev, same day) — v3 objects are MIPS code; bsp-header linked but the bsp stayed 0
+
+Live re-verification with corrected offsets and symbol resolution:
+- The v3 objects are MIPS code, not geometry: village1-part seg0 words
+  start 0x67bdffb0 (addiu sp,sp,-0x50) / 0xffbf0000 (sd ra) and seg2 has
+  115 lui/addiu split-pointer relocs into seg0/seg1 (decode verified in
+  Python against the decompiler's link_v3 seek/fix algorithm).  They are
+  the level's code objects; the previous "missing geometry" attribution
+  was wrong.
+- The bsp-header DID link: village1-vis (last vi1.DGO object) linked with
+  type 0x14e6024 whose name symbol is 'bsp-header (0x19dde4); the linker's
+  relocate call ran (no invalid-type assert, no "ERROR: file" version/
+  type format messages).  The served object's linked data at 0x2ef8080:
+  v4 header {0xffffffff,0xfa00,4,0x712660} + code; the info.file-type
+  points into the object (0x2ef8264), major-version=0.
+- The level slots still read bsp=0: level0/level1 inline slots (type tag
+  0x507c84) have name '#f' (0x18fe04) / status 'inactive' (0x19c18c) /
+  bsp=0; the loading-level (0x3fdd674, index 2, info=0x1c83994) reads
+  bsp=0 at +40.  So the level died at/after login-begin.
+- The remaining open question: why the bsp-header relocate did not set
+  (-> loading-level bsp) -- the file-info checks (file-type/major-version
+  vs level-bt 30) or the loading-level pointer used by the relocate.
+  Next probe: log inside the bsp-header relocate / the level login state
+  machine.
+
 ## Files
 
 - `src/shell/metal_gfx.mm`: level-state probe (BOT21i).
