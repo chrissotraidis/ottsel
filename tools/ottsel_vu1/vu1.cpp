@@ -23,7 +23,13 @@ inline int lo_it(uint32_t in) { return 0b11111 & (in >> 16); }
 inline int lo_is(uint32_t in) { return 0b11111 & (in >> 11); }
 inline int lo_id(uint32_t in) { return 0b11111 & (in >> 6); }
 inline int lo_imm11(uint32_t in) { return (int)(in & 0b11111111111); }
-inline int lo_imm5(uint32_t in) { return (int)((in >> 16) & 0b11111); }
+inline int lo_imm5(uint32_t in) {
+  int v = (int)((in >> 21) & 0b11111);
+  if (v & 0b10000) {
+    v -= 32;  // sign extend
+  }
+  return v;
+}
 inline int lo_imm15(uint32_t in) { return (int)(in & 0b111111111111111); }
 
 enum class Op {
@@ -199,17 +205,27 @@ void write_vf(VfReg& dst, uint32_t mask, const float* vals) {
 // (the game's data region starts there).  Set by the caller.
 static uint32_t g_vu_top = 0x400;
 static int g_trace = 0;
+static int g_readlog = 0;
 
 void set_top(uint32_t top) { g_vu_top = top; }
 void ottsel_vu1_set_trace(int on) { g_trace = on; }
+void ottsel_vu1_set_readlog(int on) { g_readlog = on; }
 
 void execute(Vu1State& st, int max_instructions) {
   int executed = 0;
+  bool jump_armed = false;  // a branch executed; the next instruction is the delay slot
+  bool jump_exec = false;   // the delay slot executed; apply the jump now
+  int jump_target = 0;
   if (g_trace) {
     printf("TRACE: top=0x%x\n", g_vu_top);
   }
   while (st.pc >= 0 && st.pc < st.code_len && executed < max_instructions) {
     executed++;
+    if (jump_exec) {
+      st.pc = jump_target;
+      jump_exec = false;
+      jump_armed = false;
+    }
     uint64_t raw = st.code[st.pc];
     uint32_t lower = (uint32_t)(raw & 0xffffffff);
     uint32_t upper = (uint32_t)(raw >> 32);
@@ -462,6 +478,9 @@ void execute(Vu1State& st, int max_instructions) {
         break;
       case Op::LQ: {
         uint32_t addr = ((int32_t)(int16_t)st.vi[lis] + limm11) & 0xfff;
+        if (g_readlog) {
+          printf("R LQ 0x%x -> vf%d\n", addr, lit);
+        }
         memcpy(&st.vf[lit].u[0], &st.data[addr * 4], 16);
       } break;
       case Op::LQD: {
@@ -472,6 +491,9 @@ void execute(Vu1State& st, int max_instructions) {
       case Op::LQI: {
         uint32_t addr = st.vi[lis] & 0xfff;
         st.vi[lis] = (st.vi[lis] + 1) & 0xfff;
+        if (g_readlog) {
+          printf("R LQI 0x%x -> vf%d (vi%d)\n", addr, lit, lis);
+        }
         memcpy(&st.vf[lit].u[0], &st.data[addr * 4], 16);
       } break;
       case Op::SQ: {
@@ -490,6 +512,9 @@ void execute(Vu1State& st, int max_instructions) {
       } break;
       case Op::ILW: {
         uint32_t addr = ((int32_t)(int16_t)st.vi[lis] + limm11) & 0xfff;
+        if (g_readlog) {
+          printf("R ILW 0x%x -> vi%d\n", addr, lit);
+        }
         st.vi[lit] = st.data[addr * 4] >> 16;
       } break;
       case Op::ISW: {
@@ -498,6 +523,9 @@ void execute(Vu1State& st, int max_instructions) {
       } break;
       case Op::ILWR: {
         uint32_t addr = st.vi[lis] & 0xfff;
+        if (g_readlog) {
+          printf("R ILWR 0x%x -> vi%d (vi%d=0x%x)\n", addr, lit, lis, st.vi[lis]);
+        }
         st.vi[lit] = st.data[addr * 4] >> 16;
       } break;
       case Op::ISWR: {
@@ -653,14 +681,14 @@ void execute(Vu1State& st, int max_instructions) {
         break;
     }
 
-    // Branch handling: the delay slot (next instruction) executes first.
-    if (branch) {
-      st.in_delay = true;
-      st.next_pc = branch_target;
+    // Branch handling: the instruction after the branch (the delay slot)
+    // executes before the jump takes effect.
+    if (jump_armed) {
+      jump_exec = true;  // the delay slot ran; apply the jump next iteration
     }
-    if (st.in_delay) {
-      st.in_delay = false;
-      st.pc = st.next_pc;
+    if (branch) {
+      jump_armed = true;
+      jump_target = branch_target;
     }
   }
 }

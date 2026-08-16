@@ -69,10 +69,13 @@ static int load_dump(const char* path, Vu1State& st, std::vector<int>& mscals) {
     // The init (mtx-0=5, mtx-1=0x14d, tfrag-data=0x290) uses absolute
     // addresses; the per-draw unpacks are offsets from the VIF data base
     // (TOP - OFST = 0x2a0, the microcode's vi14).
-    uint32_t dest = imm;  // absolute
-    if (imm == 0x381) {
-      // the per-draw block also mirrors at the frag base (vi14 = 0x2a0)
-      memcpy(&st.data[0x2a0 * 4], buf.data() + off, size);
+    // The init (mtx-0/1, tfrag-data at 5/0x14d/0x290) is absolute; the
+    // per-draw batches land at the VIF base + imm (base = TOP = 0x2a0).
+    uint32_t dest = imm;
+    if (imm == 0x5 || imm == 0x14d || imm == 0x290) {
+      dest = imm;
+    } else {
+      dest = 0x2a0 + (imm & 0x3ff);
     }
     if (dest < kDataQwords && num <= 256 && size <= (kDataQwords - (int)dest) * 16) {
       memcpy(&st.data[dest * 4], buf.data() + off, size);
@@ -103,8 +106,26 @@ int main(int argc, char** argv) {
     printf("no dump; synthetic data only\n");
     mscals.push_back(0);
   }
-  set_top(0x400);
-  st.pc = 8;  // L3 draw case: bal vi15, L12
+  // The L3 draw case (pc=8, `b L3`) has the delay slot `xtop vi14`: the frag
+  // base = the VIF TOP register.  With TOP = 0x2a0 the per-draw batches land
+  // at TOP + imm (vertex list at 0x400).  Craft the frag-list header at TOP.
+  set_top(0x2a0);
+  st.pc = 8;
+  // Frag list at vi14 = 0x2a0: word0>>16 = count, word1>>16 = vertex offset.
+  st.data[0x2a0 * 4 + 0] = 0x00010000;  // count = 1
+  st.data[0x2a1 * 4 + 0] = 0x01600000;  // vertex list at 0x2a0 + 0x160 = 0x400
+  // Fan path pointers (L26 reads vi14+2/+3/+4 as vertex/page pointers).
+  st.data[0x2a2 * 4 + 0] = 0x04000000;
+  st.data[0x2a3 * 4 + 0] = 0x04000000;
+  st.data[0x2a4 * 4 + 0] = 0x04000000;
+  // Per-frag matrix at vi14+5..+8 (identity, w = 1).
+  float mtx[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  memcpy(&st.data[0x2a5 * 4], mtx, 16);
+  // A real vertex quad at 0x400 (the base+0x160 vertex list).
+  float verts[16] = {-100, 0, -100, 1, 100, 0, -100, 1,
+                     -100, 0, 100,  1, 100, 0, 100,  1};
+  memcpy(&st.data[0x400 * 4], verts, 16);
+  ottsel_vu1_set_readlog(1);
   execute(st, 200000);
   printf("executed; pc=%d gif_out_words=%zu\n", st.pc, st.gif_out.size());
   for (size_t i = 0; i < st.gif_out.size() && i < 64; i++) {
