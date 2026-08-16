@@ -3636,6 +3636,41 @@ index 086d33216..8e7a6de3f 100644
            (update-wait-stats (-> *perf-stats* data 5)
                               (the-as uint 0)
                               (-> *tfrag-work* wait-to-spr)
+diff --git a/goal_src/jak1/engine/gfx/tie/tie-methods.gc b/goal_src/jak1/engine/gfx/tie/tie-methods.gc
+index d3e58b6f8..69aa3cce9 100644
+--- a/goal_src/jak1/engine/gfx/tie/tie-methods.gc
++++ b/goal_src/jak1/engine/gfx/tie/tie-methods.gc
+@@ -299,12 +299,12 @@
+             (set! (-> a1-7 generic-next-clear) (the-as uint128 0)))
+           0)
+         (let* ((s1-0 (-> (the-as drawable-inline-array-instance-tie v1-16) data)) ;; the inline array of instances
+-               ;; (s0-0 (&-> (scratchpad-object terrain-context) work background vis-list (if (zero? (-> arg0 length)) 0 (/ (-> s1-0 0 id) 8)))) ;; vis for first.
++               (s0-0 (&-> (scratchpad-object terrain-context) work background vis-list (if (zero? (-> arg0 length)) 0 (/ (-> s1-0 0 id) 8)))) ;; vis for first.
+                (s3-1 (-> *display* frames (-> *display* on-screen) frame global-buf)) ;; dma buf to write to
++               (sv-16 (-> (the-as drawable-inline-array-node v1-16) length)) ;; number of instances
+                )
+-          ;; (set! sv-16 (-> (the-as drawable-inline-array-node v1-16) length)) ;; number of instances
+           ;; if we actually have things to draw
+-          (when #t ;; (nonzero? sv-16)
++          (when (nonzero? sv-16)
+             ;; this is some buffer for the generic renderer
+             (let* ((v1-21 (logand (the-as int *gsf-buffer*) 8191))
+                    (v1-23 (logand (the-as int (&- (logand (the-as int (&-> (-> s4-1 data) -512)) 8191) (the-as uint v1-21))) 8191)))
+@@ -325,9 +325,11 @@
+               ;; note: this is a bit wasteful because we only care about generic ties.
+               ;; non-generics are drawn fully in C++, but we're computing unused stuff here.
+               ;; This ends up being so fast it's probably not worth worrying about yet.
+-              ;; (when (not *use-etie*)
+-              ;;  (with-profiler "tie-instance"
+-              ;;    (draw-inline-array-instance-tie s0-0 s1-0 sv-16 s3-1)))
++              ;; Ottsel S2.2 BOT21k: restore the retail TIE instance draw
++              ;; (the no-emit runtime has no C++ tie renderer, so the port's
++              ;; *use-etie* skip removed the only tie geometry path).
++              (with-profiler "tie-instance"
++                (draw-inline-array-instance-tie s0-0 s1-0 sv-16 s3-1))
+               ;; finish perf stats
+               (read! (-> *perf-stats* data 9))
+               (update-wait-stats (-> *perf-stats* data 9)
 diff --git a/goal_src/jak1/kernel/gkernel.gc b/goal_src/jak1/kernel/gkernel.gc
 index 73a056e45..96a03cb9f 100644
 --- a/goal_src/jak1/kernel/gkernel.gc
