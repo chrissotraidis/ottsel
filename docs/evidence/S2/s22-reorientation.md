@@ -79,3 +79,33 @@ against the running app, bundle logs, and compiled-kernel ground truth;
 record milestones in docs/evidence/S2/; update STATUS.md/13-current-state.md
 only after a verified gate; never commit ROMs/ISOs/assets; stop and report
 honestly at any gate that repeats three consecutive blockers.
+
+## Track B implementation plan (the S2.2 evidence frame from loaded tie geometry)
+
+Goal: compose a visible frame from the REAL village1 tie data through the
+shell's own renderer (ROM-safe; no game-source changes; real game data).
+
+1. Capture the tie instance data (verified live): tree1/tree2 at
+   0x32670c4/0x33a48a4 (type 'drawable-tree-instance-tie = 0x153e874);
+   their arrays at +28..+40 (0x32670f4..0x326a154 etc.); the leaf array
+   (the drawable-inline-array-instance-tie) holds the instances (counts
+   6+42 / 2+14); each instance's fields reference the prototypes
+   (prototype-array-tie) + the per-instance matrices.
+2. Determine the tie VU1 program's data layout from tie.txt
+   (test/decompiler/vu_reference/tie.txt, 994 instr) -- the UNPACK
+   destinations it reads (consts ~0x3c6+, instances, prototypes) and the
+   MSCAL entry the game uses for the tie bucket.
+3. Build the tie-bucket VIF stream in the shell (UNPACKs + the tie MSCAL)
+   from the captured instances/prototypes, feed it through the existing
+   VU1 interpreter (tools/ottsel_vu1) with the tie microcode embedded
+   (like tfrag/generic), decode the XGKICK output with the GIF decoder,
+   and rasterize through the existing Metal path.
+4. Verify: a composed frame with real village-building geometry visible
+   (screenshot + draw_count > 0), recorded in docs/evidence/S2/ as the
+   S2.2 gate candidate (visible interaction evidence can follow via S3
+   touch).
+
+Fallback if the tie layout is intractable: render the verified tfragment
+far-LOD data (empty) + the direct-bucket real texture composition, or
+extend the extract_tfrag.cpp reference emulation (the decompiler's
+emulate_tfrag_execution) as an offline reference for the shell's draw.
