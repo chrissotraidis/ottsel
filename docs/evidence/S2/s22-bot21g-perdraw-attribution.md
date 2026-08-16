@@ -81,3 +81,23 @@ bytes, stable 10+ min):
 - `src/shell/metal_gfx.mm`: UNPACK flg bit 15, tfrag pc0 per-draw entry,
   generic misattribution removed, CONST381 evidence log.
 - `docs/evidence/S2/s22-bot21g-perdraw-tfrag.log|png` (fresh boot capture).
+
+## BOT21h addendum (same boot) — the level-load stall: vi1.DGO raw geometry skipped
+
+The same fresh boot's DGO sequence is ART.CGO (21) -> tit.DGO (15,
+"title-vis") -> vi1.DGO (55, "village1-vis").  The vi1.DGO serve drops
+every non-GOAL record: "skip non-GOAL obj 9 (village1-part, 36768 bytes,
+tag=0x0)", "obj 10 (village1-part2, 56560 bytes)", plus villagep-obs,
+village-obs, oracle, sage, fishermans-boat, sequence-a-village1.  The
+serve rule (game/sce/sif_ee.cpp, DGO_RPC_LOAD_NEXT_FNO) only accepts the
+v2/v4 tag 0xffffffff or the no-emit v3 "GOAL" magic (0x4c414f47) blocks;
+raw data records are skipped instead of being loaded into the double-
+buffer, so the level's raw geometry never reaches the level heap.  After
+"link finish: village1-vis" (37:30) no further DGO load begins; the level
+process spins in the draw loop with the placeholder tfrag tree (1
+fragment, empty far LOD) and no tie trees.  The composed frame cannot
+exist until the real level geometry is loaded.  Falsifiable next check:
+serve the non-GOAL records into the double-buffer without linking (the
+real overlord loads every DGO object; link_and_exec applies only to GOAL
+link blocks), then re-verify the tfrag tree's fragment count + far/near
+LOD data and whether village1-part/part2 are the real tfrag/tie geometry.
