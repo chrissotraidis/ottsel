@@ -17,6 +17,12 @@ Mode: Phase 2 build loop — **strategy reset: fr3 + upstream renderers (see doc
 > (missing sys_icache_invalidate) and fixed on both host and iOS runtimes.
 > Remaining for full M1: input/audio verification + title→village1
 > progression + perf sanity.
+>
+> BOT24 (same day): the 150/s text reload loop is fixed — the ARM64
+> `_stack_call_arm64` trampoline clobbered C return values with saved
+> arg 0 (every stack-arg builtin returned its first argument).  Text
+> loads: 127,001 → 2 per boot; title boots in ~10 s, music banks load,
+> village1 preloads, zero crashes.  `docs/evidence/M1/m1-text-loop-fix.md`.
 
 Read `docs/15-progress-audit.md` before resuming. The Simulator RX-blob path is
 a research transport, not the H2.5 product execution model.

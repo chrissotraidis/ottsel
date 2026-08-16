@@ -1,3 +1,19 @@
+## 2026-08-16 — BOT24: text reload loop fixed — ARM64 stack-call trampoline clobbered return values
+
+- **Acted:** traced the 150/s 0COMMON/0SUBTIT.TXT reload loop with a
+  C-side probe in link_and_exec: GOAL's `link` returned the correct
+  entry, but the GOAL-side store received arg0 (the load address,
+  entry+0x2c).  Root cause: `_stack_call_arm64` restored x0-x7 after the
+  C call, clobbering the return register with saved arg 0 — every
+  stack-arg C builtin returned its first argument on ARM64 no-emit
+  builds.  Fix: discard the argument array (`add sp, sp, #64`) like the
+  x86 trampoline; synced into the iOS runtime archive.
+- **Verified:** text loads 127,001 → 2 per boot; title boots in ~10 s and
+  idles healthy (music bank loads, village1 preloaded, zero crashes).
+- **Honest boundary:** the logo spool (STR streaming into art-control)
+  has not been observed starting yet — next check for full M1, along
+  with input/audio and silencing the per-dispatch listener log spam.
+
 ## 2026-08-16 — BOT23: Jak boots to the title on macOS (M1 partial pass)
 
 - **Acted:** phase run per docs/15-m1-phase-plan.md.  lldb + crash-report
