@@ -3438,7 +3438,7 @@ index 4f7cc5e18..6d5641e19 100644
    jak1::kboot_init_globals();
    jak2::kboot_init_globals();
 diff --git a/game/sce/libpad.cpp b/game/sce/libpad.cpp
-index 085d80d2f..39af245c5 100644
+index 085d80d2f..1019b7ea4 100644
 --- a/game/sce/libpad.cpp
 +++ b/game/sce/libpad.cpp
 @@ -1,7 +1,13 @@
@@ -3476,7 +3476,7 @@ index 085d80d2f..39af245c5 100644
  namespace ee {
  
  int scePadPortOpen(int port, int slot, void*) {
-@@ -92,6 +112,55 @@ int scePadRead(int port, int /*slot*/, u8* rdata) {
+@@ -92,6 +112,80 @@ int scePadRead(int port, int /*slot*/, u8* rdata) {
      for (size_t i = 0; i < pad_data.value()->button_data.size(); i++) {
        cpad->button0 |= pad_data.value()->button_data.at(i) << i;
      }
@@ -3497,6 +3497,31 @@ index 085d80d2f..39af245c5 100644
 +    if ((++ottsel_pad_reads % 1000) == 1) {
 +      lg::info("OTTSEL PAD: scePadRead call #{} port={} has-display={}", ottsel_pad_reads, port,
 +               Display::GetMainDisplay() != nullptr);
++    }
++    // BOT25: periodic art-control dump — the logo spool never issues a
++    // str-load; dump the control + buffer state raw so the stalled field
++    // is ground truth.  ~every 4s (4 pads * ~60fps ≈ 240 reads/s).
++    if ((ottsel_pad_reads % 1000) == 2 && g_ee_main_mem) {
++      u32 acs = jak1::intern_from_c("*art-control*")->value;
++      u32 lock = jak1::intern_from_c("*load-str-lock*")->value;
++      if (acs >= 0x80000 && acs < 0x8000000) {
++        const u32* c = (const u32*)(g_ee_main_mem + acs);
++        lg::info("OTTSEL ARTC: ctl w0..11= {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} "
++                 "{:08x} | {:08x} {:08x} {:08x} {:08x} str-lock=0x{:x}",
++                 c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8], c[9], c[10], c[11], lock);
++        for (int b = 0; b < 2; b++) {
++          u32 bp = c[b];
++          if (bp >= 0x80000 && bp < 0x8000000) {
++            const u32* w = (const u32*)(g_ee_main_mem + bp);
++            lg::info("OTTSEL ARTB{}: w0..25= {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} "
++                     "{:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} "
++                     "{:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x}",
++                     b, w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7], w[8], w[9], w[10], w[11],
++                     w[12], w[13], w[14], w[15], w[16], w[17], w[18], w[19], w[20], w[21], w[22],
++                     w[23], w[24], w[25]);
++          }
++        }
++      }
 +    }
 +  }
 +  if (g_ottsel_bg_village1_request == 1) {

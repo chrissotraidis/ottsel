@@ -1,3 +1,18 @@
+## 2026-08-16 — BOT25: black screen diagnosed — game-commanded blackout, spool chain stalls before art-control
+
+- **Acted:** proved the black screen is the game holding blackout while
+  waiting for the NDI intro spool.  Probes: overlord shows zero .STR
+  requests ever; raw *art-control* dumps show the spool rec array empty,
+  active-stream #f, buffers idle — spool-push is NEVER CALLED.  The
+  target process is alive (its handler prints "GAMEPLAY: enter title")
+  but is not in the target-title state whose :trans pushes "ndi-intro".
+- **Next lead:** dump target/logo process state names per second, trace
+  why (go target-title) never fires.  Workaround to try in the running
+  build: Enter = START (verified binding); the PC-port logo shortcut
+  displays village1 on START if the logo state is live.
+- **Honest boundary:** renderer/IOP/game-loop healthy under the
+  blackout; the remaining M1 visual gap is this title state machine.
+
 ## 2026-08-16 — BOT24: text reload loop fixed — ARM64 stack-call trampoline clobbered return values
 
 - **Acted:** traced the 150/s 0COMMON/0SUBTIT.TXT reload loop with a
