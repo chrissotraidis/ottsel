@@ -57,6 +57,21 @@ unimplemented draw-inline-array-tfrag-near).  The direct-bucket prims are
 raw placeholder strips (y constant 0x7910), so the rasterizer's
 to_screen/restart fixes await real data.
 
+
+## BOT21f update (same day) — near path unlinked; the observed groups are tie-class
+
+`draw-inline-array-tfrag-near` resolves to sym=0x189d2c val=0 (UNLINKED in
+the no-emit runtime), so the near tfrag draw never runs (the goal_src near
+draw code is commented out).  The 66 per-draw groups (0x160/0x381/0x3d4/
+0x384 + MSCALF) are therefore the TIE renderer's data, which the shell
+currently runs with the far tfrag microcode (wrong program -> gif_out=0).
+The composed village frame requires: (a) the game's runtime-built 0x2a0
+tfrag data (the mips2c ln VIF assembly + the vis-list, which the port does
+not emulate), (b) the near tfrag path (tnear microcode exists at
+test/decompiler/vu_reference/tnear.txt; the ln-near implementation + the
+uncommented near draw code are missing), and (c) the tie microcode for the
+tie groups.  The direct bucket is raw placeholder strips.
+
 ## Next step
 
 Upload the complete per-draw data the far path references (the frags at
