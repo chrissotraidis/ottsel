@@ -973,6 +973,39 @@ void gfx_send_chain(const void* data, u32 offset) {
       fwrite(rec, 16, 1, g_tfrag_dump);
       fwrite(t.data, t.size_bytes, 1, g_tfrag_dump);
     }
+    // Dump the tfrag-work once the tfrag draws are actually running.
+    static bool ottsel_tw_dumped = false;
+    if (!ottsel_tw_dumped && g_ee_main_mem &&
+        ((v1.kind == VifCode::Kind::MSCAL || v1.kind == VifCode::Kind::MSCALF) ||
+         (v0.kind == VifCode::Kind::MSCAL || v0.kind == VifCode::Kind::MSCALF)) &&
+        (v1.immediate == 0 || v0.immediate == 0)) {
+      ottsel_tw_dumped = true;
+      auto info = g_pc_port_funcs.intern_from_c("*tfrag-work*");
+      if (info.offset) {
+        u32 val = 0;
+        memcpy(&val, g_ee_main_mem + info.offset + 4, 4);
+        lg::info("OTTSEL TFRAGWORK: sym=0x{:x} sym[0..3]={:08x} {:08x} {:08x} {:08x} value=0x{:x}",
+                 info.offset, *(u32*)(g_ee_main_mem + info.offset),
+                 *(u32*)(g_ee_main_mem + info.offset + 4), *(u32*)(g_ee_main_mem + info.offset + 8),
+                 *(u32*)(g_ee_main_mem + info.offset + 12), val);
+        if (val) {
+          const u8* tw = g_ee_main_mem + val;
+          lg::info("OTTSEL TFRAGWORK: +160..184 = {:08x} {:08x} {:08x} {:08x} {:08x} {:08x} "
+                   "{:08x}",
+                   *(u32*)(tw + 160), *(u32*)(tw + 164), *(u32*)(tw + 168), *(u32*)(tw + 172),
+                   *(u32*)(tw + 176), *(u32*)(tw + 180), *(u32*)(tw + 184));
+          u32 tf = 0;
+          memcpy(&tf, tw + 168, 4);
+          if (tf) {
+            const u8* f = g_ee_main_mem + tf;
+            lg::info("OTTSEL TFRAGMENT: ptr=0x{:x} dma-chain[0..2] = {:08x} {:08x} {:08x} "
+                     "qwc[0..3] = {:02x} {:02x} {:02x} {:02x}",
+                     tf, *(u32*)(f + 12), *(u32*)(f + 16), *(u32*)(f + 20), *(u8*)(f + 44),
+                     *(u8*)(f + 45), *(u8*)(f + 46), *(u8*)(f + 47));
+          }
+        }
+      }
+    }
     if (g_tfrag_dump && g_tfrag_dump_recs < 4000 &&
         (v1.kind == VifCode::Kind::MSCAL || v1.kind == VifCode::Kind::MSCALF ||
          v0.kind == VifCode::Kind::MSCAL || v0.kind == VifCode::Kind::MSCALF)) {
@@ -1065,6 +1098,32 @@ void gfx_texture_upload_now(const u8* tpage, int mode, u32 s7_ptr) {
   // so the VU1 entry address can be computed from ground truth.
   {
     static bool ottsel_vufunc_dumped = false;
+    static bool ottsel_tfragwork_dumped = false;
+    if (!ottsel_tfragwork_dumped && g_ee_main_mem) {
+      ottsel_tfragwork_dumped = true;
+      auto info = g_pc_port_funcs.intern_from_c("*tfrag-work*");
+      if (info.offset) {
+        u32 val = 0;
+        memcpy(&val, g_ee_main_mem + info.offset + 4, 4);
+        const u8* tw = g_ee_main_mem + val;
+        lg::info("OTTSEL TFRAGWORK: sym=0x{:x} obj=0x{:x} +160..184 = {:08x} {:08x} {:08x} "
+                 "{:08x} {:08x} {:08x} {:08x}",
+                 info.offset, val, *(u32*)(tw + 160), *(u32*)(tw + 164), *(u32*)(tw + 168),
+                 *(u32*)(tw + 172), *(u32*)(tw + 176), *(u32*)(tw + 180), *(u32*)(tw + 184));
+        // The tfragment pointer at +168: dump its dma-chain fields.
+        u32 tf = 0;
+        memcpy(&tf, tw + 168, 4);
+        if (tf) {
+          const u8* f = g_ee_main_mem + tf;
+          lg::info("OTTSEL TFRAGMENT: ptr=0x{:x} dma-chain[0..2] = {:08x} {:08x} {:08x} "
+                   "dma-qwc[0..3] = {:02x} {:02x} {:02x} {:02x}",
+                   tf, *(u32*)(f + 12), *(u32*)(f + 16), *(u32*)(f + 20), *(u8*)(f + 44),
+                   *(u8*)(f + 45), *(u8*)(f + 46), *(u8*)(f + 47));
+          lg::info("OTTSEL TFRAGMENT: data[0..3] = {:08x} {:08x} {:08x} {:08x}",
+                   *(u32*)(f + 64), *(u32*)(f + 68), *(u32*)(f + 72), *(u32*)(f + 76));
+        }
+      }
+    }
     if (!ottsel_vufunc_dumped && g_ee_main_mem) {
       ottsel_vufunc_dumped = true;
       auto info = g_pc_port_funcs.intern_from_c("tfrag-vu1-block");

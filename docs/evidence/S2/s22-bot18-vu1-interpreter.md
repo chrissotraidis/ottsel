@@ -161,3 +161,16 @@ batches and capture the GIF output.
   tfragment's data, not the per-draw unpacks.  The next probe: dump the
   title-vis tfragment from EE memory (via the drawable-tree) and populate
   the VU frag list + output loop bounds from it.
+
+## BOT18h update (same day) — tfrag-work probe; output-loop bounds are the last step
+
+- The `*tfrag-work*` symbol value is 0 at the boot draws (the tfrag-work is
+  allocated later); the mips2c still builds the DMA (its t0-based writes hit
+  EE+0 harmlessly).  The frag-list header the microcode reads at 0x2a0 is
+  NOT the tfrag-work.
+- The interpreter runs the strip + fan transform and enters the output
+  phase's L110/L111 perspective-divide loop (pc=1396); the loop's bounds
+  (vi05/vi06, from the frag's word4 -> data[vi09] count) need the real
+  page-data count, which requires the title-vis tfragment's level data
+  (dma-qwc / quad counts).  That read is the next probe; the XGKICK
+  capture then feeds the existing direct rasterizer.
