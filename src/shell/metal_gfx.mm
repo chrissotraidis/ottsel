@@ -1461,14 +1461,18 @@ void gfx_send_chain(const void* data, u32 offset) {
           u32 reloc = *(u32*)(t + 48);
           if (reloc >= 0x080000 && reloc < 0x08000000) {
             const u8* rc = g_ee_main_mem + reloc;
-            lg::info("OTTSEL BSPRELOC: fn=0x{:x} code[0..79] = {:08x} {:08x} {:08x} {:08x} | "
-                     "{:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} "
-                     "{:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
-                     reloc, *(u32*)(rc + 0), *(u32*)(rc + 4), *(u32*)(rc + 8), *(u32*)(rc + 12),
-                     *(u32*)(rc + 16), *(u32*)(rc + 20), *(u32*)(rc + 24), *(u32*)(rc + 28),
-                     *(u32*)(rc + 32), *(u32*)(rc + 36), *(u32*)(rc + 40), *(u32*)(rc + 44),
-                     *(u32*)(rc + 48), *(u32*)(rc + 52), *(u32*)(rc + 56), *(u32*)(rc + 60),
-                     *(u32*)(rc + 64), *(u32*)(rc + 68), *(u32*)(rc + 72), *(u32*)(rc + 76));
+            // BOT21r: dump the full relocate (512 bytes) for offline
+            // disassembly of the file-type/version checks + the bsp set.
+            for (int off = 0; off < 512; off += 64) {
+              lg::info("OTTSEL BSPRELOC {:03x}: {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} "
+                       "{:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
+                       off, *(u32*)(rc + off), *(u32*)(rc + off + 4), *(u32*)(rc + off + 8),
+                       *(u32*)(rc + off + 12), *(u32*)(rc + off + 16), *(u32*)(rc + off + 20),
+                       *(u32*)(rc + off + 24), *(u32*)(rc + off + 28), *(u32*)(rc + off + 32),
+                       *(u32*)(rc + off + 36), *(u32*)(rc + off + 40), *(u32*)(rc + off + 44),
+                       *(u32*)(rc + off + 48), *(u32*)(rc + off + 52), *(u32*)(rc + off + 56),
+                       *(u32*)(rc + off + 60));
+            }
           }
           u32 nm = *(u32*)(t + 4);
           if (nm >= 0x080000 && nm < 0x08000000) {
