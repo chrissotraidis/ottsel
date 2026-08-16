@@ -976,8 +976,6 @@ void gfx_send_chain(const void* data, u32 offset) {
   static ottsel_vu1::Vu1State g_vu_generic;
   static bool g_vu_init = false;
   static bool g_vu_generic_init = false;
-  static bool g_chain_has_generic = false;
-  g_chain_has_generic = false;
   static bool g_ottsel_spr_ran = false;
   static bool g_readlog_hook_set = false;
   if (!g_readlog_hook_set) {
@@ -987,6 +985,7 @@ void gfx_send_chain(const void* data, u32 offset) {
   static u32 g_vu_top = 0;   // VIF TOP register (frag-list base, XTOP)
   static u32 g_vu_tops = 0;  // VIF TOPS register
   static u32 g_vu_vu_stcycl = 0x404;  // STCYCL cl<<8|wl
+  static u32 g_vu_vu1_perdraw_consts = 0;  // BOT21g: 0x381-const uploads logged
   if (!g_vu_init) {
     g_vu_init = true;
     g_vu.code_len = ottsel_vu1::kTfragCodeWords;
@@ -1108,31 +1107,16 @@ void gfx_send_chain(const void* data, u32 offset) {
         // The microcode's XTOP reads the VIF TOP register; run it with the
         // current frag-list base.
         static u32 ottsel_vu1_runs = 0;
-        static u32 ottsel_generic_runs = 0;
         ottsel_vu1::set_top(g_vu_top);
-        if (g_chain_has_generic) {
-          // The generic (tie/merc) program: entry pc=0 (b L4 dispatch).
-          ottsel_vu1::Vu1State& gv = g_vu_generic;
-          // The chain's UNPACKs wrote VU data into g_vu.data; share it.
-          memcpy(gv.data, g_vu.data, sizeof(gv.data));
-          gv.pc = (v.immediate * 2) & 0x7ff;
-          gv.gif_out.clear();
-          ottsel_vu1::execute(gv, 200000);
-          if (ottsel_generic_runs < 6) {
-            ottsel_generic_runs++;
-            lg::info("OTTSEL GENERIC: run#{} pc={} gif_out={} c381_0={:08x} c381_1={:08x}",
-                     ottsel_generic_runs, gv.pc, gv.gif_out.size(), gv.data[0x381 * 4],
-                     gv.data[0x381 * 4 + 1]);
-          }
-          if (!gv.gif_out.empty()) {
-            decode_gif_packets((const u8*)gv.gif_out.data(), (u32)gv.gif_out.size() * 4, g_dec);
-          }
-          break;
-        }
-        // BOT21d: the tfrag microcode's real entry is pc=8 (the
-        // `b L3 | xtop vi14` dispatch -- frag-list at XTOP/TOP); pc=0 is the
-        // L11 header path (hardcoded 0x2a0 base) used by other variants.
-        g_vu.pc = (8 + v.immediate * 2) & 0x7ff;
+        // BOT21g: the game's tfrag draw (tfrag-end-buffer + ln's saved
+        // last-call) issues MSCALF 0, and the per-draw chains in the live
+        // replay carry MSCALF imm=0 -- so the tfrag microcode entry is
+        // pc = imm*2 = 0, the L11 header path (`iaddiu vi14, vi00, 0x2a0`
+        // -- frag-list base 0x2a0, matrix at 0x2a5..0x2a8, tfrag-data at
+        // the absolute 0x290).  BOT21d's pc=8 (L3, `xtop vi14`) is the
+        // far stored-stream variant the SPR scaffold calls manually below
+        // (g_vu.pc = 8) and does NOT apply to the per-draw MSCALF 0s.
+        g_vu.pc = (v.immediate * 2) & 0x7ff;
         g_vu.gif_out.clear();
         // BOT21d: trace the first tfrag draw after the SPR upload so the
         // far path's data reads can be verified against the frag-list.
@@ -1170,18 +1154,28 @@ void gfx_send_chain(const void* data, u32 offset) {
       case VifCode::Kind::UNPACK_V4_8:
       case VifCode::Kind::UNPACK_V3_32:
       case VifCode::Kind::UNPACK_V2_16: {
-        // dest = (addr?TOPS:TOP) + (imm & 0x3ff); the addr flag = bit 21 of
-        // the VIF word.  All observed tfrag unpacks are TOP-relative.
-        u32 base = (vifword & (1 << 21)) ? g_vu_tops : g_vu_top;
+        // dest = (addr?TOPS:TOP) + (imm & 0x3ff); the VIF UNPACK addr/flg
+        // flag is bit 15 (0x8000) of the command word, not bit 21 (which
+        // lives inside the num field).  BOT21g verified against the live
+        // replay: UNPACK 0x3d4 n41 has the flag set (TOPS-relative), while
+        // 0x160/0x384/0x290/0x381/0x5 are TOP-relative.
+        u32 base = (vifword & 0x8000) ? g_vu_tops : g_vu_top;
         u32 dest = (base + (v.immediate & 0x3ff)) & 0xfff;
         u32 qwords = std::min(payload_size / 16, 4096u - dest);
         if (qwords && dest < 4096) {
           memcpy(&g_vu.data[dest * 4], payload, qwords * 16);
-          // The generic (tie/merc) renderer's const block is at VU 0x381;
-          // when a chain uploads it, the MSCALFs in that chain run the
-          // generic microcode, not the far tfrag program.
-          if (dest == 0x381 && qwords >= 4) {
-            g_chain_has_generic = true;
+          // BOT21g: the const block at VU 0x381 (10 qwords, first word
+          // 0x7f7fffff) is the TFRAG per-draw path's own const (uploaded by
+          // tfrag-init-buffer; the L11 microcode reads it as tfrag-data
+          // extension), NOT the generic tie/merc renderer.  The generic
+          // microcode run for these chains produced zero gif_out and was a
+          // misattribution (verified offline against the full VIF replay:
+          // the tfrag pc0 program is the only one with any output).
+          if (dest == 0x381 && qwords >= 4 && g_vu_vu1_perdraw_consts < 4) {
+            g_vu_vu1_perdraw_consts++;
+            lg::info("OTTSEL CONST381: chain={} qw={} c0={:08x} c1={:08x} c2={:08x} c3={:08x}",
+                     g_chain_no, qwords, g_vu.data[0x381 * 4], g_vu.data[0x381 * 4 + 1],
+                     g_vu.data[0x381 * 4 + 2], g_vu.data[0x381 * 4 + 3]);
           }
         }
         break;

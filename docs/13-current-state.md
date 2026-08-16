@@ -90,6 +90,32 @@ beyond the 128-qword stored stream is not yet uploaded.  Evidence:
 docs/evidence/S2/s22-bot21d-microcode-fixes.md.
 
 
+## 2026-08-16 update (BOT21g) — per-draw renderer attribution corrected; composed frame blocked on the game-data level
+
+The per-draw VIF groups (0x160/0x3d4/0x384/0x290/0x381 + MSCALF 0) are the
+TFRAG program at pc0/L11 (vi14 = 0x2a0), NOT the generic tie/merc renderer.
+Verified two ways: (1) an offline full-VIF replay tool (correct VIF
+semantics: UNPACK addr flag = bit 15, BASE/OFFSET/TOP=0 from the live
+capture) runs every reference microcode over all 661 MSCALFs -- the tfrag
+pc0 program is the only one with any output, and with a 400k cap every
+tfrag mscal exits cleanly with gif_out=0; (2) a fresh live boot of the
+fixed shell (0 faults, PID 95944): every per-draw run is `mscal imm=0x0
+top=0x0 pc=1382/1070/1414/141/1506/313/1706 gif_out=0 frag[0..2]=0x0` --
+exit pcs match the offline replay exactly, and the "OTTSEL GENERIC" runs
+are gone.  Shell fixes: UNPACK addr flag bit 15 (was bit 21), tfrag pc0
+per-draw entry (was pc8), generic-microcode dispatch removed (the 0x381
+const c0=0x7f7fffff is the tfrag per-draw path's own const).  The
+composed-frame blocker is now precisely attributed on the game-data level:
+the frag-list at 0x2a0 is never built (ln skips the tfragment, vis=0; the
+port's goal_src disables draw-node-cull), the far LOD is genuinely empty
+(63 (0,0,0,-1792) markers + LOD offset table, verified byte-by-byte), and
+the near path is unavailable (dma_level1 = 0x13131310 garbage,
+draw-inline-array-tfrag-near unlinked, near draw code commented).  Next:
+restore draw-node-cull in goal_src tfrag-methods.gc, recompile GAME.CGO,
+verify ln builds the frag-list.  Evidence:
+docs/evidence/S2/s22-bot21g-perdraw-attribution.md.
+
+
 ## 2026-08-15 update (BOT13) — stable title boot; enter-state fault fixed
 
 The previous deterministic blocker is FIXED and verified (one boot, one

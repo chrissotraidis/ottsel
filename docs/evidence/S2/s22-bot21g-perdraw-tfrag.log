@@ -1,0 +1,11 @@
+[37:19] [info] OTTSEL CONST381: chain=2 qw=10 c0=7f7fffff c1=00000000 c2=00000000 c3=ffff0018
+[37:19] [info] OTTSEL VU1: run#1 mscal imm=0x0 top=0x0 pc=1382 gif_out=0 frag[0..2]=0x0/0x0/0x0
+[37:19] [info] OTTSEL CONST381: chain=2 qw=10 c0=7f7fffff c1=00000000 c2=00000000 c3=ffff0018
+[37:19] [info] OTTSEL VU1: run#2 mscal imm=0x0 top=0x0 pc=1070 gif_out=0 frag[0..2]=0x0/0x0/0x0
+[37:19] [info] OTTSEL CONST381: chain=2 qw=10 c0=7f7fffff c1=00000000 c2=00000000 c3=ffff0018
+[37:19] [info] OTTSEL VU1: run#3 mscal imm=0x0 top=0x0 pc=1382 gif_out=0 frag[0..2]=0x0/0x0/0x0
+[37:19] [info] OTTSEL CONST381: chain=2 qw=10 c0=7f7fffff c1=00000000 c2=00000000 c3=ffff0018
+[37:19] [info] OTTSEL VU1: run#4 mscal imm=0x0 top=0x0 pc=1070 gif_out=0 frag[0..2]=0x0/0x0/0x0
+[37:19] [info] OTTSEL TFASM2: vis=0x0 (lh(0,a0)) a0=0x1d38b0 a1=0x22978c0 a2=1 spad-sym=0x7000186964
+[37:28] [info] OTTSEL FNSYM: draw-inline-array-tfrag-near sym=0x189d2c val=0x0 val4=0x0
+[37:28] [info] OTTSEL VISLIST @+0x38b0: 80808080 80808080 80808080 80808080 | 80808080 80808080 80808080 80808080
