@@ -89,6 +89,25 @@ Live re-verification with corrected offsets and symbol resolution:
   Next probe: log inside the bsp-header relocate / the level login state
   machine.
 
+## REVISION 2 (BOT21j) — the bsp-header IS linked and the 11 drawable trees ARE loaded
+
+The relocate-call probe (runtime, method_id==7) confirmed the village1-vis
+bsp-header linked with type 0x14e6024 ('bsp-header = 0x19dde4; the
+method-table[7] relocate = 0x0441c5a4) and its file-info file-name =
+"village1-vis-bt.g".  The bsp-header (entry 0x2ef80d4) carries:
+all-visible-list=0x03528170, visible-list-length=0x32f (815), name=
+'village1 (0x19cd44), nickname='vi1 (0x19b474), and
+**drawable-trees=0x0308de64 with 11 trees**:
+tree0 (type-tag 0x153ef74) = 1 drawable (the tfrag tree),
+tree1/tree2 (type-tag 0x153e874) = 4 drawables each (the TIE trees), plus
+8 more.  So the village1 geometry IS in memory; the level slots read
+bsp=0/'inactive because the relocate did not assign the level's bsp field
+(or it was cleared when the level state changed), but the geometry is
+reachable at 0x0308de64.  The composed frame needs the TIE renderer in
+the shell (the 4-drawable tie trees = the real village mesh); the tie
+bucket VIF chains were outside the earlier replay window and are the next
+capture target.
+
 ## Files
 
 - `src/shell/metal_gfx.mm`: level-state probe (BOT21i).
