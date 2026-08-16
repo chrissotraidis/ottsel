@@ -151,3 +151,38 @@ never produces a frag list, and the VU1 correctly skips every draw.
 The remaining S2.2 work is the tfrag-work / draw-inline-array-tfrag frag-list
 construction (the game's CPU-side draw state), then the XGKICK output will
 flow into the rasterizer that is already wired.
+
+## BOT19f update (same day) — tfrag geometry audit: LOD vertices empty, pages real
+
+Live symbol-table ground truth (the earlier TFRAGWORK probe read the WRONG
+field): `*tfrag-work*` IS valid -- the symbol's value field is at slot+0
+(0x042cc000), not slot+4.  The tfrag-work object's draw-state fields,
+however, are all zero: src-ptr(+0xb0)=0, last-call(+0xb4)=0,
+dma-buffer(+0xb8)=0, cur/end-vis-bits(+0xa8/+0xac)=0.  `*vu1-enable-user*`
+= 0x1bfff8 (nonzero) and `*fake-scratchpad-data*` = 0x1d0000.
+
+Per-draw DMA ground truth (the full VIF replay): the game uploads the
+per-draw batches every draw -- 0x381 const (10 qwords, real fog/ambient
+values), 0x160 vertex batch (139 qwords), 0x3d4 page batch (41 qwords),
+0x384 frag batch (5 + 80 qwords), plus the frame init (mtx-0/mtx-1 at
+imm 5/0x14d, tfrag-data at 0x290, BASE+OFFSET 0x190).  BUT:
+
+- The vertex batch (0x160) is EMPTY geometry: 139 qwords, only 13 non-empty
+  (the level-1 offset table 0x160/0x166/0x16e/0x178), the rest are the
+  `(0,0,0,-1792)` empty-tfrag marker from S2.1.  The far-LOD (L3) strip
+  transform has no vertices.
+- The PAGE batch (0x3d4) HAS the real near geometry: 23 non-zero qwords of
+  16-bit values (0xdef0, 0xd818, 0x78a8, 0x3490, sign-extended) -- the
+  village mesh.
+- The FRAG batch (0x384) HAS the real frag positions (q5-14: 0x4baa84c8
+  world coords) and the frag/page header words.
+
+So the composed-frame path needs (a) the frag-list header (VU data words
+0-4: count, vertex offset, page/frag pointers) -- which the game's port
+draw path never writes -- and (b) either populated far-LOD vertices or the
+near (L6/L7) path over the real page data.  Both are game-side draw-state
+issues (draw-inline-array-tfrag / tfrag-work); the VIF emulation, the VU1
+interpreter, the XGKICK capture and the rasterizer are all wired and
+validated.  Next: decode the game's frag-list/page construction from
+draw-inline-array-tfrag (the mips2c tfrag.cpp path) and feed the real
+count/pointers into the live VU1.
