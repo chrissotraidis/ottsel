@@ -1496,6 +1496,139 @@ void gfx_texture_upload_now(const u8* tpage, int mode, u32 s7_ptr) {
       }
     }
   }
+  // Probe: level state (BOT21i) -- *level* -> level-group -> level0:
+  // status/load-name/bsp so the village1 load phase can be named.  Offsets
+  // are from the goal types (level: name+4 load-name+8 status+20 bsp+44;
+  // level-group: level0 inline after play? + _hack-pad :offset 90, so
+  // level0 at +92); the raw dumps below let them be re-verified against the
+  // data pattern (symbol pointers, kheap pointers) and the compiled code.
+  {
+    static bool ottsel_level_dumped = false;
+    if (!ottsel_level_dumped && g_ee_main_mem) {
+      ottsel_level_dumped = true;
+      auto lv_sym = g_pc_port_funcs.intern_from_c("*level*");
+      u32 lg = 0;
+      if (lv_sym.offset) {
+        memcpy(&lg, g_ee_main_mem + lv_sym.offset, 4);
+      }
+      lg::info("OTTSEL LEVEL: *level* sym=0x{:x} group=0x{:x}", lv_sym.offset, lg);
+      // Dump the compiled level method code so the field offsets can be
+      // verified against the disassembly (goal instruction: type-system
+      // offsets minus the basic offset, checked against disassembly).
+      for (const char* nm : {"(method 9 level)", "(method 10 level)", "(method 14 level)",
+                             "(method 8 level)"}) {
+        auto fn = g_pc_port_funcs.intern_from_c(nm);
+        u32 val = 0;
+        if (fn.offset) {
+          memcpy(&val, g_ee_main_mem + fn.offset, 4);
+        }
+        if (val >= 0x080000 && val < 0x08000000) {
+          const u8* code = g_ee_main_mem + val;
+          lg::info("OTTSEL LVLMETHOD: {} sym=0x{:x} val=0x{:x} code[0..23] = {:08x} {:08x} "
+                   "{:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | "
+                   "{:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} "
+                   "{:08x} {:08x}",
+                   nm, fn.offset, val, *(u32*)(code + 0), *(u32*)(code + 4), *(u32*)(code + 8),
+                   *(u32*)(code + 12), *(u32*)(code + 16), *(u32*)(code + 20), *(u32*)(code + 24),
+                   *(u32*)(code + 28), *(u32*)(code + 32), *(u32*)(code + 36), *(u32*)(code + 40),
+                   *(u32*)(code + 44), *(u32*)(code + 48), *(u32*)(code + 52), *(u32*)(code + 56),
+                   *(u32*)(code + 60), *(u32*)(code + 64), *(u32*)(code + 68), *(u32*)(code + 72),
+                   *(u32*)(code + 76), *(u32*)(code + 80), *(u32*)(code + 84), *(u32*)(code + 88),
+                   *(u32*)(code + 92));
+        } else {
+          lg::info("OTTSEL LVLMETHOD: {} sym=0x{:x} val=0x{:x}", nm, fn.offset, val);
+        }
+      }
+      if (lg >= 0x080000 && lg < 0x08000000) {
+        const u8* g = g_ee_main_mem + lg;
+        lg::info("OTTSEL LEVELGRP: +0..63 = {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} "
+                 "{:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
+                 *(u32*)(g + 0), *(u32*)(g + 4), *(u32*)(g + 8), *(u32*)(g + 12),
+                 *(u32*)(g + 16), *(u32*)(g + 20), *(u32*)(g + 24), *(u32*)(g + 28),
+                 *(u32*)(g + 32), *(u32*)(g + 36), *(u32*)(g + 40), *(u32*)(g + 44),
+                 *(u32*)(g + 48), *(u32*)(g + 52), *(u32*)(g + 56), *(u32*)(g + 60));
+        lg::info("OTTSEL LEVELGRP: +64..127 = {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} "
+                 "{:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
+                 *(u32*)(g + 64), *(u32*)(g + 68), *(u32*)(g + 72), *(u32*)(g + 76),
+                 *(u32*)(g + 80), *(u32*)(g + 84), *(u32*)(g + 88), *(u32*)(g + 92),
+                 *(u32*)(g + 96), *(u32*)(g + 100), *(u32*)(g + 104), *(u32*)(g + 108),
+                 *(u32*)(g + 112), *(u32*)(g + 116), *(u32*)(g + 120), *(u32*)(g + 124));
+        // BOT21i: level0 is INLINE at group+92 (goal type: level0 inline
+        // after the scalars; _hack-pad :offset 90 aligns level0 to 92).
+        // Its first word is the level TYPE tag (0x507c84, matching the
+        // loading-level's type tag at -4), so the level fields start at
+        // group+96: name+0 load-name+4 nickname+8 index+12 status+16
+        // other+20 heap+24 bsp+48 (relative to the level0 struct).
+        const u8* lev = g + 92;
+        u32 l0 = 0;
+        memcpy(&l0, lev, 4);
+        lg::info("OTTSEL LEVEL: level0(inline +92) type-tag=0x{:x}", l0);
+        {
+          lg::info("OTTSEL LEVEL0: +0..95 = {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} "
+                   "{:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | "
+                   "{:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
+                   *(u32*)(lev + 0), *(u32*)(lev + 4), *(u32*)(lev + 8), *(u32*)(lev + 12),
+                   *(u32*)(lev + 16), *(u32*)(lev + 20), *(u32*)(lev + 24), *(u32*)(lev + 28),
+                   *(u32*)(lev + 32), *(u32*)(lev + 36), *(u32*)(lev + 40), *(u32*)(lev + 44),
+                   *(u32*)(lev + 48), *(u32*)(lev + 52), *(u32*)(lev + 56), *(u32*)(lev + 60),
+                   *(u32*)(lev + 64), *(u32*)(lev + 68), *(u32*)(lev + 72), *(u32*)(lev + 76),
+                   *(u32*)(lev + 80), *(u32*)(lev + 84), *(u32*)(lev + 88), *(u32*)(lev + 92));
+          u32 status = *(u32*)(lev + 20);
+          u32 name = *(u32*)(lev + 4);
+          u32 load_name = *(u32*)(lev + 8);
+          u32 bsp = *(u32*)(lev + 48);
+          lg::info("OTTSEL LEVEL0: name=0x{:x} load-name=0x{:x} status=0x{:x} bsp=0x{:x} "
+                   "heap=0x{:x}/0x{:x}/0x{:x}/0x{:x}",
+                   name, load_name, status, bsp, *(u32*)(lev + 28), *(u32*)(lev + 32),
+                   *(u32*)(lev + 36), *(u32*)(lev + 40));
+          auto sym_name = [&](u32 sptr) -> std::string {
+            if (sptr < 0x080000 || sptr >= 0x08000000) {
+              return "?";
+            }
+            const u8* sp = g_ee_main_mem + sptr;
+            u32 strp = 0;
+            memcpy(&strp, sp + 4, 4);
+            if (strp < 0x080000 || strp >= 0x08000000) {
+              return "?";
+            }
+            const char* s = (const char*)(g_ee_main_mem + strp + 4);
+            return std::string(s, strnlen(s, 48));
+          };
+          lg::info("OTTSEL LEVEL0: name='{}' load-name='{}' status='{}'", sym_name(name),
+                   sym_name(load_name), sym_name(status));
+          // Resolve candidate symbols by address: the level name/status
+          // fields hold symbol pointers; match them against known names.
+          for (const char* cn : {"village1", "village1-vis", "vi1", "title", "loading",
+                                 "loading-bt", "loading-done", "login", "loaded", "alive",
+                                 "active", "inactive", "none", "global"}) {
+            auto s = g_pc_port_funcs.intern_from_c(cn);
+            if (s.offset) {
+              lg::info("OTTSEL LVLSYMADDR: '{}' sym=0x{:x}", cn, s.offset);
+            }
+          }
+          // BOT21i: the vi1.DGO last object (village1-vis) links at the
+          // heap top 0x2ef8080; dump its type tag so the level BSP source
+          // can be identified (bsp-header vs vis data).
+          for (u32 o : {0x2ef8080u, 0x2821200u}) {
+            if (o >= 0x080000 && o < 0x08000000) {
+              u32 tag = *(u32*)(g_ee_main_mem + o - 4);
+              lg::info("OTTSEL OBJTYPE: obj=0x{:x} type-tag=0x{:x}", o, tag);
+            }
+          }
+          if (bsp >= 0x080000 && bsp < 0x08000000) {
+            const u8* b = g_ee_main_mem + bsp;
+            lg::info("OTTSEL BSP: ptr=0x{:x} +0..63 = {:08x} {:08x} {:08x} {:08x} | {:08x} "
+                     "{:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} "
+                     "{:08x}",
+                     bsp, *(u32*)(b + 0), *(u32*)(b + 4), *(u32*)(b + 8), *(u32*)(b + 12),
+                     *(u32*)(b + 16), *(u32*)(b + 20), *(u32*)(b + 24), *(u32*)(b + 28),
+                     *(u32*)(b + 32), *(u32*)(b + 36), *(u32*)(b + 40), *(u32*)(b + 44),
+                     *(u32*)(b + 48), *(u32*)(b + 52), *(u32*)(b + 56), *(u32*)(b + 60));
+          }
+        }
+      }
+    }
+  }
   // Probe: dump the tfrag-vu1-block vu-function header (length/origin/qlength)
   // so the VU1 entry address can be computed from ground truth.
   {
