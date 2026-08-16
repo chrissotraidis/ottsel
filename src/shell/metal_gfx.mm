@@ -1743,7 +1743,24 @@ void gfx_texture_upload_now(const u8* tpage, int mode, u32 s7_ptr) {
           memcpy(&lv, g + 8, 4);
           if (lv >= 0x080000 && lv < 0x08000000) {
             u32 bsp = *(u32*)(g_ee_main_mem + lv + 40);
-            lg::info("OTTSEL LLOAD: loading-level=0x{:x} bsp=0x{:x}", lv, bsp);
+            u32 lnm = *(u32*)(g_ee_main_mem + lv + 0);
+            u32 lst = *(u32*)(g_ee_main_mem + lv + 16);
+            auto sym_str = [&](u32 sptr) -> std::string {
+              if (sptr < 0x080000 || sptr >= 0x08000000) {
+                return "?";
+              }
+              const u8* sp = g_ee_main_mem + sptr;
+              u32 strp = 0;
+              memcpy(&strp, sp + 4, 4);
+              if (strp < 0x080000 || strp >= 0x08000000) {
+                return "?";
+              }
+              const char* s = (const char*)(g_ee_main_mem + strp + 4);
+              return std::string(s, strnlen(s, 40));
+            };
+            lg::info("OTTSEL LLOAD: loading-level=0x{:x} bsp=0x{:x} name-sym=0x{:x}('{}') "
+                     "status-sym=0x{:x}('{}')",
+                     lv, bsp, lnm, sym_str(lnm), lst, sym_str(lst));
             if (bsp >= 0x080000 && bsp < 0x08000000) {
               const u8* b = g_ee_main_mem + bsp;
               lg::info("OTTSEL BSPOBJ: +0..79 = {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} "
