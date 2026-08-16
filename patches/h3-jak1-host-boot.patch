@@ -1465,7 +1465,7 @@ index 859b7e13a..db8984015 100644
        // use a hack to just run the listener function if there's no GOAL kernel.
        if (ListenerFunction->value != s7.offset) {
 diff --git a/game/kernel/jak1/klink.cpp b/game/kernel/jak1/klink.cpp
-index fd7199959..afcd0ed2b 100644
+index fd7199959..9b6897569 100644
 --- a/game/kernel/jak1/klink.cpp
 +++ b/game/kernel/jak1/klink.cpp
 @@ -14,7 +14,38 @@
@@ -1695,8 +1695,34 @@ index fd7199959..afcd0ed2b 100644
    if (ofh->object_file_version == 3) {
      // todo check function type of entry
  
-@@ -540,12 +694,126 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
+@@ -538,14 +692,152 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
+       }
+     }
  
++#ifdef OTTSEL_NO_EMIT
++    // BOT28: level DGO objects link WITHOUT LINK_FLAG_EXECUTE, but their
++    // main segments hold code that game processes call later (first hit:
++    // village1 level code invoked after the target spawn ->
++    // EXC_BAD_ACCESS executing an RW heap page at EE 0x3075274).  Flip
++    // main-segment code RX for EVERY v3 object, not just executed ones.
++    {
++      extern u8* g_ee_main_mem;
++      const uintptr_t pg = (uintptr_t)sysconf(_SC_PAGESIZE);
++      ObjectFileHeader* h = m_link_block_ptr.cast<ObjectFileHeader>().c();
++      if (h->code_infos[MAIN_SEGMENT].size != 0 && h->code_size[MAIN_SEGMENT] != 0) {
++        uintptr_t lo =
++            (uintptr_t)(g_ee_main_mem + h->code_infos[MAIN_SEGMENT].offset) & ~(pg - 1);
++        uintptr_t hi = ((uintptr_t)(g_ee_main_mem + h->code_infos[MAIN_SEGMENT].offset +
++                                    h->code_size[MAIN_SEGMENT]) +
++                        pg - 1) &
++                       ~(pg - 1);
++        for (uintptr_t a = lo; a < hi; a += pg) {
++          mprotect((void*)a, pg, PROT_READ | PROT_EXEC);
++        }
++        sys_icache_invalidate((void*)lo, hi - lo);
++      }
++    }
++#endif
      // execute top level!
      if (m_entry.offset && (m_flags & LINK_FLAG_EXECUTE)) {
 +#ifdef OTTSEL_NO_EMIT
@@ -1823,7 +1849,7 @@ index fd7199959..afcd0ed2b 100644
      }
  
      // inform compiler that we loaded.
-@@ -581,6 +849,16 @@ Ptr<uint8_t> link_and_exec(Ptr<uint8_t> data,
+@@ -581,6 +873,16 @@ Ptr<uint8_t> link_and_exec(Ptr<uint8_t> data,
                             Ptr<kheapinfo> heap,
                             uint32_t flags,
                             bool jump_from_c_to_goal) {
@@ -1840,7 +1866,7 @@ index fd7199959..afcd0ed2b 100644
    link_control lc;
    lc.jak1_jak2_begin(data, name, size, heap, flags);
    uint32_t done;
-@@ -588,6 +866,31 @@ Ptr<uint8_t> link_and_exec(Ptr<uint8_t> data,
+@@ -588,6 +890,31 @@ Ptr<uint8_t> link_and_exec(Ptr<uint8_t> data,
      done = lc.jak1_work();
    } while (!done);
    lc.jak1_finish(jump_from_c_to_goal);
@@ -1872,7 +1898,7 @@ index fd7199959..afcd0ed2b 100644
    return lc.m_entry;
  }
  
-@@ -610,14 +913,20 @@ uint64_t link_begin(u64* args) {
+@@ -610,14 +937,20 @@ uint64_t link_begin(u64* args) {
    // object data, name size, heap flags
    saved_link_control.jak1_jak2_begin(Ptr<u8>(args[0]), Ptr<char>(args[1]).c(), args[2],
                                       Ptr<kheapinfo>(args[3]), args[4]);
@@ -3481,10 +3507,60 @@ index 000000000..d54973dbf
 +  return 0;
 +}
 diff --git a/game/runtime.cpp b/game/runtime.cpp
-index 4f7cc5e18..6d5641e19 100644
+index 4f7cc5e18..eff62d8d2 100644
 --- a/game/runtime.cpp
 +++ b/game/runtime.cpp
-@@ -156,9 +156,16 @@ void ee_runner(SystemThreadInterface& iface) {
+@@ -87,6 +87,49 @@
+ #include "system/SystemThread.h"
+ 
+ u8* g_ee_main_mem = nullptr;
++
++#if defined(OTTSEL_NO_EMIT) && defined(__APPLE__) && defined(__aarch64__)
++#include <signal.h>
++
++#include <libkern/OSCacheControl.h>
++// BOT28 self-healing execute faults (see the install site below).
++static uintptr_t s_ottsel_page_size = 0;
++std::atomic<int> g_ottsel_exec_heals{0};
++static struct sigaction s_ottsel_old_bus;
++static struct sigaction s_ottsel_old_segv;
++
++static void ottsel_exec_fault_healer(int sig, siginfo_t* info, void* ucontext_v) {
++  auto* uc = (ucontext_t*)ucontext_v;
++  uint64_t pc = (uint64_t)uc->uc_mcontext->__ss.__pc;
++  uint64_t addr = (uint64_t)info->si_addr;
++  uint64_t base = (uint64_t)g_ee_main_mem;
++  constexpr uint64_t kEeSize = 128ull * (1 << 20);
++  if (g_ee_main_mem && addr == pc && addr >= base && addr < base + kEeSize) {
++    uintptr_t page = addr & ~(s_ottsel_page_size - 1);
++    if (mprotect((void*)page, s_ottsel_page_size, PROT_READ | PROT_EXEC) == 0) {
++      sys_icache_invalidate((void*)page, s_ottsel_page_size);
++      g_ottsel_exec_heals.fetch_add(1, std::memory_order_relaxed);
++      return;  // retry the faulting instruction
++    }
++  }
++  // genuine fault: restore the previous handler and re-raise
++  sigaction(SIGBUS, &s_ottsel_old_bus, nullptr);
++  sigaction(SIGSEGV, &s_ottsel_old_segv, nullptr);
++  raise(sig);
++}
++
++void ottsel_install_exec_fault_healer() {
++  s_ottsel_page_size = (uintptr_t)sysconf(_SC_PAGESIZE);
++  struct sigaction sa;
++  memset(&sa, 0, sizeof(sa));
++  sa.sa_sigaction = ottsel_exec_fault_healer;
++  sa.sa_flags = SA_SIGINFO;
++  sigemptyset(&sa.sa_mask);
++  sigaction(SIGBUS, &sa, &s_ottsel_old_bus);
++  sigaction(SIGSEGV, &sa, &s_ottsel_old_segv);
++  lg::info("OTTSEL no-emit: exec-fault healer installed");
++}
++#endif
+ std::thread::id g_main_thread_id = std::thread::id();
+ GameVersion g_game_version = GameVersion::Jak1;
+ BackgroundWorker g_background_worker;
+@@ -156,9 +199,16 @@ void ee_runner(SystemThreadInterface& iface) {
    //
    // The solution to this is to flip-flop between permissions, or perhaps have two threads
    // one that has writing permission, and another with executable permission
@@ -3502,7 +3578,7 @@ index 4f7cc5e18..6d5641e19 100644
  #ifdef __APPLE__
                    // has no map_populate
                    MAP_ANONYMOUS | MAP_32BIT | MAP_PRIVATE, 0, 0);
-@@ -167,7 +174,7 @@ void ee_runner(SystemThreadInterface& iface) {
+@@ -167,7 +217,7 @@ void ee_runner(SystemThreadInterface& iface) {
  #endif
    } else {
      g_ee_main_mem =
@@ -3511,10 +3587,20 @@ index 4f7cc5e18..6d5641e19 100644
                    MAP_ANONYMOUS | MAP_PRIVATE, 0, 0);
    }
  
-@@ -190,7 +197,18 @@ void ee_runner(SystemThreadInterface& iface) {
+@@ -190,7 +240,28 @@ void ee_runner(SystemThreadInterface& iface) {
    // prevent access to the first 512 kB of memory.
    // On the PS2 this is the kernel and can't be accessed either.
    // this may not work well on systems with a page size > 1 MB.
++#if defined(OTTSEL_NO_EMIT) && defined(__APPLE__) && defined(__aarch64__)
++  // Ottsel BOT28: self-healing execute faults.  Code reaches the EE heap by
++  // many paths (CGO/DGO main segs, art-group link-art!, method installs);
++  // enumerating every RX-flip site is whack-a-mole (village1 level code was
++  // the third such crash).  Instead: on an execute-protection fault whose
++  // address == pc inside the EE mapping, flip that page RX, invalidate the
++  // icache, and retry the instruction.  Genuine faults (addr != pc or
++  // outside EE) fall through to the default handler.
++  ottsel_install_exec_fault_healer();
++#endif
 +#ifdef OTTSEL_NO_EMIT
 +  // Ottsel BOT23: keep low memory READABLE (zeros) like the PS2's EE kernel
 +  // area.  The game legitimately reads through null-ish pointers by design:
@@ -3531,7 +3617,7 @@ index 4f7cc5e18..6d5641e19 100644
    jak1::kboot_init_globals();
    jak2::kboot_init_globals();
 diff --git a/game/sce/libpad.cpp b/game/sce/libpad.cpp
-index 085d80d2f..ced411e5b 100644
+index 085d80d2f..355955c04 100644
 --- a/game/sce/libpad.cpp
 +++ b/game/sce/libpad.cpp
 @@ -1,7 +1,15 @@
@@ -3571,7 +3657,7 @@ index 085d80d2f..ced411e5b 100644
  namespace ee {
  
  int scePadPortOpen(int port, int slot, void*) {
-@@ -92,6 +114,127 @@ int scePadRead(int port, int /*slot*/, u8* rdata) {
+@@ -92,6 +114,107 @@ int scePadRead(int port, int /*slot*/, u8* rdata) {
      for (size_t i = 0; i < pad_data.value()->button_data.size(); i++) {
        cpad->button0 |= pad_data.value()->button_data.at(i) << i;
      }
@@ -3604,40 +3690,6 @@ index 085d80d2f..ced411e5b 100644
 +        unlink("/tmp/ottsel-bg-village1");
 +        g_ottsel_bg_village1_request = 1;
 +        lg::info("OTTSEL BG: host file trigger accepted");
-+      }
-+    }
-+    // BOT27: blackout-time poisoning check + fix.  set-blackout-frames does
-+    // (max blackout-time (+ (current-time) n)); one garbage (current-time)
-+    // during boot (the port's clock has produced 8e37-scale values) poisons
-+    // blackout-time forever -> permanent fullscreen black quad over a
-+    // healthy renderer.  Dump the region once, and clamp garbage to 0.
-+    if ((ottsel_pad_reads % 100) == 4 && g_ee_main_mem) {
-+      u32 gi = jak1::intern_from_c("*game-info*")->value;
-+      if (gi >= 0x80000 && gi < 0x8000000) {
-+        const u8* p = g_ee_main_mem + gi;
-+        static int gi_dumps = 0;
-+        if (gi_dumps < 3) {
-+          gi_dumps++;
-+          lg::info("OTTSEL BLACKOUT: gi=0x{:x} q200..247= {:016x} {:016x} {:016x} {:016x} {:016x} "
-+                   "{:016x}",
-+                   gi, *(u64*)(p + 200), *(u64*)(p + 208), *(u64*)(p + 216), *(u64*)(p + 224),
-+                   *(u64*)(p + 232), *(u64*)(p + 240));
-+        }
-+        // Clamp any absurd time-frame in the blackout/letterbox region
-+        // (legit values stay far below 1e12 for months of play).  Skip u64s
-+        // whose halves both look like EE pointers/symbols — those are the
-+        // adjacent (array time-frame) pointer fields, not timestamps.
-+        auto ptr_like = [](u32 h) {
-+          return h == 0 || h == 0x18fe04u || (h >= 0x80000u && h < 0x8000000u);
-+        };
-+        for (int off = 200; off <= 240; off += 8) {
-+          s64 v = *(s64*)(p + off);
-+          u32 lo = (u32)(v & 0xffffffff), hi = (u32)((u64)v >> 32);
-+          if ((v > 1000000000000LL || v < 0) && !(ptr_like(lo) && ptr_like(hi))) {
-+            *(s64*)(p + off) = 0;
-+            lg::info("OTTSEL BLACKOUT: clamped garbage time-frame at gi+{} (was {:#x})", off, v);
-+          }
-+        }
 +      }
 +    }
 +    // BOT25: periodic art-control dump — the logo spool never issues a
@@ -3693,6 +3745,20 @@ index 085d80d2f..ced411e5b 100644
 +      // bsp's all-visible-list into vis-bits each frame.
 +      jak1::intern_from_c("*artist-all-visible*")->value = s7.offset + jak1_symbols::FIX_SYM_TRUE;
 +      lg::info("OTTSEL BG: set *artist-all-visible* #t");
++      // BOT28: spawn the target at the continue point bg selected — the
++      // canonical debug flow is (bg 'village1) then (start 'play cp).
++      // Without a target the camera has no viewpoint and the frame is a
++      // (correctly rendered) near-empty void.  `start` also `stop`s the
++      // old target the title flow left suspended in target-continue.
++      u32 start_fn = jak1::intern_from_c("start")->value;
++      u32 gi2 = jak1::intern_from_c("*game-info*")->value;
++      if (start_fn && gi2 >= 0x80000 && gi2 < 0x8000000) {
++        u32 cp = *(u32*)(g_ee_main_mem + gi2 + 104);  // current-continue (ref+104)
++        u32 play_sym = jak1::intern_from_c("play").offset;
++        lg::info("OTTSEL BG: calling (start 'play cp) fn=0x{:x} cp=0x{:x}", start_fn, cp);
++        u64 tgt = call_goal(Ptr<Function>(start_fn), play_sym, cp, 0, s7.offset, g_ee_main_mem);
++        lg::info("OTTSEL BG: (start 'play) returned *target*=0x{:x}", tgt);
++      }
 +    } else {
 +      lg::warn("OTTSEL BG: bg symbol has no function value");
 +    }
