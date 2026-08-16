@@ -70,6 +70,19 @@ static_assert(sizeof(OttselGoalTexturePage) == 124, "OttselGoalTexturePage size"
 // The runtime's EE memory base (declared in game/runtime.h).
 extern u8* g_ee_main_mem;
 
+// Symbol lookup into the linked GOAL world.  The Metal headers typedef Ptr
+// (MacTypes.h) so the runtime's kmachine.h cannot be included here; declare
+// the exact wrapper type to keep the mangled symbol identical.
+struct InternFromCInfo {
+  u32 offset;
+  u32 value;
+};
+struct CommonPCPortFunctionWrappers {
+  std::function<InternFromCInfo(const char*)> intern_from_c;
+  std::function<u64(const char*)> make_string_from_c;
+};
+extern CommonPCPortFunctionWrappers g_pc_port_funcs;
+
 namespace {
 // The shell's Metal presenter + the current drawable size.
 OttselMetal* g_metal = nullptr;
@@ -906,6 +919,23 @@ void gfx_send_chain(const void* data, u32 offset) {
     GifTag tag(g);
     u32 off = (u32)(g - base);
     VifCode v1(t.vif1());
+    VifCode v0(t.vif0());
+    // Full VIF sequence dump for the first few chains (the tfrag bucket).
+    static u32 ottsel_vifseq_chains = 0;
+    if (ottsel_vifseq_chains < 4 &&
+        (v1.kind == VifCode::Kind::UNPACK_V4_32 || v1.kind == VifCode::Kind::STCYCL ||
+         v1.kind == VifCode::Kind::MSCAL || v1.kind == VifCode::Kind::MSCALF ||
+         v1.kind == VifCode::Kind::MPG || v1.kind == VifCode::Kind::FLUSHA ||
+         v1.kind == VifCode::Kind::FLUSHE || v0.kind == VifCode::Kind::STCYCL ||
+         v0.kind == VifCode::Kind::MSCAL || v0.kind == VifCode::Kind::MSCALF ||
+         v1.kind == VifCode::Kind::DIRECT)) {
+      if (count == 1) {
+        ottsel_vifseq_chains++;
+        lg::info("OTTSEL VIFSEQ: === chain {} ===", g_chain_no);
+      }
+      lg::info("OTTSEL VIFSEQ: t{} size={} v0=0x{:x}(k{}) v1=0x{:x}(k{} n{}) off=0x{:x}", count,
+               t.size_bytes, t.vif0(), (u32)v0.kind, t.vif1(), (u32)v1.kind, v1.num, off);
+    }
     if (v1.kind == VifCode::Kind::UNPACK_V4_32 || v1.kind == VifCode::Kind::UNPACK_V4_16 ||
         v1.kind == VifCode::Kind::UNPACK_V4_8 || v1.kind == VifCode::Kind::UNPACK_V3_32 ||
         v1.kind == VifCode::Kind::UNPACK_V2_16) {
@@ -922,6 +952,25 @@ void gfx_send_chain(const void* data, u32 offset) {
           lg::info("OTTSEL VIF:   + {:08x} {:08x} {:08x} {:08x} {:08x} {:08x} {:08x} {:08x}",
                    *(u32*)(g + 32), *(u32*)(g + 36), *(u32*)(g + 40), *(u32*)(g + 44),
                    *(u32*)(g + 48), *(u32*)(g + 52), *(u32*)(g + 56), *(u32*)(g + 60));
+        }
+        // Dump the first 16 qwords of the big payloads (the frag batches).
+        if (v1.num > 20 && t.size_bytes >= 256) {
+          lg::info("OTTSEL VIF:   imm=0x{:x} q0-3: {:08x} {:08x} {:08x} {:08x} | {:08x} "
+                   "{:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} "
+                   "{:08x} {:08x}",
+                   v1.immediate, *(u32*)(g + 0), *(u32*)(g + 4), *(u32*)(g + 8),
+                   *(u32*)(g + 12), *(u32*)(g + 16), *(u32*)(g + 20), *(u32*)(g + 24),
+                   *(u32*)(g + 28), *(u32*)(g + 32), *(u32*)(g + 36), *(u32*)(g + 40),
+                   *(u32*)(g + 44), *(u32*)(g + 48), *(u32*)(g + 52), *(u32*)(g + 56),
+                   *(u32*)(g + 60));
+          lg::info("OTTSEL VIF:   imm=0x{:x} q4-7: {:08x} {:08x} {:08x} {:08x} | {:08x} "
+                   "{:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} "
+                   "{:08x} {:08x}",
+                   v1.immediate, *(u32*)(g + 64), *(u32*)(g + 68), *(u32*)(g + 72),
+                   *(u32*)(g + 76), *(u32*)(g + 80), *(u32*)(g + 84), *(u32*)(g + 88),
+                   *(u32*)(g + 92), *(u32*)(g + 96), *(u32*)(g + 100), *(u32*)(g + 104),
+                   *(u32*)(g + 108), *(u32*)(g + 112), *(u32*)(g + 116), *(u32*)(g + 120),
+                   *(u32*)(g + 124));
         }
       }
     }
@@ -952,6 +1001,44 @@ void gfx_texture_upload_now(const u8* tpage, int mode, u32 s7_ptr) {
   (void)mode;
   if (!g_metal || !tpage) {
     return;
+  }
+  // Probe: dump the tfrag-vu1-block vu-function header (length/origin/qlength)
+  // so the VU1 entry address can be computed from ground truth.
+  {
+    static bool ottsel_vufunc_dumped = false;
+    if (!ottsel_vufunc_dumped && g_ee_main_mem) {
+      ottsel_vufunc_dumped = true;
+      auto info = g_pc_port_funcs.intern_from_c("tfrag-vu1-block");
+      if (info.offset) {
+        // intern_from_c returns the SYMBOL address; a GOAL symbol structure is
+        // {type, value, ...} so the object address is at symbol+4.
+        u32 sym_value = 0;
+        memcpy(&sym_value, g_ee_main_mem + info.offset + 4, 4);
+        u32 obj_addr = sym_value;
+        const u8* obj = g_ee_main_mem + obj_addr;
+        u32 length = 0, origin = 0, qlength = 0;
+        memcpy(&length, obj, 4);
+        memcpy(&origin, obj + 4, 4);
+        memcpy(&qlength, obj + 8, 4);
+        lg::info("OTTSEL VUFUNC: tfrag-vu1-block offset=0x{:x} value=0x{:x} length=0x{:x} "
+                 "origin=0x{:x} qlength=0x{:x}",
+                 info.offset, info.value, length, origin, qlength);
+        lg::info("OTTSEL VUFUNC: sym[0..3] = {:08x} {:08x} {:08x} {:08x}", *(u32*)(g_ee_main_mem + info.offset),
+                 *(u32*)(g_ee_main_mem + info.offset + 4), *(u32*)(g_ee_main_mem + info.offset + 8),
+                 *(u32*)(g_ee_main_mem + info.offset + 12));
+        lg::info("OTTSEL VUFUNC: obj[0..7] = {:08x} {:08x} {:08x} {:08x} {:08x} {:08x} {:08x} {:08x}",
+                 *(u32*)(obj + 0), *(u32*)(obj + 4), *(u32*)(obj + 8), *(u32*)(obj + 12),
+                 *(u32*)(obj + 16), *(u32*)(obj + 20), *(u32*)(obj + 24), *(u32*)(obj + 28));
+        // First code qword (the entry) + the last (the jump table).
+        const u8* code = obj + 16;
+        u32 l0 = 0, u0 = 0;
+        memcpy(&l0, code, 4);
+        memcpy(&u0, code + 4, 4);
+        lg::info("OTTSEL VUFUNC: code[0] lower=0x{:08x} upper=0x{:08x}", l0, u0);
+      } else {
+        lg::info("OTTSEL VUFUNC: tfrag-vu1-block symbol not found");
+      }
+    }
   }
   // Probe: dump the tpage structure for the first distinct pages so the
   // segment layout and texture descriptions can be verified against the GOAL
