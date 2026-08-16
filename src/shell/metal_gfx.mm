@@ -353,8 +353,8 @@ struct OttselTexCache {
 };
 
 struct OttselRaster {
-  std::vector<u8> fb;  // 512x448 RGBA8
-  int fb_w = 512, fb_h = 448;
+  std::vector<u8> fb;  // 640x448 RGBA8 (the GS framebuffer)
+  int fb_w = 640, fb_h = 448;
   float x_off = 0, y_off = 0;
   u32 scissor[4] = {0, 0x7ff, 0, 0x7ff};
   bool scissor_enable = false;
@@ -366,14 +366,14 @@ struct OttselRaster {
     draw_count = 0;
   }
 
-  // Convert GS 16.16 x/y to screen pixels (reference DirectRenderer shader).
+  // Convert GS 16.16 x/y to screen pixels (reference DirectRenderer
+  // shader: x normalized to 0-1 -> NDC (x-0.5)*16 -> viewport 640px, so the
+  // screen pixel is simply x*fb_w; y is flipped with the -32 factor).
   void to_screen(u32 x16, u32 y16, float& sx, float& sy) const {
     float gx = (float)x16 / (float)UINT32_MAX + x_off;
     float gy = (float)y16 / (float)UINT32_MAX + y_off;
-    float ndc_x = (gx - 0.5f) * 16.f;
-    float ndc_y = -(gy - 0.5f) * 32.f;
-    sx = (ndc_x + 1.f) * 0.5f * (float)fb_w;
-    sy = (ndc_y + 1.f) * 0.5f * (float)fb_h;
+    sx = gx * (float)fb_w;
+    sy = (1.f - gy) * (float)fb_h;
   }
 
   // Decode the texture referenced by the current TEX0 state from fake VRAM.
