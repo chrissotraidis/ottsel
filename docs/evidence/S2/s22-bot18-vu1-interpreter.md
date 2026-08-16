@@ -147,3 +147,17 @@ frag list at vi14 = 0x2a0 (XTOP base): the strip transform (vertex list at
 bounds (the game's boot-time frag-list/page writes).  The last mile:
 populate the output loop bounds (vi05/vi06) from the real 0x384/0x3d4
 batches and capture the GIF output.
+
+## BOT18g update (same day) — tfragment data identified as the frag-list source
+
+- The full chain-3 VIF sequence is captured (register setup, init at
+  5/0x14d/0x290, per-draw 897-blocks + MSCALF, frag batches, PC_PORT texture
+  markers, DIRECTHL).  The frag list at VU mem 0x2a0 is not written by any
+  VIF transfer.
+- The frag data comes from the tfragment (the `drawable-inline-array-tfrag`
+  in the level data; the mips2c copies its `dma-chain`/data to the
+  scratchpad -> DMA).  The frag-list header {count, vertex-offset, page
+  pointers} that the microcode reads at vi14 = 0x2a0 is part of the
+  tfragment's data, not the per-draw unpacks.  The next probe: dump the
+  title-vis tfragment from EE memory (via the drawable-tree) and populate
+  the VU frag list + output loop bounds from it.
