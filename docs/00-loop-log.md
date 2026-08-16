@@ -1,3 +1,24 @@
+## 2026-08-16 — BOT23: Jak boots to the title on macOS (M1 partial pass)
+
+- **Acted:** phase run per docs/15-m1-phase-plan.md.  lldb + crash-report
+  ground truth on the host gk, three root causes fixed: (1) missing
+  sys_icache_invalidate at every RW->RX code flip (THE nondeterministic
+  link-phase SIGILL — mprotect does not flush icache on Apple Silicon and
+  the top-level staging pages are reused per object); (2) stub-arena
+  boot-order dependency → per-slot sealing (alloc reopens RW, seal_last
+  flips RX + invalidates; all 5 writers incl. mips2c reg which never
+  sealed); (3) upstream's PROT_NONE low-memory guard → PROT_READ for
+  no-emit builds (the game reads null-ish bone transforms by design —
+  vector<-cspace! w==0 workaround; sidekick hit it at boot).
+- **Verified:** host gk boots to the DISPLAYED title in ~15 s and keeps
+  running (title level displayed, GAMEPLAY enter title, village1
+  preloading, overlord serving files, zero faults/crash reports).
+- **Synced:** all fixes into the iOS runtime archive + shell rebuilt
+  (Simulator re-verification = next session's first step).
+- **Honest boundary:** input/audio verification and title→village1
+  progression remain for full M1; screen capture blocked by macOS
+  permissions (game window live on the desktop).
+
 ## 2026-08-16 — BOT22b: strategy audit + macOS local-launch proof
 
 - **Acted:** audited the fork vs upstream (base 2026-07-31; ARM64 emitter

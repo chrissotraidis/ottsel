@@ -1033,15 +1033,19 @@ index 859b7e13a..db8984015 100644
        // use a hack to just run the listener function if there's no GOAL kernel.
        if (ListenerFunction->value != s7.offset) {
 diff --git a/game/kernel/jak1/klink.cpp b/game/kernel/jak1/klink.cpp
-index fd7199959..79a86d763 100644
+index fd7199959..a8a60564e 100644
 --- a/game/kernel/jak1/klink.cpp
 +++ b/game/kernel/jak1/klink.cpp
-@@ -14,7 +14,34 @@
+@@ -14,7 +14,38 @@
  
  #include "fmt/format.h"
  
 +#include <cstring>
 +#include <sys/mman.h>
++
++#ifdef __APPLE__
++#include <libkern/OSCacheControl.h>
++#endif
 +
  static constexpr bool link_debug_printfs = false;
 +#ifdef OTTSEL_NO_EMIT
@@ -1071,7 +1075,7 @@ index fd7199959..79a86d763 100644
  /*!
   * Make progress on linking.
   */
-@@ -74,7 +101,63 @@ uint32_t cross_seg_dist_link_v3(Ptr<uint8_t> link,
+@@ -74,7 +105,63 @@ uint32_t cross_seg_dist_link_v3(Ptr<uint8_t> link,
    // both 32-bit and 64-bit pointer links are supported, though 64-bit ones are no longer in use.
    // we still support it just in case we want to run ancient code.
    if (size == 4) {
@@ -1135,7 +1139,7 @@ index fd7199959..79a86d763 100644
    } else if (size == 8) {
      *Ptr<int64_t>(offset_of_patch).c() = diff;
    } else {
-@@ -160,6 +243,8 @@ uint32_t symlink_v3(Ptr<uint8_t> link, Ptr<uint8_t> data) {
+@@ -160,6 +247,8 @@ uint32_t symlink_v3(Ptr<uint8_t> link, Ptr<uint8_t> data) {
      uint32_t offset = offsets.c()[i];
      seek += 4;
      auto data_ptr = (data + offset).cast<int32_t>();
@@ -1144,7 +1148,7 @@ index fd7199959..79a86d763 100644
  
      if (*data_ptr == -1) {
        // a "-1" indicates that we should store the address.
-@@ -168,6 +253,8 @@ uint32_t symlink_v3(Ptr<uint8_t> link, Ptr<uint8_t> data) {
+@@ -168,6 +257,8 @@ uint32_t symlink_v3(Ptr<uint8_t> link, Ptr<uint8_t> data) {
        // otherwise store the offset to st.  Eventually this should become an s16 instead.
        *(data + offset).cast<int32_t>() = sym_offset;
      }
@@ -1153,7 +1157,7 @@ index fd7199959..79a86d763 100644
    }
  
    return seek;
-@@ -217,7 +304,35 @@ uint32_t link_control::jak1_work_v3() {
+@@ -217,7 +308,35 @@ uint32_t link_control::jak1_work_v3() {
          if (ofh->code_infos[seg_id].size == 0) {
            ofh->code_infos[seg_id].offset = 0;
          } else {
@@ -1189,7 +1193,7 @@ index fd7199959..79a86d763 100644
            ofh->code_infos[seg_id].offset =
                kmalloc(m_heap, ofh->code_infos[seg_id].size, 0, "main-segment").offset;
            if (ofh->code_infos[seg_id].offset == 0) {
-@@ -225,6 +340,7 @@ uint32_t link_control::jak1_work_v3() {
+@@ -225,6 +344,7 @@ uint32_t link_control::jak1_work_v3() {
                     ofh->code_infos[seg_id].size);
              return 1;
            }
@@ -1197,7 +1201,7 @@ index fd7199959..79a86d763 100644
            jak1::ultimate_memcpy(Ptr<u8>(ofh->code_infos[seg_id].offset).c(), src.c(),
                                  ofh->code_infos[seg_id].size);
          }
-@@ -233,6 +349,26 @@ uint32_t link_control::jak1_work_v3() {
+@@ -233,6 +353,26 @@ uint32_t link_control::jak1_work_v3() {
            ofh->code_infos[seg_id].offset = 0;
          } else {
            Ptr<u8> src(ofh->code_infos[seg_id].offset);
@@ -1224,7 +1228,7 @@ index fd7199959..79a86d763 100644
            ofh->code_infos[seg_id].offset =
                kmalloc(m_heap, ofh->code_infos[seg_id].size, KMALLOC_TOP, "top-level-segment")
                    .offset;
-@@ -241,6 +377,7 @@ uint32_t link_control::jak1_work_v3() {
+@@ -241,6 +381,7 @@ uint32_t link_control::jak1_work_v3() {
                     ofh->code_infos[seg_id].size);
              return 1;
            }
@@ -1232,7 +1236,7 @@ index fd7199959..79a86d763 100644
            jak1::ultimate_memcpy(Ptr<u8>(ofh->code_infos[seg_id].offset).c(), src.c(),
                                  ofh->code_infos[seg_id].size);
          }
-@@ -514,6 +651,17 @@ uint32_t link_control::jak1_work_v2() {
+@@ -514,6 +655,17 @@ uint32_t link_control::jak1_work_v2() {
   * Complete linking. This will execute the top-level code for v3 object files, if requested.
   */
  void link_control::jak1_finish(bool jump_from_c_to_goal) {
@@ -1250,7 +1254,7 @@ index fd7199959..79a86d763 100644
    CacheFlush(m_code_start.c(), m_code_size);
    auto old_debug_segment = DebugSegment;
    if (m_keep_debug) {
-@@ -527,6 +675,8 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
+@@ -527,6 +679,8 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
  
    ObjectFileHeader* ofh = m_link_block_ptr.cast<ObjectFileHeader>().c();
    lg::debug("link finish: {}", m_object_name);
@@ -1259,7 +1263,7 @@ index fd7199959..79a86d763 100644
    if (ofh->object_file_version == 3) {
      // todo check function type of entry
  
-@@ -540,12 +690,118 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
+@@ -540,12 +694,126 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
  
      // execute top level!
      if (m_entry.offset && (m_flags & LINK_FLAG_EXECUTE)) {
@@ -1291,6 +1295,11 @@ index fd7199959..79a86d763 100644
 +            continue;
 +          }
 +        }
++        // BOT23: the top-level staging pages are REUSED for every object;
++        // mprotect does not flush the icache on Apple Silicon, so without
++        // this the CPU can execute the PREVIOUS object's stale code
++        // (nondeterministic SIGILL, the 1-in-3 link-phase fault).
++        sys_icache_invalidate((void*)tl_lo, tl_hi - tl_lo);
 +        lg::debug("OTTSEL no-emit: top-level code pages flipped RX ({}..{})", tl_lo, tl_hi);
 +      }
 +      // Ottsel H3: main-segment code (all functions of this object) must be
@@ -1314,6 +1323,9 @@ index fd7199959..79a86d763 100644
 +            continue;
 +          }
 +        }
++        // BOT23: invalidate freshly linked main-segment code before execution
++        // (see the top-level flip above).
++        sys_icache_invalidate((void*)main_lo, main_hi - main_lo);
 +        lg::debug("OTTSEL no-emit: main code pages flipped RX ({}..{})", main_lo, main_hi);
 +      }
 +#endif
@@ -1379,7 +1391,7 @@ index fd7199959..79a86d763 100644
      }
  
      // inform compiler that we loaded.
-@@ -581,6 +837,16 @@ Ptr<uint8_t> link_and_exec(Ptr<uint8_t> data,
+@@ -581,6 +849,16 @@ Ptr<uint8_t> link_and_exec(Ptr<uint8_t> data,
                             Ptr<kheapinfo> heap,
                             uint32_t flags,
                             bool jump_from_c_to_goal) {
@@ -1396,7 +1408,7 @@ index fd7199959..79a86d763 100644
    link_control lc;
    lc.jak1_jak2_begin(data, name, size, heap, flags);
    uint32_t done;
-@@ -610,14 +876,20 @@ uint64_t link_begin(u64* args) {
+@@ -610,14 +888,20 @@ uint64_t link_begin(u64* args) {
    // object data, name size, heap flags
    saved_link_control.jak1_jak2_begin(Ptr<u8>(args[0]), Ptr<char>(args[1]).c(), args[2],
                                       Ptr<kheapinfo>(args[3]), args[4]);
@@ -1581,21 +1593,25 @@ index 459a21562..e7cf3b0a5 100644
    if (DiskBoot) {
      intern_from_c("*kernel-boot-message*")->value = intern_from_c(DebugBootMessage).offset;
 diff --git a/game/kernel/jak1/kscheme.cpp b/game/kernel/jak1/kscheme.cpp
-index c8287de5a..2867d0acc 100644
+index c8287de5a..37c592b78 100644
 --- a/game/kernel/jak1/kscheme.cpp
 +++ b/game/kernel/jak1/kscheme.cpp
-@@ -1,6 +1,10 @@
+@@ -1,6 +1,14 @@
  #include "kscheme.h"
  
  #include <cstring>
 +#if defined(OTTSEL_NO_EMIT) && defined(__aarch64__)
 +#include <sys/mman.h>
 +#include <unistd.h>
++
++#ifdef __APPLE__
++#include <libkern/OSCacheControl.h>
++#endif
 +#endif
  
  #include "common/common_types.h"
  #include "common/log/log.h"
-@@ -25,7 +29,29 @@
+@@ -25,7 +33,29 @@
  
  using namespace jak1_symbols;
  
@@ -1625,7 +1641,7 @@ index c8287de5a..2867d0acc 100644
  // where to put a new symbol for the most recently searched for symbol that wasn't found
  u32 symbol_slot;
  
-@@ -150,6 +176,20 @@ u64 alloc_heap_object(u32 heap, u32 type, u32 size, u32 pp) {
+@@ -150,6 +180,20 @@ u64 alloc_heap_object(u32 heap, u32 type, u32 size, u32 pp) {
      return 0;
    }
  
@@ -1646,7 +1662,7 @@ index c8287de5a..2867d0acc 100644
    *Ptr<u32>(mem) = type;
    return mem + BASIC_OFFSET;
  }
-@@ -279,11 +319,127 @@ void _arg_call_arm64();
+@@ -279,11 +323,163 @@ void _arg_call_arm64();
  #endif
  }
  
@@ -1690,8 +1706,21 @@ index c8287de5a..2867d0acc 100644
 +      lg::debug("OTTSEL no-emit: stub page @ 0x{:x} RX flip skipped: {}", addr, strerror(errno));
 +    }
 +  }
++  // BOT23: mprotect does NOT flush the instruction cache on Apple Silicon;
++  // freshly written code can execute as stale icache lines (nondeterministic
++  // SIGILL).  Invalidate the range before anything jumps into it.
++  sys_icache_invalidate((void*)lo, hi - lo);
 +}
 +}  // namespace
++
++// BOT23: the last-allocated slot, sealed by ottsel_stub_seal_last().  The
++// phase A/B bulk flips are kept, but they are boot-order-dependent (the host
++// goal_main path registers phase-B stubs that GOAL executes DURING the kernel
++// CGO link, before the phase-B flip -> EXC_BAD_ACCESS executing an RW page at
++// EE 0x4f10904, caught under lldb).  Per-slot sealing removes the ordering
++// dependency: every stub's page is RX + icache-invalidated the moment it is
++// fully written, and re-opened RW only for the next write to that page.
++u32 g_ottsel_stub_last_off = 0;
 +
 +u32 ottsel_stub_alloc(u32 size) {
 +  u32 base = ottsel_stub_arena_base();
@@ -1699,7 +1728,29 @@ index c8287de5a..2867d0acc 100644
 +  ASSERT_MSG(size <= OTTSEL_STUB_SLOT, "stub too large for arena slot");
 +  ASSERT_MSG(off + size <= base + OTTSEL_STUB_ARENA_SIZE, "stub arena exhausted");
 +  g_ottsel_stub_next++;
++  g_ottsel_stub_last_off = off;
++  // Re-open the slot's page(s) for writing (they may already be sealed RX
++  // from a previous stub on the same page).
++  const uintptr_t page = (uintptr_t)sysconf(_SC_PAGESIZE);
++  uintptr_t lo = (uintptr_t)(::g_ee_main_mem + off) & ~(page - 1);
++  uintptr_t hi = ((uintptr_t)(::g_ee_main_mem + off + OTTSEL_STUB_SLOT) + page - 1) & ~(page - 1);
++  for (uintptr_t addr = lo; addr < hi; addr += page) {
++    mprotect((void*)addr, page, PROT_READ | PROT_WRITE);
++  }
 +  return off;
++}
++
++void ottsel_stub_seal_last() {
++  const uintptr_t page = (uintptr_t)sysconf(_SC_PAGESIZE);
++  u32 off = g_ottsel_stub_last_off;
++  uintptr_t lo = (uintptr_t)(::g_ee_main_mem + off) & ~(page - 1);
++  uintptr_t hi = ((uintptr_t)(::g_ee_main_mem + off + OTTSEL_STUB_SLOT) + page - 1) & ~(page - 1);
++  for (uintptr_t addr = lo; addr < hi; addr += page) {
++    if (mprotect((void*)addr, page, PROT_READ | PROT_EXEC) != 0) {
++      lg::debug("OTTSEL no-emit: stub seal @ 0x{:x} failed: {}", addr, strerror(errno));
++    }
++  }
++  sys_icache_invalidate((void*)lo, hi - lo);
 +}
 +
 +void ottsel_stub_flip_phase_a() {
@@ -1769,12 +1820,13 @@ index c8287de5a..2867d0acc 100644
 +    mem.c()[offset++] = trampoline[i];
 +  }
 +  (void)arg3_is_pp;
++  ottsel_stub_seal_last();
 +  return mem.cast<Function>();
 +#else
    auto mem = Ptr<u8>(alloc_heap_object(s7.offset + FIX_SYM_GLOBAL_HEAP,
                                         *(s7 + FIX_SYM_FUNCTION_TYPE), 0x40, UNKNOWN_PP));
    auto f = (uint64_t)func;
-@@ -294,10 +450,45 @@ Ptr<Function> make_function_from_c_systemv(void* func, bool arg3_is_pp) {
+@@ -294,10 +490,45 @@ Ptr<Function> make_function_from_c_systemv(void* func, bool arg3_is_pp) {
    auto trampoline_function_addr = _arg_call_arm64;
  #endif
    auto trampoline = (u8*)&trampoline_function_addr;
@@ -1823,7 +1875,7 @@ index c8287de5a..2867d0acc 100644
    mem.c()[offset++] = 0x48;
    mem.c()[offset++] = 0xb8;
    for (int i = 0; i < 8; i++) {
-@@ -327,8 +518,10 @@ Ptr<Function> make_function_from_c_systemv(void* func, bool arg3_is_pp) {
+@@ -327,8 +558,10 @@ Ptr<Function> make_function_from_c_systemv(void* func, bool arg3_is_pp) {
    // the asm function's ret will return to the caller of this (GOAL code) directlyz.
  
    // CacheFlush(mem, 0x34);
@@ -1834,7 +1886,7 @@ index c8287de5a..2867d0acc 100644
  }
  
  /*!
-@@ -417,6 +610,39 @@ void _stack_call_arm64();
+@@ -417,6 +650,40 @@ void _stack_call_arm64();
  }
  
  Ptr<Function> make_stack_arg_function_from_c_systemv(void* func) {
@@ -1869,12 +1921,13 @@ index c8287de5a..2867d0acc 100644
 +  for (int i = 0; i < 8; i++) {
 +    mem.c()[offset++] = trampoline[i];
 +  }
++  ottsel_stub_seal_last();
 +  return mem.cast<Function>();
 +#else
    // allocate a function object on the global heap
    auto mem = Ptr<u8>(alloc_heap_object(s7.offset + FIX_SYM_GLOBAL_HEAP,
                                         *(s7 + FIX_SYM_FUNCTION_TYPE), 0x40, UNKNOWN_PP));
-@@ -454,6 +680,7 @@ Ptr<Function> make_stack_arg_function_from_c_systemv(void* func) {
+@@ -454,6 +721,7 @@ Ptr<Function> make_stack_arg_function_from_c_systemv(void* func) {
    // CacheFlush(mem, 0x34);
  
    return mem.cast<Function>();
@@ -1882,7 +1935,7 @@ index c8287de5a..2867d0acc 100644
  }
  
  #ifdef _WIN32
-@@ -529,6 +756,17 @@ Ptr<Function> make_stack_arg_function_from_c(void* func) {
+@@ -529,6 +797,18 @@ Ptr<Function> make_stack_arg_function_from_c(void* func) {
   * Create a GOAL function which does nothing and immediately returns.
   */
  Ptr<Function> make_nothing_func() {
@@ -1895,12 +1948,13 @@ index c8287de5a..2867d0acc 100644
 +  mem.c()[1] = 0x03;
 +  mem.c()[2] = 0x5F;
 +  mem.c()[3] = 0xD6;
++  ottsel_stub_seal_last();
 +  return mem.cast<Function>();
 +#else
    auto mem = Ptr<u8>(alloc_heap_object(s7.offset + FIX_SYM_GLOBAL_HEAP,
                                         *(s7 + FIX_SYM_FUNCTION_TYPE), 0x14, UNKNOWN_PP));
  
-@@ -536,12 +774,29 @@ Ptr<Function> make_nothing_func() {
+@@ -536,12 +816,30 @@ Ptr<Function> make_nothing_func() {
    mem.c()[0] = 0xc3;
    // CacheFlush(mem, 8);
    return mem.cast<Function>();
@@ -1925,12 +1979,13 @@ index c8287de5a..2867d0acc 100644
 +  mem.c()[5] = 0x03;
 +  mem.c()[6] = 0x5F;
 +  mem.c()[7] = 0xD6;
++  ottsel_stub_seal_last();
 +  return mem.cast<Function>();
 +#else
    auto mem = Ptr<u8>(alloc_heap_object(s7.offset + FIX_SYM_GLOBAL_HEAP,
                                         *(s7 + FIX_SYM_FUNCTION_TYPE), 0x14, UNKNOWN_PP));
    // xor eax, eax
-@@ -551,6 +806,7 @@ Ptr<Function> make_zero_func() {
+@@ -551,6 +849,7 @@ Ptr<Function> make_zero_func() {
    mem.c()[2] = 0xc3;
    // CacheFlush(mem, 8);
    return mem.cast<Function>();
@@ -1938,7 +1993,7 @@ index c8287de5a..2867d0acc 100644
  }
  
  /*!
-@@ -719,6 +975,28 @@ Ptr<Symbol> find_symbol_from_c(const char* name) {
+@@ -719,6 +1018,28 @@ Ptr<Symbol> find_symbol_from_c(const char* name) {
        return probe;
      }
    }
@@ -1967,7 +2022,7 @@ index c8287de5a..2867d0acc 100644
  }
  
  /*!
-@@ -969,6 +1247,10 @@ u64 type_typep(Ptr<Type> t1, Ptr<Type> t2) {
+@@ -969,6 +1290,10 @@ u64 type_typep(Ptr<Type> t1, Ptr<Type> t2) {
   */
  u64 method_set(u32 type_, u32 method_id, u32 method) {
    Ptr<Type> type(type_);
@@ -1978,7 +2033,7 @@ index c8287de5a..2867d0acc 100644
    if (method_id > 127)
      printf("[METHOD SET ERROR] tried to set method %d\n", method_id);
  
-@@ -1117,7 +1399,98 @@ u64 call_method_of_type_arg2(u32 arg, Ptr<Type> type, u32 method_id, u32 a1, u32
+@@ -1117,7 +1442,98 @@ u64 call_method_of_type_arg2(u32 arg, Ptr<Type> type, u32 method_id, u32 a1, u32
      auto type_tag = Ptr<Ptr<Type>>(type.offset - 4);
      if ((*type_tag).offset == *(s7 + FIX_SYM_TYPE_TYPE)) {
        // return type->get_method(method_id).cast<u64 (u32,u32,u32)>().c()(arg,a1,a2);
@@ -2078,7 +2133,7 @@ index c8287de5a..2867d0acc 100644
      } else {
        cprintf("#<#x%x has invalid type ptr #x%x, bad type #x%x>\n", arg, type.offset,
                (*type_tag).offset);
-@@ -1744,13 +2117,29 @@ s32 InitHeapAndSymbol() {
+@@ -1744,13 +2160,29 @@ s32 InitHeapAndSymbol() {
    intern_from_c("*boot-video-mode*")->value = 0;  // (u32)BootVideoMode;
  
    lg::info("Initialized GOAL heap in {:.2} ms", heap_init_timer.getMs());
@@ -2108,7 +2163,7 @@ index c8287de5a..2867d0acc 100644
      method_set_symbol->value--;
  
      // check the kernel version!
-@@ -1768,6 +2157,7 @@ s32 InitHeapAndSymbol() {
+@@ -1768,6 +2200,7 @@ s32 InitHeapAndSymbol() {
      }
    }
  
@@ -2116,7 +2171,7 @@ index c8287de5a..2867d0acc 100644
    // setup deci2count for message counter.
    protoBlock.deci2count = intern_from_c("*deci-count*").cast<s32>();
  
-@@ -1779,6 +2169,7 @@ s32 InitHeapAndSymbol() {
+@@ -1779,6 +2212,7 @@ s32 InitHeapAndSymbol() {
  
    // testing stuff:
    make_function_symbol_from_c("test-function", (void*)test_function);
@@ -2125,10 +2180,10 @@ index c8287de5a..2867d0acc 100644
    return 0;
  }
 diff --git a/game/kernel/jak1/kscheme.h b/game/kernel/jak1/kscheme.h
-index ab8a32c48..e65e1e508 100644
+index ab8a32c48..abedfb1f8 100644
 --- a/game/kernel/jak1/kscheme.h
 +++ b/game/kernel/jak1/kscheme.h
-@@ -69,6 +69,16 @@ u64 call_method_of_type_arg2(u32 arg, Ptr<Type> type, u32 method_id, u32 a1, u32
+@@ -69,6 +69,20 @@ u64 call_method_of_type_arg2(u32 arg, Ptr<Type> type, u32 method_id, u32 a1, u32
  u64 alloc_heap_object(u32 heap, u32 type, u32 size, u32 pp);
  Ptr<Function> make_function_symbol_from_c(const char* name, void* f);
  Ptr<Function> make_stack_arg_function_symbol_from_c(const char* name, void* f);
@@ -2139,6 +2194,10 @@ index ab8a32c48..e65e1e508 100644
 + * arena pages are flipped RX before any GOAL code runs.
 + */
 +u32 ottsel_stub_alloc(u32 size);
++// BOT23: seal the most recently allocated stub slot (page RX + icache
++// invalidate).  MUST be called after the stub bytes are fully written;
++// removes the boot-order dependency of the phase A/B bulk flips.
++void ottsel_stub_seal_last();
 +void ottsel_stub_flip_phase_a();
 +void ottsel_stub_flip_phase_b();
 +
@@ -2306,10 +2365,10 @@ index f3124154e..e43a4fc93 100644
      gprs[v0].du64[0] = _call_goal8_asm_win32(g_ee_main_mem + addr, args, 0, gprs[s6].du64[0],
                                               gprs[s7].du64[0], g_ee_main_mem);
 diff --git a/game/mips2c/mips2c_table.cpp b/game/mips2c/mips2c_table.cpp
-index 018b0d331..b518cfea9 100644
+index 018b0d331..20c0c28b1 100644
 --- a/game/mips2c/mips2c_table.cpp
 +++ b/game/mips2c/mips2c_table.cpp
-@@ -19,6 +19,306 @@ void _mips2c_call_systemv() asm("_mips2c_call_systemv");
+@@ -19,6 +19,309 @@ void _mips2c_call_systemv() asm("_mips2c_call_systemv");
  void _mips2c_call_windows();
  }
  
@@ -2558,6 +2617,9 @@ index 018b0d331..b518cfea9 100644
 +  put64((u64)exec);
 +  put64((u64)stack_size);
 +  put64((u64)(void*)_mips2c_call_arm64);
++  // BOT23: seal the slot (page RX + icache invalidate) before anything can
++  // jump into it — reg() runs during GAME linking, after the phase flips.
++  ::jak1::ottsel_stub_seal_last();
 +  it.first->second.goal_trampoline = Ptr<u8>(slot + 4);
 +#else
 +  auto mem = Ptr<u8>(alloc_heap_object(s7.offset + jak1_symbols::FIX_SYM_GLOBAL_HEAP,
@@ -2616,7 +2678,7 @@ index 018b0d331..b518cfea9 100644
  // clang-format off
  namespace Mips2C {
  
-@@ -749,3 +1049,4 @@ u32 LinkedFunctionTable::get(const std::string& name) {
+@@ -749,3 +1052,4 @@ u32 LinkedFunctionTable::get(const std::string& name) {
    return it->second.goal_trampoline.offset;
  }
  }  // namespace Mips2C
@@ -2645,7 +2707,7 @@ index 04e91eb0a..22bccf3e4 100644
 \ No newline at end of file
 +}  // namespace Mips2C
 diff --git a/game/runtime.cpp b/game/runtime.cpp
-index 4f7cc5e18..cc2d2e926 100644
+index 4f7cc5e18..6d5641e19 100644
 --- a/game/runtime.cpp
 +++ b/game/runtime.cpp
 @@ -156,9 +156,16 @@ void ee_runner(SystemThreadInterface& iface) {
@@ -2675,6 +2737,25 @@ index 4f7cc5e18..cc2d2e926 100644
                    MAP_ANONYMOUS | MAP_PRIVATE, 0, 0);
    }
  
+@@ -190,7 +197,18 @@ void ee_runner(SystemThreadInterface& iface) {
+   // prevent access to the first 512 kB of memory.
+   // On the PS2 this is the kernel and can't be accessed either.
+   // this may not work well on systems with a page size > 1 MB.
++#ifdef OTTSEL_NO_EMIT
++  // Ottsel BOT23: keep low memory READABLE (zeros) like the PS2's EE kernel
++  // area.  The game legitimately reads through null-ish pointers by design:
++  // vector<-cspace! loads a bone transform and then checks w == 0.0 (the
++  // og:preserve-this swamp-blimp workaround), and the sidekick's title-boot
++  // path reaches it with a zero bone.  Writes still fault (catches real
++  // corruption).  PROT_NONE here killed the host boot deterministically at
++  // EE 0x30 (EXC_BAD_ACCESS in vector<-cspace! from sidekick, lldb-verified).
++  mprotect((void*)g_ee_main_mem, EE_MAIN_MEM_LOW_PROTECT, PROT_READ);
++#else
+   mprotect((void*)g_ee_main_mem, EE_MAIN_MEM_LOW_PROTECT, PROT_NONE);
++#endif
+   fileio_init_globals();
+   jak1::kboot_init_globals();
+   jak2::kboot_init_globals();
 diff --git a/game/sce/libpad.cpp b/game/sce/libpad.cpp
 index 085d80d2f..39af245c5 100644
 --- a/game/sce/libpad.cpp

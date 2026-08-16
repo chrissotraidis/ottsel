@@ -8,7 +8,15 @@ Mode: Phase 2 build loop — **strategy reset: fr3 + upstream renderers (see doc
 > strategy changed: the software-rasterizer/VU1-interpreter track is
 > retired as a product path; rendering adopts upstream's fr3 mesh assets +
 > C++ bucket renderers (proven live on this Mac, native arm64, GL 4.1).
-> Next gate M1 = verified playable title→village1 on macOS host.
+>
+> **M1 PARTIAL PASS (2026-08-16): Jak 1 BOOTS TO THE DISPLAYED TITLE on
+> macOS, native arm64, real renderer/IOP/audio stack, ~15 s, zero faults.**
+> Three root causes fixed (icache invalidation at RX flips; per-slot stub
+> sealing; low-memory PROT_READ) — `docs/evidence/M1/m1-title-boot.md`.
+> The long-standing nondeterministic link-phase SIGILL is root-caused
+> (missing sys_icache_invalidate) and fixed on both host and iOS runtimes.
+> Remaining for full M1: input/audio verification + title→village1
+> progression + perf sanity.
 
 Read `docs/15-progress-audit.md` before resuming. The Simulator RX-blob path is
 a research transport, not the H2.5 product execution model.

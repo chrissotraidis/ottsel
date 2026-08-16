@@ -1,3 +1,18 @@
+## 2026-08-16 update (BOT23) — Jak 1 boots to the title on macOS (native arm64)
+
+M1 partial pass.  The host gk now boots to the displayed title screen in
+~15 s and keeps running (real GL renderer + IOP/overlord + no-emit AOT
+GOAL code, zero faults).  Three root causes fixed with lldb/crash-report
+evidence: missing icache invalidation at every RW->RX code-page flip
+(this WAS the long-standing nondeterministic link-phase SIGILL), a
+stub-arena boot-order dependency (fixed with per-slot page sealing across
+all five stub writers), and upstream's PROT_NONE low-memory guard (now
+PROT_READ in no-emit builds — the game reads null-ish bone transforms by
+design; sidekick's title-boot path hit it).  All fixes are compiled into
+the iOS runtime archive as well.  See docs/evidence/M1/m1-title-boot.md.
+Remaining for full M1: input/audio verification, title→village1
+progression, perf sanity.
+
 ## 2026-08-16 update (BOT22b) — strategy audit: the smart path to playable is in the tree
 
 Full project audit + external review (see docs/14-roadmap-to-playable.md).

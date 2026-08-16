@@ -1,0 +1,18 @@
+[58:24] [[38;2;144;238;144minfo[0m] OpenGL context version: 4.1 Metal - 90.5
+[58:24] [[38;2;144;238;144minfo[0m] OpenGL context renderer: Apple M1
+[58:24] [[38;2;144;238;144minfo[0m] OpenGL context vendor: Apple
+[58:24] [[38;2;144;238;144minfo[0m] OpenGL context shading language version: 4.10
+[58:24] [[38;2;064;224;208mdebug[0m] [IOP] Run!
+(play :use-vis 0 :init-game 0) has been called!
+-----------> begin load title-vis [tit.DGO]
+[58:27] [[38;2;064;224;208mdebug[0m] link finish: title-vis
+(play :use-vis 0 :init-game 0) has been called!
+[58:27] [[38;2;144;238;144minfo[0m] FBO Setup: requested 640x480, msaa 1
+[58:27] [[38;2;144;238;144minfo[0m] FBO Setup: not using second temporary buffer
+Displaying level title [display]
+GAMEPLAY: enter title
+[58:28] [[38;2;144;238;144minfo[0m] FBO Setup: requested 1280x960, msaa 1
+-----------> begin load village1-vis [vi1.DGO]
+[58:28] [[38;2;144;238;144minfo[0m] FBO Setup: not using second temporary buffer
+GAMEPLAY: enter title
+[58:29] [[38;2;064;224;208mdebug[0m] link finish: village1-vis
