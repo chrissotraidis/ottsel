@@ -127,3 +127,27 @@ captured UNPACK.  The VIF code stream per chain is `MSCAL imm=0` +
 the missing piece.  Next: emulate the VIF registers (TOP/TOPS/STCYCL/ITOP)
 in the tool while replaying the capture so the frag-list address resolves,
 then run the microcode to XGKICK and rasterize.
+
+## BOT19e update (same day) — VU1 interpreter wired into the app; frag-list empty
+
+Architecture (committed): `tools/ottsel_vu1/vu1.cpp` is now compiled into the
+shell; `src/shell/tfrag_microcode.h` embeds the 1867 tfrag microcode words
+(generated from `test/decompiler/vu_reference/tfrag.txt`); `gfx_send_chain`
+processes every transfer's VIF commands live (STCYCL/BASE/OFFSET tracked,
+UNPACK -> VU data memory at (addr?TOPS:TOP)+(imm&0x3ff), MSCAL/MSCALF ->
+`execute()` with XTOP = the VIF TOP, XGKICK gif_out fed through the existing
+GIF decoder/rasterizer).
+
+Live run (one boot, zero faults): the interpreter executes on every MSCAL
+(imm=0, TOP=0, e.g. pc exits at 1414/141/1506/313/1706) but gif_out = 0 every
+time: the microcode's L26 reads the frag count from data[TOP+0].hi16 and the
+`ibeq vi00, vi02, L32` skips the draw when it is 0.  The frag-list block
+(count@TOP+0, vertex offset@TOP+1, pointers@TOP+2..4, matrix@TOP+5..8) is
+EMPTY at runtime -- no captured UNPACK writes data mem 0..4, and the
+`*tfrag-work*` symbol's value is 0 (the runtime's tfrag-work object is not
+set up, `OTTSEL TFRAGWORK: ... value=0x0`).  So the port's tfrag draw path
+never produces a frag list, and the VU1 correctly skips every draw.
+
+The remaining S2.2 work is the tfrag-work / draw-inline-array-tfrag frag-list
+construction (the game's CPU-side draw state), then the XGKICK output will
+flow into the rasterizer that is already wired.

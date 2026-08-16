@@ -39,7 +39,8 @@ INCS=(-I"$WORKTREE" \
   -I"$WORKTREE/third-party/lzokay" \
   -I"$WORKTREE/third-party/tree-sitter/lib/include" \
   -I"$WORKTREE/third-party/tinyfiledialogs" \
-  -I"$SDL_SRC/include")
+  -I"$SDL_SRC/include" \
+  -I"$REPO_DIR/tools/ottsel_vu1")
 FRAMEWORKS=(-framework UIKit -framework Foundation -framework CoreGraphics \
   -framework QuartzCore -framework Metal -framework AudioToolbox \
   -framework CoreHaptics -framework CoreMotion -framework AVFoundation \
@@ -190,11 +191,13 @@ compile "$REPO_DIR/src/shell/main.cpp" "$OBJ/shell_main.o"
 compile "$REPO_DIR/src/shell/ios_boot.cpp" "$OBJ/ios_boot.o"
 compile_objc "$REPO_DIR/src/shell/metal_shell.mm" "$OBJ/metal_shell.o"
 compile_objc "$REPO_DIR/src/shell/metal_gfx.mm" "$OBJ/metal_gfx.o"
+compile "$REPO_DIR/tools/ottsel_vu1/vu1.cpp" "$OBJ/vu1.o"
 xcrun --sdk "$SDK" clang++ "${COMMON_FLAGS[@]}" -fobjc-arc \
   "${INCS[@]}" -I"$SLICE_DIR" -c "$REPO_DIR/src/shell/a11_slice_runner.mm" -o "$OBJ/a11_slice_runner.o"
 
 xcrun --sdk "$SDK" clang++ "${COMMON_FLAGS[@]}" \
   "$OBJ/shell_main.o" "$OBJ/ios_boot.o" "$OBJ/metal_shell.o" "$OBJ/metal_gfx.o" \
+  "$OBJ/vu1.o" \
   "$OBJ/a11_slice_runner.o" "$OBJ/a11_slice.o" \
   -I"$SLICE_DIR" \
   "$APP_BUILD/libottsel-runtime.a" "$SDL_BUILD/libSDL3.a" \

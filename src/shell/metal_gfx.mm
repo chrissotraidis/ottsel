@@ -18,6 +18,9 @@
 #include "common/dma/gs.h"
 
 #include "metal_shell.h"
+#include "tfrag_microcode.h"
+
+#include "vu1.h"
 
 #include "common/log/log.h"
 
@@ -921,18 +924,114 @@ void gfx_send_chain(const void* data, u32 offset) {
       fwrite(hdr, 8, 1, g_tfrag_dump);  // placeholder: entry/count
     }
   }
+  // S2.2 BOT19e: full VIF replay capture.  Every transfer's VIF command words
+  // (vif0/vif1) plus the payload so the offline tool can simulate the VIF
+  // registers (TOP/TOPS/ITOP/BASE/OFFSET/STCYCL/STMOD) and rebuild the VU
+  // memory exactly as the hardware would, including the frag-list base that
+  // no UNPACK writes directly.
+  static FILE* g_vif_replay = nullptr;
+  static u32 g_vif_replay_recs = 0;
+  if (!g_vif_replay) {
+    std::string rpath = ottsel_ios_bundle_dir() + "tfrag-vif-replay.bin";
+    g_vif_replay = fopen(rpath.c_str(), "wb");
+  }
   const u8* base = (const u8*)data;
   DmaFollower dma(base, offset);
+  // S2.2 VU1 emulation: process the DMA chain's VIF commands to build VU
+  // memory and run the tfrag microcode on MSCAL/MSCALF, feeding the XGKICK
+  // output (gif_out) through the same GIF decoder/rasterizer as DIRECT data.
+  static ottsel_vu1::Vu1State g_vu;
+  static bool g_vu_init = false;
+  static u32 g_vu_top = 0;   // VIF TOP register (frag-list base, XTOP)
+  static u32 g_vu_tops = 0;  // VIF TOPS register
+  static u32 g_vu_vu_stcycl = 0x404;  // STCYCL cl<<8|wl
+  if (!g_vu_init) {
+    g_vu_init = true;
+    g_vu.code_len = ottsel_vu1::kTfragCodeWords;
+    for (int i = 0; i < g_vu.code_len; i++) {
+      g_vu.code[i] = ottsel_vu1::kTfragMicrocode[i];
+    }
+  }
+  auto ottsel_handle_vif = [&](u32 vifword, const u8* payload, u32 payload_size) {
+    VifCode v(vifword);
+    switch (v.kind) {
+      case VifCode::Kind::STCYCL:
+        g_vu_vu_stcycl = v.immediate;
+        break;
+      case VifCode::Kind::BASE:
+        g_vu_top = (g_vu_top & 0x3c0) | (v.immediate & 0x3f);
+        break;
+      case VifCode::Kind::OFFSET:
+        g_vu_tops = g_vu_top + v.immediate;
+        break;
+      case VifCode::Kind::MSCAL:
+      case VifCode::Kind::MSCALF: {
+        // The microcode's XTOP reads the VIF TOP register; run it with the
+        // current frag-list base.
+        static u32 ottsel_vu1_runs = 0;
+        ottsel_vu1::set_top(g_vu_top);
+        g_vu.pc = (v.immediate * 2) & 0x7ff;
+        g_vu.gif_out.clear();
+        ottsel_vu1::execute(g_vu, 400000);
+        if (ottsel_vu1_runs < 8) {
+          ottsel_vu1_runs++;
+          lg::info("OTTSEL VU1: run#{} mscal imm=0x{:x} top=0x{:x} pc={} gif_out={} "
+                   "frag[0..2]=0x{:x}/0x{:x}/0x{:x}",
+                   ottsel_vu1_runs, v.immediate, g_vu_top, g_vu.pc, g_vu.gif_out.size(),
+                   g_vu.data[0 * 4], g_vu.data[1 * 4], g_vu.data[2 * 4]);
+        }
+        if (!g_vu.gif_out.empty()) {
+          decode_gif_packets((const u8*)g_vu.gif_out.data(),
+                             (u32)g_vu.gif_out.size() * 4, g_dec);
+        }
+        break;
+      }
+      case VifCode::Kind::UNPACK_V4_32:
+      case VifCode::Kind::UNPACK_V4_16:
+      case VifCode::Kind::UNPACK_V4_8:
+      case VifCode::Kind::UNPACK_V3_32:
+      case VifCode::Kind::UNPACK_V2_16: {
+        // dest = (addr?TOPS:TOP) + (imm & 0x3ff); the addr flag = bit 21 of
+        // the VIF word.  All observed tfrag unpacks are TOP-relative.
+        u32 base = (vifword & (1 << 21)) ? g_vu_tops : g_vu_top;
+        u32 dest = (base + (v.immediate & 0x3ff)) & 0xfff;
+        u32 qwords = std::min(payload_size / 16, 4096u - dest);
+        if (qwords && dest < 4096) {
+          memcpy(&g_vu.data[dest * 4], payload, qwords * 16);
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  };
   int count = 0;
   while (!dma.ended() && count < 512) {
     DmaTransfer t = dma.read_and_advance();
     count++;
     if (t.size_bytes == 0) {
+      if (g_vif_replay && g_vif_replay_recs < 30000) {
+        u32 rec[4] = {t.vif0(), t.vif1(), 0, 0};
+        fwrite(rec, 16, 1, g_vif_replay);
+        g_vif_replay_recs++;
+      }
       continue;
+    }
+    if (g_vif_replay && g_vif_replay_recs < 30000 && t.size_bytes <= 8192) {
+      u32 rec[4] = {t.vif0(), t.vif1(), t.size_bytes, 0};
+      fwrite(rec, 16, 1, g_vif_replay);
+      fwrite(t.data, t.size_bytes, 1, g_vif_replay);
+      g_vif_replay_recs++;
     }
     const u8* g = t.data;
     GifTag tag(g);
     u32 off = (u32)(g - base);
+    // S2.2: process the transfer's two VIF commands.  vif1 is the data
+    // consumer in the observed tfrag chains (STCYCL+UNPACK, FLUSHA+DIRECT,
+    // MSCALF+STMOD); process vif0 first (control), then vif1 with the
+    // payload.
+    ottsel_handle_vif(t.vif0(), t.data, t.size_bytes);
+    ottsel_handle_vif(t.vif1(), t.data, t.size_bytes);
     VifCode v1(t.vif1());
     VifCode v0(t.vif0());
     // Full-transfer capture of the first tfrag-bearing chain (all vif kinds,

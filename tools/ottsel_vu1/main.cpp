@@ -66,13 +66,13 @@ static int load_dump(const char* path, Vu1State& st, std::vector<int>& mscals) {
     if (off + size > buf.size()) {
       break;
     }
-    // S2.2 BOT18c: the VIF UNPACK dest = (imm & 0x8000 ? TOPS : 0) +
-    // (imm & 0x3ff); all observed imms have bit15 = 0, so every destination
-    // is ABSOLUTE VU data memory (5, 0x14d, 0x290, 0x160, 0x381, 0x384,
-    // 0x3d4).  The earlier 0x2a0 + (imm & 0x3ff) mapping misplaced every
-    // per-draw batch and left the frag-list area empty.
+    // S2.2 BOT19e: the VIF TOP register is 0x2a0 (the tfrag microcode's
+    // XTOP/vi14 base), so every UNPACK lands at TOP + (imm & 0x3ff).  The
+    // per-draw batches land at 0x400 (verts), 0x621/0x624 (const/frag) and
+    // 0x674 (page); mtx-0 (imm=5) lands at 0x2a5 = the frag-list matrix
+    // rows (vi14+5..+8), exactly as the crafted test assumed.
     uint32_t dest = imm;
-    dest = imm & 0x3ff;
+    dest = 0x2a0 + (imm & 0x3ff);
     if (dest < kDataQwords && num <= 256 && size <= (kDataQwords - (int)dest) * 16) {
       memcpy(&st.data[dest * 4], buf.data() + off, size);
     }
