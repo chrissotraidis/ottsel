@@ -6,6 +6,8 @@
 // pipeline (metal_shell.mm); the SDL software surface remains as a
 // fallback if Metal init fails.  The runtime boots on a background thread.
 
+#include <unistd.h>
+
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -251,6 +253,40 @@ int main(int argc, char** argv) {
     while (SDL_PollEvent(&ev)) {
       if (ev.type == SDL_EVENT_QUIT) {
         g_quit = true;
+      }
+      // BOT22: any tap/click/key presses START on the synthetic pad for a
+      // few reads (the game's title screen advances on START/circle/X).
+      if (ev.type == SDL_EVENT_FINGER_DOWN || ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+          ev.type == SDL_EVENT_KEY_DOWN) {
+        extern unsigned int g_ottsel_synthetic_buttons;
+        extern int g_ottsel_synthetic_frames;
+        g_ottsel_synthetic_buttons = 0x0008;  // START (PadData::ButtonIndex::START = bit 3)
+        g_ottsel_synthetic_frames = 30;
+        fprintf(stderr, "ottsel BOT22: synthetic START press (event 0x%x)\n", ev.type);
+      }
+    }
+    // BOT22: file-based input trigger for headless driving — creating
+    // <bundle>/ottsel-press-start injects a START press (then the file is
+    // removed).  Complements the tap/key mapping above.
+    {
+      static int ottsel_trig_divider = 0;
+      if ((++ottsel_trig_divider % 30) == 0) {
+        std::string trig = bundle + "ottsel-press-start";
+        if (access(trig.c_str(), F_OK) == 0) {
+          unlink(trig.c_str());
+          extern unsigned int g_ottsel_synthetic_buttons;
+          extern int g_ottsel_synthetic_frames;
+          g_ottsel_synthetic_buttons = 0x0008;  // START
+          g_ottsel_synthetic_frames = 30;
+          fprintf(stderr, "ottsel BOT22: synthetic START press (file trigger)\n");
+        }
+        std::string bgtrig = bundle + "ottsel-bg-village1";
+        if (access(bgtrig.c_str(), F_OK) == 0) {
+          unlink(bgtrig.c_str());
+          extern int g_ottsel_bg_village1_request;
+          g_ottsel_bg_village1_request = 1;
+          fprintf(stderr, "ottsel BOT22: (bg 'village1) requested (file trigger)\n");
+        }
       }
     }
     if (g_surf || g_metal) {

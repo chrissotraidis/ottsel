@@ -1,3 +1,21 @@
+## 2026-08-16 — BOT22: village1 activates; the level-activation blocker resolved
+
+- **Acted:** disproved the handoff's premise with corrected type-system
+  offsets (bsp@ref+44; 0x3fdd674 = level-default); traced the live status
+  machine (LEVELSTAT probe) to 'loaded-waiting-for-START; built the
+  synthetic pad bridge (libpad.cpp + shell file/tap triggers); added an
+  EE-thread `(bg 'village1)` driver; set `play? = #f` +
+  `*artist-all-visible* = #t` for the no-VIS fallback (no STR/VIS data in
+  iso_data — the title intro can never play).
+- **Verified:** one boot, zero faults — village1 slot1 `'active`
+  (bsp=0x2ef80d4), title discarded, background-work fills (tfrag-count=1,
+  tie-count=3), tie-ln runs with vis0=0xffffffff (the tie bucket chains
+  appear).
+- **Honest boundary:** no composed pixels yet — VU1STAT shows 2080
+  microcode runs with zero GIF output per period (frag list empty at
+  top=0), and the tie microcode is not embedded.  The S2.2 composed-frame
+  gate is now purely renderer-side (Track B steps 2–4).
+
 ## 2026-08-16 — BOT21d: VU1 microcode entry + ILW component fixes
 
 - **Acted:** fixed the VU1 interpreter (tools/ottsel_vu1): the tfrag MSCAL

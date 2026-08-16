@@ -1,0 +1,60 @@
+[30:50] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d3bdc a1=0x3495290 a2=20 spad-sym=0x7000186964
+[30:50] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d3bd4 a1=0x3483db0 a2=32 spad-sym=0x7000186964
+[30:50] [info] OTTSEL TIELN: a0=0x1d39a8 vis0=0xffffffff a1=0x326a174 a2=2688 a3=0xcdcf54
+[30:50] [info] OTTSEL TIELN: a0=0x1d3b10 vis0=0xffffffff a1=0x33a5934 a2=884 a3=0xcdcf54
+[30:50] [info] OTTSEL TIELN: a0=0x1d3b8c vis0=0xffffffff a1=0x3403884 a2=281 a3=0xcdcf54
+[30:50] [info] OTTSEL BGWORK: bg=0x188ac44 tfrag-count=0x1 tfrag0=0x308df04 tie-count@476=0x3 tie0@480=0x32670c4
+[30:50] [info] OTTSEL LEVELSTAT: slot0=inactive bsp=0x18fe04 slot1=active bsp=0x2ef80d4 slot2=? bsp=0x0 loading-level=0x3fdd674 dproc=0x1f5394
+[30:51] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d38cc a1=0x308f630 a2=1255 spad-sym=0x7000186964
+[30:51] [info] OTTSEL TFASM2: vis=0x80 (lh(0,a0)) a0=0x1d396c a1=0x3266910 a2=1 spad-sym=0x7000186964
+[30:51] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d3bdc a1=0x3495290 a2=20 spad-sym=0x7000186964
+[30:51] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d3bd4 a1=0x3483db0 a2=32 spad-sym=0x7000186964
+[30:51] [info] OTTSEL TIELN: a0=0x1d39a8 vis0=0xffffffff a1=0x326a174 a2=2688 a3=0x50ef34
+[30:51] [info] OTTSEL TIELN: a0=0x1d3b10 vis0=0xffffffff a1=0x33a5934 a2=884 a3=0x50ef34
+[30:51] [info] OTTSEL TIELN: a0=0x1d3b8c vis0=0xffffffff a1=0x3403884 a2=281 a3=0x50ef34
+[30:52] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d38cc a1=0x308f630 a2=1255 spad-sym=0x7000186964
+[30:52] [info] OTTSEL TFASM2: vis=0x80 (lh(0,a0)) a0=0x1d396c a1=0x3266910 a2=1 spad-sym=0x7000186964
+[30:52] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d3bdc a1=0x3495290 a2=20 spad-sym=0x7000186964
+[30:52] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d3bd4 a1=0x3483db0 a2=32 spad-sym=0x7000186964
+[30:52] [info] OTTSEL TIELN: a0=0x1d39a8 vis0=0xffffffff a1=0x326a174 a2=2688 a3=0xcdcf54
+[30:52] [info] OTTSEL TIELN: a0=0x1d3b10 vis0=0xffffffff a1=0x33a5934 a2=884 a3=0xcdcf54
+[30:52] [info] OTTSEL TIELN: a0=0x1d3b8c vis0=0xffffffff a1=0x3403884 a2=281 a3=0xcdcf54
+[30:53] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d38cc a1=0x308f630 a2=1255 spad-sym=0x7000186964
+[30:53] [info] OTTSEL TFASM2: vis=0x80 (lh(0,a0)) a0=0x1d396c a1=0x3266910 a2=1 spad-sym=0x7000186964
+[30:53] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d3bdc a1=0x3495290 a2=20 spad-sym=0x7000186964
+[30:53] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d3bd4 a1=0x3483db0 a2=32 spad-sym=0x7000186964
+[30:53] [info] OTTSEL TIELN: a0=0x1d39a8 vis0=0xffffffff a1=0x326a174 a2=2688 a3=0x50ef34
+[30:53] [info] OTTSEL TIELN: a0=0x1d3b10 vis0=0xffffffff a1=0x33a5934 a2=884 a3=0x50ef34
+[30:53] [info] OTTSEL TIELN: a0=0x1d3b8c vis0=0xffffffff a1=0x3403884 a2=281 a3=0x50ef34
+[30:54] [info] OTTSEL BGWORK: bg=0x188ac44 tfrag-count=0x1 tfrag0=0x308df04 tie-count@476=0x3 tie0@480=0x32670c4
+[30:54] [info] OTTSEL LEVELSTAT: slot0=inactive bsp=0x18fe04 slot1=active bsp=0x2ef80d4 slot2=? bsp=0x0 loading-level=0x3fdd674 dproc=0x1f5394
+[30:54] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d38cc a1=0x308f630 a2=1255 spad-sym=0x7000186964
+[30:54] [info] OTTSEL TFASM2: vis=0x80 (lh(0,a0)) a0=0x1d396c a1=0x3266910 a2=1 spad-sym=0x7000186964
+[30:54] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d3bdc a1=0x3495290 a2=20 spad-sym=0x7000186964
+[30:54] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d3bd4 a1=0x3483db0 a2=32 spad-sym=0x7000186964
+[30:54] [info] OTTSEL TIELN: a0=0x1d39a8 vis0=0xffffffff a1=0x326a174 a2=2688 a3=0xcdcf54
+[30:54] [info] OTTSEL TIELN: a0=0x1d3b10 vis0=0xffffffff a1=0x33a5934 a2=884 a3=0xcdcf54
+[30:54] [info] OTTSEL TIELN: a0=0x1d3b8c vis0=0xffffffff a1=0x3403884 a2=281 a3=0xcdcf54
+[30:55] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d38cc a1=0x308f630 a2=1255 spad-sym=0x7000186964
+[30:55] [info] OTTSEL TFASM2: vis=0x80 (lh(0,a0)) a0=0x1d396c a1=0x3266910 a2=1 spad-sym=0x7000186964
+[30:55] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d3bdc a1=0x3495290 a2=20 spad-sym=0x7000186964
+[30:55] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d3bd4 a1=0x3483db0 a2=32 spad-sym=0x7000186964
+[30:55] [info] OTTSEL TIELN: a0=0x1d39a8 vis0=0xffffffff a1=0x326a174 a2=2688 a3=0x50ef34
+[30:55] [info] OTTSEL TIELN: a0=0x1d3b10 vis0=0xffffffff a1=0x33a5934 a2=884 a3=0x50ef34
+[30:55] [info] OTTSEL TIELN: a0=0x1d3b8c vis0=0xffffffff a1=0x3403884 a2=281 a3=0x50ef34
+[30:56] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d38cc a1=0x308f630 a2=1255 spad-sym=0x7000186964
+[30:56] [info] OTTSEL TFASM2: vis=0x80 (lh(0,a0)) a0=0x1d396c a1=0x3266910 a2=1 spad-sym=0x7000186964
+[30:56] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d3bdc a1=0x3495290 a2=20 spad-sym=0x7000186964
+[30:56] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d3bd4 a1=0x3483db0 a2=32 spad-sym=0x7000186964
+[30:56] [info] OTTSEL TIELN: a0=0x1d39a8 vis0=0xffffffff a1=0x326a174 a2=2688 a3=0xcdcf54
+[30:56] [info] OTTSEL TIELN: a0=0x1d3b10 vis0=0xffffffff a1=0x33a5934 a2=884 a3=0xcdcf54
+[30:56] [info] OTTSEL TIELN: a0=0x1d3b8c vis0=0xffffffff a1=0x3403884 a2=281 a3=0xcdcf54
+[30:57] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d38cc a1=0x308f630 a2=1255 spad-sym=0x7000186964
+[30:57] [info] OTTSEL TFASM2: vis=0x80 (lh(0,a0)) a0=0x1d396c a1=0x3266910 a2=1 spad-sym=0x7000186964
+[30:57] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d3bdc a1=0x3495290 a2=20 spad-sym=0x7000186964
+[30:57] [info] OTTSEL TFASM2: vis=0xffff (lh(0,a0)) a0=0x1d3bd4 a1=0x3483db0 a2=32 spad-sym=0x7000186964
+[30:57] [info] OTTSEL TIELN: a0=0x1d39a8 vis0=0xffffffff a1=0x326a174 a2=2688 a3=0x50ef34
+[30:57] [info] OTTSEL TIELN: a0=0x1d3b10 vis0=0xffffffff a1=0x33a5934 a2=884 a3=0x50ef34
+[30:57] [info] OTTSEL TIELN: a0=0x1d3b8c vis0=0xffffffff a1=0x3403884 a2=281 a3=0x50ef34
+[30:57] [info] OTTSEL BGWORK: bg=0x188ac44 tfrag-count=0x1 tfrag0=0x308df04 tie-count@476=0x3 tie0@480=0x32670c4
+[30:57] [info] OTTSEL LEVELSTAT: slot0=inactive bsp=0x18fe04 slot1=active bsp=0x2ef80d4 slot2=? bsp=0x0 loading-level=0x3fdd674 dproc=0x1f5394

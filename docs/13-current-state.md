@@ -1,3 +1,31 @@
+## 2026-08-16 update (BOT22) — village1 ACTIVATES; the S2.2 "level never activates" blocker is resolved
+
+The blocker's premise was false: the bsp-header relocate's write always
+landed (earlier probes read one word short — `bsp` is at ref+44 because the
+level's inline kheap is 16-byte aligned at mem+32; the "loading-level"
+0x3fdd674 with the zero heap is the `level-default` slot).  The live status
+trace (corrected offsets) shows village1 completing `'loading -> 'login ->
+'loaded` with the bsp set; it then waits for START on the title screen.
+The headless shell had NO input path (scePadRead's input manager is null),
+and the title intro can never play because iso_data contains no STR files
+(the spooled logo/ndi animations never reach 'active).  Fixes (runtime and
+shell only, no game-source changes): a synthetic pad bridge
+(taps/clicks/keys + file triggers press START; verified `rel0=0x8` edge on
+cpad0 in GOAL), an EE-thread `(bg 'village1)` driver (the game's own
+debug boot-to-level entry) once village1 is preloaded, `(-> *level* play?)
+= #f` (the genuine bg-flow state; with play? #t the no-VIS "in between
+vis" branch leaves vis-bits zero forever), and `*artist-all-visible* = #t`
+(the engine's artist toggle; the camera sits inside village1's boxes, so
+cam-update otherwise takes the update-vis! branch that cannot succeed
+without VIS data).  Verified live, zero faults: village1 `'active`
+(bsp=0x2ef80d4), the title level discarded, background-work fills every
+frame (tfrag-count=1, tie-count=3 — the bsp's trees), the restored tie-ln
+runs with vis0=0xffffffff.  The remaining S2.2 gap is renderer-side only:
+the VU1 interpreter runs the tfrag chains (2080 runs/period) but emits
+zero GIF output (frag list empty at top=0), and the tie microcode
+(tie.txt) is not embedded yet — Track B steps 2–4 in s22-reorientation.md.
+Evidence: docs/evidence/S2/s22-bot22-level-activation.md.
+
 ## 2026-08-16 update (BOT21c) — mips2c ln restored; the game's tfrag draw pipeline now runs
 
 The far `(draw-inline-array-tfrag ...)` calls in goal_src tfrag-methods.gc

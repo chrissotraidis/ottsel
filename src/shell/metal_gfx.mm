@@ -18,6 +18,9 @@
 #include "common/dma/gs.h"
 
 #include "metal_shell.h"
+
+// BOT22: synthetic pad press state (defined in game/sce/libpad.cpp).
+extern int g_ottsel_synthetic_frames;
 #include "tfrag_microcode.h"
 #include "generic_microcode.h"
 
@@ -927,6 +930,21 @@ void gfx_send_chain(const void* data, u32 offset) {
                g_raster.fb_w, g_raster.fb_h);
     }
   }
+  // BOT22c: per-boundary VU1/raster stats so the post-activation pipeline is
+  // visible (the old 20-run VU1 log cap exhausted during loading).  Also
+  // refill a small PRIM log budget each boundary.
+  static u32 g_vu1_runs_period = 0;
+  static u32 g_vu1_nonzero_period = 0;
+  static u64 g_vu1_gifwords_period = 0;
+  if (g_chain_no % 90 == 0) {
+    lg::info("OTTSEL VU1STAT: chain={} vu1-runs={} nonzero-gif={} gif-words={} draws={}",
+             g_chain_no, g_vu1_runs_period, g_vu1_nonzero_period, g_vu1_gifwords_period,
+             g_raster.draw_count);
+    g_vu1_runs_period = 0;
+    g_vu1_nonzero_period = 0;
+    g_vu1_gifwords_period = 0;
+    g_dec.prims_logged = g_dec.prims_logged > 8 ? g_dec.prims_logged - 8 : 0u;
+  }
   // S2.2 BOT20: keep the last decoded texture on screen (the game uploads
   // tpages continuously; the composed-raster path is not drawing yet).  This
   // gives a persistent visible frame instead of the clear color.
@@ -1142,6 +1160,11 @@ void gfx_send_chain(const void* data, u32 offset) {
                    "frag[0..2]=0x{:x}/0x{:x}/0x{:x}",
                    ottsel_vu1_runs, v.immediate, g_vu_top, g_vu.pc, g_vu.gif_out.size(),
                    g_vu.data[0 * 4], g_vu.data[1 * 4], g_vu.data[2 * 4]);
+        }
+        g_vu1_runs_period++;
+        if (!g_vu.gif_out.empty()) {
+          g_vu1_nonzero_period++;
+          g_vu1_gifwords_period += g_vu.gif_out.size();
         }
         if (!g_vu.gif_out.empty()) {
           decode_gif_packets((const u8*)g_vu.gif_out.data(),
@@ -1413,6 +1436,77 @@ void gfx_send_chain(const void* data, u32 offset) {
                  " tie0@480=0x{:x}",
                  bw, *(u32*)(g_ee_main_mem + bw), *(u32*)(g_ee_main_mem + bw + 4),
                  *(u32*)(g_ee_main_mem + bw + 476), *(u32*)(g_ee_main_mem + bw + 480));
+      }
+    }
+    // BOT22: per-frame level status sampler.  Ground truth from the level
+    // deftype: the inline kheap is 16-aligned at mem+32, so from the slot's
+    // MEM start: name@+4, index@+16, status@+20, heap@+32..48, bsp@+48.
+    // loading-level is level-group ref+8; slots start at grp_ref+92, each
+    // 0xa30.  Statuses are decoded by interned symbol address.
+    {
+      static u32 ottsel_ls_samples = 0;
+      ottsel_ls_samples++;
+      if (g_ee_main_mem && (ottsel_ls_samples % 1500) == 0) {
+        auto lvs = g_pc_port_funcs.intern_from_c("*level*");
+        auto dps = g_pc_port_funcs.intern_from_c("*dproc*");
+        u32 grp = 0, dproc = 0;
+        if (lvs.offset) memcpy(&grp, g_ee_main_mem + lvs.offset, 4);
+        if (dps.offset) memcpy(&dproc, g_ee_main_mem + dps.offset, 4);
+        if (grp >= 0x080000 && grp < 0x08000000) {
+          static const char* kStatusNames[8] = {"inactive", "loading",  "loading-bt",
+                                                "loading-done", "loaded", "login",
+                                                "alive",    "active"};
+          static u32 status_syms[8] = {0};
+          if (!status_syms[0]) {
+            for (int i = 0; i < 8; i++) {
+              status_syms[i] = g_pc_port_funcs.intern_from_c(kStatusNames[i]).offset;
+            }
+          }
+          auto decode = [&](u32 v) -> const char* {
+            for (int i = 0; i < 8; i++) {
+              if (v == status_syms[i]) return kStatusNames[i];
+            }
+            return "?";
+          };
+          u32 ll = *(u32*)(g_ee_main_mem + grp + 8);
+          char buf[256];
+          int n = 0;
+          for (int slot = 0; slot < 3 && n < (int)sizeof(buf) - 48; slot++) {
+            u32 so = grp + 92 + slot * 0xa30;  // slot MEM start
+            u32 st = *(u32*)(g_ee_main_mem + so + 20);
+            u32 bsp = *(u32*)(g_ee_main_mem + so + 48);
+            n += snprintf(buf + n, sizeof(buf) - n, "slot%d=%s bsp=0x%x ", slot, decode(st), bsp);
+          }
+          lg::info("OTTSEL LEVELSTAT: {}loading-level=0x{:x} dproc=0x{:x}", buf, ll, dproc);
+        }
+      }
+    }
+    // BOT22b: after a synthetic press, densely log the GOAL-visible cpad0
+    // state (valid, button0 raw, abs[0], rel[0]) + *master-mode* so the
+    // edge path (scePadRead -> service-cpads -> cpad-pressed?) is verified.
+    {
+      static int ottsel_pad_watch = 0;
+      static u32 ottsel_pw_div = 0;
+      if (g_ottsel_synthetic_frames > 0) ottsel_pad_watch = 600;
+      if (ottsel_pad_watch > 0 && g_ee_main_mem) {
+        ottsel_pad_watch--;
+        if ((++ottsel_pw_div % 15) == 0) {
+          auto cls = g_pc_port_funcs.intern_from_c("*cpad-list*");
+          auto mms = g_pc_port_funcs.intern_from_c("*master-mode*");
+          u32 cl = 0, mm = 0;
+          if (cls.offset) memcpy(&cl, g_ee_main_mem + cls.offset, 4);
+          if (mms.offset) memcpy(&mm, g_ee_main_mem + mms.offset, 4);
+          if (cl >= 0x080000 && cl < 0x08000000) {
+            u32 pad0 = *(u32*)(g_ee_main_mem + cl + 4);
+            if (pad0 >= 0x080000 && pad0 < 0x08000000) {
+              lg::info("OTTSEL PADSTAT: valid=0x{:x} button0=0x{:x} abs0=0x{:x} rel0=0x{:x} "
+                       "master-mode=0x{:x} synth-left={}",
+                       *(u8*)(g_ee_main_mem + pad0 + 0), *(u16*)(g_ee_main_mem + pad0 + 2),
+                       *(u32*)(g_ee_main_mem + pad0 + 40), *(u32*)(g_ee_main_mem + pad0 + 56),
+                       mm, g_ottsel_synthetic_frames);
+            }
+          }
+        }
       }
     }
     // BOT21i: after the level load, read the linked village1-vis object
