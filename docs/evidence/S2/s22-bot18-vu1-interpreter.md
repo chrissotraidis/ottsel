@@ -68,6 +68,24 @@ microcode loops on synthetic data (no XGKICK reached) until the real entry
   The interpreter now runs the full microcode on the real dump without
   crashing (pc=127 = instruction cap on the synthetic frag count).
 
+## BOT18c update (same day) — VIF semantics resolved; frag-list question
+
+- The VIF UNPACK dest = (imm & 0x8000 ? TOPS : 0) + (imm & 0x3ff) -- all
+  observed imms have bit15=0, so the dests ARE absolute (5, 0x14d, 0x290,
+  0x160, 0x381, 0x384, 0x3d4).  A scan of 82k records confirms only those 7
+  addresses are ever written.
+- MSCAL/MSCALF starts the VU at imm*2 instructions: all draws use imm=0, so
+  the VU starts at pc 0 (the jump table) -> `b L11` -> the strip path with
+  vi14 = 0x2a0.  The trace confirms this path (L11 setup, L12 count/pointer
+  reads, L14 vertex transform, JR back to the caller).
+- The frag data at 0x160/0x381/0x384/0x3d4 = the vertex batch (139 qwords,
+  (0,0,0,-1792) patterns), the 10-qword per-draw block, and two frag/page
+  batches.  vi14 = 0x2a0 (the frag-list base) is NEVER written by any unpack
+  in the capture -- the frag list (count + vertex-list pointers) must be
+  written by the game outside the VIF chain (likely the tfrag-work's
+  scratchpad path or a boot-time write).  Locating that write is the next
+  open question before the XGKICK output can be captured.
+
 ## Files
 
 - `tools/ottsel_vu1/` (interpreter + loader).
