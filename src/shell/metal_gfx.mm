@@ -716,6 +716,14 @@ void decode_gif_packets(const u8* g, u32 size, OttselGifDecoder& dec) {
       reg_desc[i] = tag.reg(i);
     }
     if (tag.flg() == GifTag::Format::PACKED) {
+      static u32 ottsel_pkt_logged = 0;
+      if (ottsel_pkt_logged < 6) {
+        ottsel_pkt_logged++;
+        lg::info("OTTSEL PKT: chain={} off={} nloop={} nreg={} pre={} prim={:#x} tag0={:016x} "
+                 "tag1={:016x}",
+                 dec.chain_no, offset - 16, tag.nloop(), nreg, (int)tag.pre(), tag.prim(),
+                 *(u64*)(g + offset - 16), *(u64*)(g + offset - 8));
+      }
       if (tag.pre()) {
         dec.on_prim_start(tag.prim());
       }
