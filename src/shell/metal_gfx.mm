@@ -1114,6 +1114,29 @@ void gfx_texture_upload_now(const u8* tpage, int mode, u32 s7_ptr) {
   if (!g_metal || !tpage) {
     return;
   }
+  // Probe: the village-load fault is a null call in the string library
+  // (caller resolved to string-get-int32!!).  Check the string function
+  // symbol values for a 0 (unlinked) symbol.
+  {
+    static bool ottsel_str_dumped = false;
+    if (!ottsel_str_dumped) {
+      ottsel_str_dumped = true;
+      const char* names[] = {"string-get-int32!!", "string-get-arg!!", "string->int",
+                             "string->float",      "string-char",      "string-length"};
+      for (const char* nm : names) {
+        auto info = g_pc_port_funcs.intern_from_c(nm);
+        u32 v = 0;
+        if (info.offset) {
+          memcpy(&v, g_ee_main_mem + info.offset, 4);
+        }
+        u32 v4 = 0;
+        if (info.offset) {
+          memcpy(&v4, g_ee_main_mem + info.offset + 4, 4);
+        }
+        lg::info("OTTSEL STRPROBE: {} sym=0x{:x} val0=0x{:x} val4=0x{:x}", nm, info.offset, v, v4);
+      }
+    }
+  }
   // Probe: dump the tfrag-vu1-block vu-function header (length/origin/qlength)
   // so the VU1 entry address can be computed from ground truth.
   {

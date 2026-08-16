@@ -66,17 +66,13 @@ static int load_dump(const char* path, Vu1State& st, std::vector<int>& mscals) {
     if (off + size > buf.size()) {
       break;
     }
-    // The init (mtx-0=5, mtx-1=0x14d, tfrag-data=0x290) uses absolute
-    // addresses; the per-draw unpacks are offsets from the VIF data base
-    // (TOP - OFST = 0x2a0, the microcode's vi14).
-    // The init (mtx-0/1, tfrag-data at 5/0x14d/0x290) is absolute; the
-    // per-draw batches land at the VIF base + imm (base = TOP = 0x2a0).
+    // S2.2 BOT18c: the VIF UNPACK dest = (imm & 0x8000 ? TOPS : 0) +
+    // (imm & 0x3ff); all observed imms have bit15 = 0, so every destination
+    // is ABSOLUTE VU data memory (5, 0x14d, 0x290, 0x160, 0x381, 0x384,
+    // 0x3d4).  The earlier 0x2a0 + (imm & 0x3ff) mapping misplaced every
+    // per-draw batch and left the frag-list area empty.
     uint32_t dest = imm;
-    if (imm == 0x5 || imm == 0x14d || imm == 0x290) {
-      dest = imm;
-    } else {
-      dest = 0x2a0 + (imm & 0x3ff);
-    }
+    dest = imm & 0x3ff;
     if (dest < kDataQwords && num <= 256 && size <= (kDataQwords - (int)dest) * 16) {
       memcpy(&st.data[dest * 4], buf.data() + off, size);
     }
@@ -106,26 +102,34 @@ int main(int argc, char** argv) {
     printf("no dump; synthetic data only\n");
     mscals.push_back(0);
   }
-  // The L3 draw case (pc=8, `b L3`) has the delay slot `xtop vi14`: the frag
-  // base = the VIF TOP register.  With TOP = 0x2a0 the per-draw batches land
-  // at TOP + imm (vertex list at 0x400).  Craft the frag-list header at TOP.
   set_top(0x2a0);
   st.pc = 8;
-  // Frag list at vi14 = 0x2a0: word0>>16 = count, word1>>16 = vertex offset.
-  st.data[0x2a0 * 4 + 0] = 0x00010000;  // count = 1
-  st.data[0x2a1 * 4 + 0] = 0x01600000;  // vertex list at 0x2a0 + 0x160 = 0x400
-  // Fan path pointers (L26/L37 read vi14+2/+3/+4 as page-data pointers and
-  // access them at +0x148, landing on the real page batches at 0x674/0x624).
-  st.data[0x2a2 * 4 + 0] = 0x052c0000;  // 0x52c + 0x148 = 0x674 (the 0x3d4 batch)
-  st.data[0x2a3 * 4 + 0] = 0x04dc0000;  // 0x4dc + 0x148 = 0x624 (the 0x384 batch)
-  st.data[0x2a4 * 4 + 0] = 0x04dc0000;
-  // Per-frag matrix at vi14+5..+8 (identity, w = 1).
-  float mtx[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-  memcpy(&st.data[0x2a5 * 4], mtx, 16);
-  // A real vertex quad at 0x400 (the base+0x160 vertex list).
-  float verts[16] = {-100, 0, -100, 1, 100, 0, -100, 1,
-                     -100, 0, 100,  1, 100, 0, 100,  1};
-  memcpy(&st.data[0x400 * 4], verts, 16);
+  // S2.2 (2026-08-15): with a real dump, use the REAL frag-list header at
+  // TOP (vi14 = 0x2a0) instead of the synthetic one, so the XGKICK output is
+  // produced from the village's actual tfrag batches.
+  if (dump) {
+    printf("real frag list at 0x2a0..0x2a8:\n");
+    for (int i = 0; i < 12; i++) {
+      printf("  [0x%x] = 0x%08x\n", 0x2a0 + i, st.data[(0x2a0 + i) * 4]);
+    }
+    printf("page batches at 0x674/0x624 (frag ptrs +0x148):\n");
+    for (int i = 0; i < 16; i++) {
+      printf("  [0x674+%d] = 0x%08x\n", i, st.data[(0x674 + i) * 4]);
+    }
+  } else {
+    // Synthetic fallback: frag list count=1, vertex list at 0x400, identity
+    // matrix, and a real vertex quad.
+    st.data[0x2a0 * 4 + 0] = 0x00010000;  // count = 1
+    st.data[0x2a1 * 4 + 0] = 0x01600000;  // vertex list at 0x2a0 + 0x160 = 0x400
+    st.data[0x2a2 * 4 + 0] = 0x052c0000;  // 0x52c + 0x148 = 0x674
+    st.data[0x2a3 * 4 + 0] = 0x04dc0000;  // 0x4dc + 0x148 = 0x624
+    st.data[0x2a4 * 4 + 0] = 0x04dc0000;
+    float mtx[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    memcpy(&st.data[0x2a5 * 4], mtx, 16);
+    float verts[16] = {-100, 0, -100, 1, 100, 0, -100, 1,
+                       -100, 0, 100,  1, 100, 0, 100,  1};
+    memcpy(&st.data[0x400 * 4], verts, 16);
+  }
   ottsel_vu1_set_readlog(0);
   execute(st, 200000);
   printf("executed; pc=%d gif_out_words=%zu\n", st.pc, st.gif_out.size());

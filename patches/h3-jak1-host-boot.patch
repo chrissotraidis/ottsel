@@ -2770,10 +2770,10 @@ index 04e91eb0a..22bccf3e4 100644
 +}  // namespace Mips2C
 diff --git a/game/ottsel_cgolink_dump.cpp b/game/ottsel_cgolink_dump.cpp
 new file mode 100644
-index 000000000..f95205829
+index 000000000..d54973dbf
 --- /dev/null
 +++ b/game/ottsel_cgolink_dump.cpp
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,279 @@
 +// Ottsel S2.1 debug (TEMPORARY): host-side replica of the Simulator's
 +// no-emit KERNEL.CGO + GAME.CGO link, then dump the linked code at fixed
 +// EE offsets.  The Simulator fault trace (s21-cf-boot.log) shows:
@@ -2880,6 +2880,69 @@ index 000000000..f95205829
 +  }
 +}
 +
++// S2.2 (2026-08-15): resolve a Simulator code lr to the linked GOAL function
++// by scanning the FULL symbol table (the simulator's gated-handler scan was
++// limited to s7 +/- 0x4000 slots and may have missed the real caller).
++void resolve_sim_lr(u32 sim_lr) {
++  // The no-emit code region (0x3ebc000..0x4ee0000) links at the SAME base
++  // host-side as on the Simulator; the -0x40000 offset only applied to the
++  // earlier low-address (0x1fxxxx) kernel dumps.
++  const u32 host_lr = sim_lr;
++  const u32 code_lo = 0x3ebc000;
++  const u32 code_hi = 0x4ee0000;
++  u32 best = 0;
++  u32 best_slot = 0;
++  u32 next = 0xffffffff;
++  u32 next_slot = 0;
++  printf("===== resolve_sim_lr(0x%08x) host_lr=0x%08x =====\n", sim_lr, host_lr);
++  printf("SymbolTable2=0x%08x LastSymbol=0x%08x s7=0x%08x\n", SymbolTable2.offset,
++         LastSymbol.offset, s7.offset);
++  for (u32 slot = SymbolTable2.offset; slot < LastSymbol.offset; slot += 8) {
++    u32 v = *(u32*)(g_ee_main_mem + slot);
++    if (v >= code_lo && v < code_hi) {
++      if (v <= host_lr && v > best) {
++        best = v;
++        best_slot = slot;
++      }
++      if (v > host_lr && v < next) {
++        next = v;
++        next_slot = slot;
++      }
++    }
++  }
++  if (best_slot) {
++    auto bsym = Ptr<jak1::Symbol>(best_slot);
++    printf("caller: best=0x%08x slot=0x%08x name=\"%s\"\n", best, best_slot,
++           jak1::info(bsym)->str->data());
++  } else {
++    printf("caller: no symbol <= lr found\n");
++  }
++  if (next_slot) {
++    auto nsym = Ptr<jak1::Symbol>(next_slot);
++    printf("next fn: 0x%08x slot=0x%08x name=\"%s\" (caller body 0x%x..0x%x)\n", next, next_slot,
++           jak1::info(nsym)->str->data(), best, next);
++  }
++  dump_region(host_lr - 0x80, 0x120, "host code around lr");
++  // List every string-* symbol and its linked value, to show which kernel
++  // string primitives are null (unlinked) vs present.
++  printf("===== string-* symbol values =====\n");
++  for (u32 slot = SymbolTable2.offset; slot < LastSymbol.offset; slot += 8) {
++    u32 v = *(u32*)(g_ee_main_mem + slot);
++    auto inf = jak1::info(Ptr<jak1::Symbol>(slot));
++    if (!inf->hash) {
++      continue;  // open slot
++    }
++    if (!inf->str.offset || inf->str.offset >= 0x7ffffff) {
++      continue;  // garbage/empty name pointer
++    }
++    auto sym = Ptr<jak1::Symbol>(slot);
++    const char* nm = jak1::info(sym)->str->data();
++    if (nm && !strncmp(nm, "string-", 7)) {
++      printf("0x%08x val=0x%08x name=\"%s\"\n", slot, v, nm);
++    }
++  }
++}
++
 +}  // namespace
 +
 +// The host runtime's mips2c_table.cpp now guards the jak1 table +
@@ -2931,6 +2994,15 @@ index 000000000..f95205829
 +
 +  link_cgo_from_disk((iso_dir + "/KERNEL.CGO").c_str());
 +  link_cgo_from_disk((iso_dir + "/GAME.CGO").c_str());
++
++  // S2.2 (2026-08-15): village-load null-call fault at sim lr=0x3eec878.
++  resolve_sim_lr(0x3eec878);
++  // Caller-chain candidates from the fault-time stack (the faulting
++  // enter-state was reached from this region).
++  resolve_sim_lr(0x3fdc214);
++  resolve_sim_lr(0x3ed1c74);
++  resolve_sim_lr(0x46106f0);
++  resolve_sim_lr(0x46135c0);
 +
 +  // Layout sanity: this host-side link places the KERNEL objects 0x40000
 +  // lower than the Simulator boot (the iOS build consumes an extra
@@ -5520,7 +5592,7 @@ index 27cbcc8c1..e2eec60e9 100644
   * Divide (idiv, 32 bit)
   */
 diff --git a/goalc/emitter/IGenARM64.cpp b/goalc/emitter/IGenARM64.cpp
-index 1180f722d..7ad095610 100644
+index 1180f722d..d0bf19782 100644
 --- a/goalc/emitter/IGenARM64.cpp
 +++ b/goalc/emitter/IGenARM64.cpp
 @@ -90,6 +90,19 @@ InstructionARM64 mov_gpr64_gpr64(Register dst, Register src) {
@@ -6289,7 +6361,26 @@ index 1180f722d..7ad095610 100644
  }
  
  //;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-@@ -2472,17 +2640,17 @@ InstructionARM64 loadvf_gpr64_plus_gpr64(Register dst, Register addr1, Register
+@@ -2459,7 +2627,17 @@ InstructionARM64 mov_vf_vf(Register dst, Register src) {
+   // 1 	16B
+   ASSERT(dst.is_128bit_simd(instr_set));
+   ASSERT(src.is_128bit_simd(instr_set));
+-  return InstructionARM64(Base(0b0100111010100000000111, 22), Rd(dst.id()), Rn(src.id()));
++  // S2.2 (2026-08-15): the MOV idiom is ORR Vd.16B, Vn.16B, Vn.16B -- BOTH
++  // source fields must be Vn.  Leaving Rm=0 emitted ORR Vd, Vn, V0, OR-ing
++  // every 128-bit register copy with the stale XMM return register V0
++  // (res-lump get-property-value's uint128 default got OR-ed with a res-tag
++  // pointer; entity-nav-login passed that garbage length to engine-new, the
++  // allocation size exploded, object-new returned 0, and the new method
++  // faulted writing fields at EE+6).
++  return InstructionARM64(Base(0b0100111010100000000111, 22),
++                          Rm(src.id()),
++                          Rd(dst.id()),
++                          Rn(src.id()));
+ }
+ 
+ InstructionARM64 loadvf_gpr64_plus_gpr64(Register dst, Register addr1, Register addr2) {
+@@ -2472,17 +2650,17 @@ InstructionARM64 loadvf_gpr64_plus_gpr64(Register dst, Register addr1, Register
    ASSERT(addr1 != addr2);
    ASSERT(addr1 != SP);
    ASSERT(addr2 != SP);
@@ -6312,7 +6403,7 @@ index 1180f722d..7ad095610 100644
    ASSERT(dst.is_128bit_simd(instr_set));
    ASSERT(addr1.is_gpr(instr_set));
    ASSERT(addr2.is_gpr(instr_set));
-@@ -2490,8 +2658,28 @@ InstructionARM64 loadvf_gpr64_plus_gpr64_plus_s8(Register dst,
+@@ -2490,8 +2668,28 @@ InstructionARM64 loadvf_gpr64_plus_gpr64_plus_s8(Register dst,
    ASSERT(addr1 != SP);
    ASSERT(addr2 != SP);
    ASSERT(offset >= INT8_MIN && offset <= INT8_MAX);
@@ -6343,7 +6434,7 @@ index 1180f722d..7ad095610 100644
  }
  
  InstructionARM64 loadvf_gpr64_plus_gpr64_plus_s32(Register dst,
-@@ -2537,7 +2725,9 @@ InstructionARM64 storevf_gpr64_plus_gpr64(Register value, Register addr1, Regist
+@@ -2537,7 +2735,9 @@ InstructionARM64 storevf_gpr64_plus_gpr64(Register value, Register addr1, Regist
    ASSERT(addr2 != SP);
    // https://www.scs.stanford.edu/~zyedidia/arm64/str_reg_fpsimd.html
    // STR <Qt>, [<Xn|SP>, (<Wm>|<Xm>){, <extend> {<amount>}}]
@@ -6354,7 +6445,7 @@ index 1180f722d..7ad095610 100644
                            Rm(addr2.id()));
  }
  
-@@ -2609,8 +2799,6 @@ InstructionARM64 storevf_gpr64_plus_gpr64_plus_s32(Register value,
+@@ -2609,8 +2809,6 @@ InstructionARM64 storevf_gpr64_plus_gpr64_plus_s32(Register value,
  
  InstructionARM64 loadvf_rip_plus_s32(Register dest, s64 offset) {
    ASSERT(dest.is_128bit_simd(instr_set));
@@ -6363,7 +6454,7 @@ index 1180f722d..7ad095610 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -2635,19 +2823,80 @@ InstructionARM64 shuffle_vf(Register dst, Register src, u8 dx, u8 dy, u8 dz, u8
+@@ -2635,19 +2833,80 @@ InstructionARM64 shuffle_vf(Register dst, Register src, u8 dx, u8 dy, u8 dz, u8
    return InstructionARM64(0b0);
  }
  
@@ -6448,7 +6539,7 @@ index 1180f722d..7ad095610 100644
        break;
      default:
        ASSERT(false);
-@@ -2687,18 +2936,20 @@ InstructionARM64 mul_vf(Register dst, Register src1, Register src2) {
+@@ -2687,18 +2946,20 @@ InstructionARM64 mul_vf(Register dst, Register src1, Register src2) {
  }
  
  InstructionARM64 max_vf(Register dst, Register src1, Register src2) {
@@ -6477,7 +6568,7 @@ index 1180f722d..7ad095610 100644
                            Rd(dst.id()));
  }
  
-@@ -2739,8 +2990,9 @@ InstructionARM64 pw_sra(Register dst, Register src, u8 imm) {
+@@ -2739,8 +3000,9 @@ InstructionARM64 pw_sra(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/sshr_advsimd.html
    // - vector, 4S
    // SSHR <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -6488,7 +6579,7 @@ index 1180f722d..7ad095610 100644
  }
  
  // - logical_shift_right_32bit_vf
-@@ -2748,8 +3000,9 @@ InstructionARM64 pw_srl(Register dst, Register src, u8 imm) {
+@@ -2748,8 +3010,9 @@ InstructionARM64 pw_srl(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/ushr_advsimd.html
    // - vector, 4S
    // USHR <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -6499,7 +6590,7 @@ index 1180f722d..7ad095610 100644
  }
  
  // - logical_shift_left_32bit_vf
-@@ -2757,8 +3010,9 @@ InstructionARM64 pw_sll(Register dst, Register src, u8 imm) {
+@@ -2757,8 +3020,9 @@ InstructionARM64 pw_sll(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/shl_advsimd.html
    // - vector, 4S
    // SHL <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -6510,7 +6601,7 @@ index 1180f722d..7ad095610 100644
  }
  
  // - logical_shift_right_16bit_vf
-@@ -2766,8 +3020,9 @@ InstructionARM64 ph_srl(Register dst, Register src, u8 imm) {
+@@ -2766,8 +3030,9 @@ InstructionARM64 ph_srl(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/ushr_advsimd.html
    // - vector, 8H
    // USHR <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -6521,7 +6612,7 @@ index 1180f722d..7ad095610 100644
  }
  
  // - logical_shift_left_16bit_vf
-@@ -2775,8 +3030,9 @@ InstructionARM64 ph_sll(Register dst, Register src, u8 imm) {
+@@ -2775,8 +3040,9 @@ InstructionARM64 ph_sll(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/shl_advsimd.html
    // - vector, 8H
    // SHL <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -7966,10 +8057,10 @@ index 000000000..4ab428bfa
 +}
 diff --git a/tools/ottsel_a1/semantic_regressions.cpp b/tools/ottsel_a1/semantic_regressions.cpp
 new file mode 100644
-index 000000000..052c757ff
+index 000000000..b66b0ac45
 --- /dev/null
 +++ b/tools/ottsel_a1/semantic_regressions.cpp
-@@ -0,0 +1,932 @@
+@@ -0,0 +1,952 @@
 +// Ottsel A1.0 semantic ARM64 regression harness.
 +//
 +// The emission validator proves only that words decode as legal A64
@@ -8361,6 +8452,26 @@ index 000000000..052c757ff
 +    const int64_t add_result = int64_t(-65536) + int64_t(0);
 +    check(and_result == 0 && add_result != 0,
 +          "AND(-65536,0)=0 selects the no-eye branch; ADD would enter the eye path");
++  }
++
++  // 23. mov_vf_vf is the ARM64 MOV idiom ORR Vd.16B, Vn.16B, Vn.16B.  The
++  // encoder set Rn but left Rm=0, emitting ORR Vd, Vn, V0 -- every 128-bit
++  // register copy OR-ed with the stale XMM return register V0.  In the S2.2
++  // village load, res-lump get-property-value's default (uint128 arg in V1)
++  // was OR-ed with V0 (a res-tag pointer), entity-nav-login passed that
++  // garbage length to engine-new, the allocation size became enormous,
++  // object-new returned 0, and engine-new faulted writing fields at EE+6.
++  {
++    auto ins = IGen::ARM64::mov_vf_vf(emitter::V8, emitter::V1);
++    u32 w = ins.encodings[ins.count - 1];
++    u32 rm = (w >> 16) & 0x1F;
++    u32 rn = (w >> 5) & 0x1F;
++    check((w & 0xFFE0FC00) == 0x4EA01C00 && rm == rn,
++          "mov_vf_vf emits ORR Vd,Vn,Vn (MOV idiom; Rm==Rn, was ORR with V0)");
++    if ((w & 0xFFE0FC00) != 0x4EA01C00 || rm != rn) {
++      std::cout << "    word=0x" << std::hex << w << std::dec << " rm=" << rm << " rn=" << rn
++                << "\n";
++    }
 +  }
 +}
 +

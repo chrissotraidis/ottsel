@@ -149,6 +149,18 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
   raw_write_hex(uc->uc_mcontext->__ss.__x[2]);
   raw_write_lit(" x3=");
   raw_write_hex(uc->uc_mcontext->__ss.__x[3]);
+  raw_write_lit(" x4=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[4]);
+  raw_write_lit(" x5=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[5]);
+  raw_write_lit(" x6=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[6]);
+  raw_write_lit(" x7=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[7]);
+  raw_write_lit(" x8=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[8]);
+  raw_write_lit(" x19=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[19]);
   raw_write_lit(" x16=");
   raw_write_hex(uc->uc_mcontext->__ss.__x[16]);
   raw_write_lit(" x20=");
@@ -157,6 +169,20 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
   raw_write_hex(uc->uc_mcontext->__ss.__x[21]);
   raw_write_lit(" x22=");
   raw_write_hex(uc->uc_mcontext->__ss.__x[22]);
+  raw_write_lit(" x23=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[23]);
+  raw_write_lit(" x24=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[24]);
+  raw_write_lit(" x25=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[25]);
+  raw_write_lit(" x26=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[26]);
+  raw_write_lit(" x27=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[27]);
+  raw_write_lit(" x28=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[28]);
+  raw_write_lit(" x30=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[30]);
   raw_write_lit("\n");
   // S2.1 (2026-08-10, dispatcher pc=0 probe): dump the frame region ABOVE
   // the fault-time sp.  For a down-growing stack the caller frames (saved
@@ -818,6 +844,182 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
   }
   // These broad stack/probe dumps were useful during the earlier rfn fault,
   // but are not async-signal-safe enough for arbitrary later faults.
+  // S2.2 (2026-08-15, village-load null-call): resolve the faulting caller
+  // (lr, a GOAL code address) to a symbol name by scanning the FULL interned
+  // symbol table for the nearest-below AND nearest-above function symbols.
+  // Also resolve other code-region values seen on the fault stack so the
+  // caller chain (who passed the null function pointer) is named.
+  {
+    const uintptr_t flr = uc->uc_mcontext->__ss.__lr;
+    const u32 lr_off = (u32)(flr - (uintptr_t)g_ee_main_mem);
+    const u32 code_lo = 0x3ebc000;
+    const u32 code_hi = 0x4ee0000;
+    const u32 s7_val = s7.offset;
+    const u32 queries[] = {lr_off,
+                           (u32)uc->uc_mcontext->__ss.__x[0],
+                           0x3ebf9a4,
+                           0x46135c0,
+                           0x43c4f80,
+                           0x3fdc214,
+                           0x3ed1c74,
+                           0x46106f0,
+                           0x4610004};
+    for (u32 q : queries) {
+      u32 best = 0;
+      u32 best_slot = 0;
+      u32 next = 0xffffffff;
+      u32 next_slot = 0;
+      for (u32 slot = s7_val - 0x10000; slot < s7_val + 0x20000; slot += 8) {
+        u32 v = 0;
+        if (!safe_read_u32((volatile u32*)(g_ee_main_mem + slot), &v)) {
+          continue;
+        }
+        if (v >= code_lo && v < code_hi) {
+          if (v <= q && v > best) {
+            best = v;
+            best_slot = slot;
+          }
+          if (v > q && v < next) {
+            next = v;
+            next_slot = slot;
+          }
+        }
+      }
+      raw_write_lit("OTTSEL_IOS: sym-scan q=0x");
+      raw_write_hex(q);
+      if (best_slot) {
+        u32 strp = 0;
+        raw_write_lit(" below=0x");
+        raw_write_hex(best);
+        raw_write_lit(" slot=0x");
+        raw_write_hex(best_slot);
+        if (safe_read_u32((volatile u32*)(g_ee_main_mem + best_slot + 0x1fffc + 4), &strp) &&
+            strp && strp < 0x08000000) {
+          raw_write_lit(" name:");
+          for (int i = 0; i < 0x20; i += 4) {
+            u32 w = 0;
+            if (safe_read_u32((volatile u32*)(g_ee_main_mem + strp + (uintptr_t)i), &w)) {
+              raw_write_lit(" ");
+              raw_write_hex(w);
+            }
+          }
+        }
+      } else {
+        raw_write_lit(" below=none");
+      }
+      if (next_slot) {
+        u32 strp = 0;
+        raw_write_lit(" above=0x");
+        raw_write_hex(next);
+        raw_write_lit(" slot=0x");
+        raw_write_hex(next_slot);
+        if (safe_read_u32((volatile u32*)(g_ee_main_mem + next_slot + 0x1fffc + 4), &strp) &&
+            strp && strp < 0x08000000) {
+          raw_write_lit(" name:");
+          for (int i = 0; i < 0x20; i += 4) {
+            u32 w = 0;
+            if (safe_read_u32((volatile u32*)(g_ee_main_mem + strp + (uintptr_t)i), &w)) {
+              raw_write_lit(" ");
+              raw_write_hex(w);
+            }
+          }
+        }
+      }
+      raw_write_lit("\n");
+    }
+  }
+  // S2.2 (2026-08-15, village-load null-call): the faulting caller is
+  // `enter-state` (lr resolved above).  Its compiled body reads the process's
+  // new state from pp+0x34 (state) / pp+0x48 (next-state) and calls
+  // (-> new-state enter) at new-state+0x18, which is 0 at the fault.  Dump
+  // the process + state objects (type names included) from the app's own
+  // memory so the null state/enter can be identified without lldb (which
+  // cannot read the EE mapping reliably).
+  {
+    const u32 ee = 0;
+    const u32 pp_val = (u32)uc->uc_mcontext->__ss.__x[20];
+    raw_write_lit("OTTSEL_IOS: enter-state pp=x20=0x");
+    raw_write_hex(pp_val);
+    raw_write_lit("\n");
+    // Helper lambdas are not async-signal-safe; inline the reads.
+    const u32 slots[] = {0x34, 0x48, 0x28, 0x2c};
+    for (u32 off : slots) {
+      u32 v = 0;
+      if (safe_read_u32((volatile u32*)(g_ee_main_mem + pp_val + off), &v)) {
+        raw_write_lit("OTTSEL_IOS:   pp+0x");
+        raw_write_hex(off);
+        raw_write_lit("=0x");
+        raw_write_hex(v);
+        raw_write_lit("\n");
+      }
+    }
+    u32 pp_type = 0;
+    if (safe_read_u32((volatile u32*)(g_ee_main_mem + pp_val - 4), &pp_type)) {
+      raw_write_lit("OTTSEL_IOS:   pp type-tag=0x");
+      raw_write_hex(pp_type);
+      raw_write_lit("\n");
+      u32 t_sym = 0;
+      if (safe_read_u32((volatile u32*)(g_ee_main_mem + pp_type), &t_sym)) {
+        raw_write_lit("OTTSEL_IOS:   type sym slot=0x");
+        raw_write_hex(t_sym);
+        u32 strp = 0;
+        if (safe_read_u32((volatile u32*)(g_ee_main_mem + t_sym + 0x1fffc + 4), &strp) && strp &&
+            strp < 0x08000000) {
+          raw_write_lit(" name:");
+          for (int i = 0; i < 0x20; i += 4) {
+            u32 w = 0;
+            if (safe_read_u32((volatile u32*)(g_ee_main_mem + strp + (uintptr_t)i), &w)) {
+              raw_write_lit(" ");
+              raw_write_hex(w);
+            }
+          }
+        }
+        raw_write_lit("\n");
+      }
+    }
+    u32 nst = 0;
+    if (safe_read_u32((volatile u32*)(g_ee_main_mem + pp_val + 0x48), &nst)) {
+      const u32 objs[] = {nst, 0};
+      for (u32 obj : objs) {
+        if (!obj || obj >= 0x08000000) {
+          continue;
+        }
+        raw_write_lit("OTTSEL_IOS: state obj 0x");
+        raw_write_hex(obj);
+        raw_write_lit(" fields:");
+        for (int i = -4; i <= 0x28; i += 4) {
+          u32 w = 0;
+          if (safe_read_u32((volatile u32*)(g_ee_main_mem + obj + (uintptr_t)i), &w)) {
+            raw_write_lit(" ");
+            raw_write_hex(w);
+          }
+        }
+        raw_write_lit("\n");
+        u32 otype = 0;
+        if (safe_read_u32((volatile u32*)(g_ee_main_mem + obj - 4), &otype)) {
+          raw_write_lit("OTTSEL_IOS:   state type-tag=0x");
+          raw_write_hex(otype);
+          u32 ts = 0;
+          if (safe_read_u32((volatile u32*)(g_ee_main_mem + otype), &ts) && ts &&
+              ts < 0x08000000) {
+            u32 strp = 0;
+            if (safe_read_u32((volatile u32*)(g_ee_main_mem + ts + 0x1fffc + 4), &strp) && strp &&
+                strp < 0x08000000) {
+              raw_write_lit(" type-name:");
+              for (int i = 0; i < 0x20; i += 4) {
+                u32 w = 0;
+                if (safe_read_u32((volatile u32*)(g_ee_main_mem + strp + (uintptr_t)i), &w)) {
+                  raw_write_lit(" ");
+                  raw_write_hex(w);
+                }
+              }
+            }
+          }
+          raw_write_lit("\n");
+        }
+      }
+    }
+  }
 #if 0
   // S2.1 debug: RAW stack slots (no address filter) so saved x30/x22 values
   // near the faulting frame are visible (the GOAL-relative filter hides

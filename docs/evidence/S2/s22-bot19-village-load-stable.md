@@ -1,0 +1,113 @@
+# S2.2 BOT19: village-load fault chain fixed -- stable full-vis boot, no faults
+
+Date: 2026-08-15.  Status: S2.2 PROGRESS (two falsifiable fixes verified against
+the running app; the renderer still needs the tfrag XGKICK -> VU1 -> raster
+path for the first composed geometry frame).
+
+## Fix 1 (build data regression): the recompiled TIT.DGO was overwritten
+
+Root cause (app-side probes + offline object-header ground truth):
+
+1. The BOT18 full-data commit (`e97d42d`, "bundle the full DGO/CGO game data")
+   copied the retail iso_data DGOs AFTER the recompiled TIT.DGO, so the bundle
+   shipped the RETAIL TIT.DGO (md5 9030e442...) instead of the recompiled one
+   (md5 3e47f065...).  The retail GOAL code objects (title-obs, static-screen)
+   use the PS2 v3 link-block format (first word 0x0), which the no-emit
+   runtime cannot link; the DGO RPC skip test (`tag == 0xffffffff ||
+   tag == 0x4c414f47`) classified them "non-GOAL" and skipped them.
+2. `title-obs.gc` defines the `target-title` state; with the object skipped,
+   the `target-title` symbol value stayed 0 (verified: symbol slot 0x19c8b4,
+   value 0x0, while `enter-state` = 0x3eec2d4).
+3. `(go target-title)` (target-death.gc:148, in target-continue's :code) ran
+   the go-hook: `(set! pp->next-state target-title)` stored 0, then
+   `enter-state` (gstate, 0x3eec2d4) read next-state=0, new-state=0,
+   `(-> new-state enter)` = *(EE+0x18) = 0 != #f, and `blr` to EE+0 faulted
+   (signal 10, pc=0x7000000000, fault addr=0x7000000000).
+
+Fix: `scripts/build-ios.sh` -- the retail DGO copy loop now SKIPS TIT.DGO and
+the recompiled `out/jak1/iso/TIT.DGO` is copied LAST.  Verified: the bundle's
+TIT.DGO md5 = 3e47f065 (recompiled); the boot then passed the title into the
+village load.  This is the same fix as the S2.1 BOT13 milestone, re-applied
+after the BOT18 data-bundling regression.
+
+## Fix 2 (goalc ARM64 emitter): mov_vf_vf OR-ed every 128-bit copy with V0
+
+With the village VIS load flowing, a second fault appeared at
+entity-nav-login: `(new 'loading-level 'engine 'nav-engine
+(res-lump-value arg0 'nav-max-users int :default 32))`:
+
+1. `res-lump-value` expands to res-lump `get-property-value(lump, name, mode,
+   time, default uint128, tag-addr, buf)`; the uint128 default (32) is passed
+   in the XMM arg register V1 per the ARM64 ABI (XMM args start at V1, return
+   in V0).
+2. get-property-value's compiled prologue copies the default with
+   `orr.16b v8, v1, v0` -- the emitter's `mov_vf_vf` encodes the ARM64 MOV
+   idiom `ORR Vd.16B, Vn.16B, Vn.16B` but set Rn only and left Rm=0, so every
+   128-bit register copy became `ORR Vd, Vn, V0` (OR-ed with the stale return
+   register V0).
+3. The default (low half 32) was OR-ed with V0 (a res-tag pointer,
+   0x001920b4); the returned value's low half = 0x001920b4.  entity-nav-login
+   read it via `fmov x3, d0` as the engine-new `length`; the engine-new size
+   `type_size + ((length-1) << 5)` exploded, `object-new` returned 0, and the
+   engine-new method faulted writing the engine fields at EE+6 (signal 10,
+   pc=0x3ffc724, fault addr=0x7000000006, fault-time length register
+   x19=0xce6e6b28001920b4).
+
+Fix: `goalc/emitter/IGenARM64.cpp` `mov_vf_vf` now sets Rm = src (the MOV
+idiom ORR Vd, Vn, Vn).  Regression added in
+`tools/ottsel_a1/semantic_regressions.cpp` (case 23): fails before the fix
+(word 0x4ea01c28, rm=0 rn=1) and passes after (rm==rn).
+
+After the fix, KERNEL.CGO/GAME.CGO/TIT.DGO were recompiled with the fixed
+goalc (full `out/jak1/obj` cache rebuild; verified 159 ORR-mov words in
+GAME.CGO now Rm==Rn; the one remaining Rm!=Rn ORR in collide-mesh is a real
+vector OR, not a copy).
+
+## Verified (one boot, one Simulator, Windowed)
+
+- `ottsel-fault.log` = 0 bytes; app alive 4+ minutes at ~53% CPU (dispatch +
+  render loops active; timestamps advance 51:34 -> 55:20+).
+- Boot sequence: GAME.CGO fully linked -> `GAMEPLAY: enter title` -> `Adding
+  level village1` -> vi1.DGO served (all 55 objects, incl. `village1-vis`
+  7,479,408 bytes, result=DONE) -> `link finish: village1-vis` -> continuous
+  DMA/render activity.
+- 6 texture frames presented through Metal ("presented game frame ...").
+- ~1200 GIF PRIM packets decoded (TRI_STRIP chains 149-151+) but with
+  degenerate/raw vertices (0x70000000/0x90000000 pattern) -- the tfrag
+  XGKICK output still needs the VU1 transform; the rasterizer's draw_count
+  stays 0 and the Simulator window is black (screenshot
+  `s22-bot19-frame1.png`).
+
+## Next step (S2.2 gate: first composed frame)
+
+Wire the tfrag XGKICK output through the VU1 interpreter
+(`tools/ottsel_vu1`, validated to the output-phase divide loop with crafted
+data) into `OttselRaster` in `src/shell/metal_gfx.mm` so the transformed
+strips produce real primitives (draw_count > 0 -> `ottsel_metal_present`).
+The app keeps writing `tfrag-vu-data.bin` (2.3MB captured from this boot) for
+offline XGKICK analysis.
+
+## BOT19c update (same day) — real dump analysis (absolute dests confirmed)
+
+The VU1 tool's dump loader used `0x2a0 + (imm & 0x3ff)` for the per-draw
+records; the BOT18c VIF semantics (dest = (imm & 0x8000 ? TOPS : 0) +
+(imm & 0x3ff), all observed imms bit15=0 -> ABSOLUTE) are now applied in the
+tool.  The real captured layout (8334 records: 4000 DIRECT captures + 3998
+UNPACK_V4_32 + 336 MSCAL imm=0):
+
+- 0x381: the per-draw 10-qword constant block (starts `7f7fffff c1cb7538
+  c37e7538 ffff0018 ...`), 2769 records.
+- 0x384: the frag batch (614 records, `ff000000 ...`).
+- 0x3d4: the page batch (307 records, 41 qwords, `0000def0 ffffd818 ...`).
+- 0x160: the vertex batch (308 records, 139 qwords).
+- 0x2a0..0x2a8 (the microcode's frag-list block: vi14 hardcoded = 0x2a0,
+  count/pointers at +1/+2/+4, camera matrix rows at +5..+8) is NOT written
+  by any captured UNPACK -- the tfrag-data init upload (0x290, once per
+  frame) that carries it falls outside the capture window.  The next app-side
+  probe must capture the frame's INITIAL records (the 0x290 tfrag-data
+  upload) so the interpreter can run the real frag list end-to-end.
+
+The XGKICK output produced by the interpreter (gif_out) then feeds the
+existing OttselRaster; the degenerate PRIM packets currently decoded
+(vertices 0x70000000/0x90000000) come from the raw DIRECT/GIF data and are
+not the VU1-transformed strips.

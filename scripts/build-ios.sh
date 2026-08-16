@@ -218,13 +218,21 @@ for f in "$WORKTREE"/iso_data/jak1/CGO/*.CGO; do
 done
 for f in "$WORKTREE"/iso_data/jak1/DGO/*.DGO; do
   base=$(basename "$f")
-  # S2.1: prefer the recompiled TIT.DGO (no-emit "GOAL"-format title-obs /
-  # static-screen objects define target-title); fall back to the ISO data.
-  if [ "$base" = "TIT.DGO" ] && [ -f "$WORKTREE/out/jak1/iso/TIT.DGO" ]; then
-    cp "$WORKTREE/out/jak1/iso/$base" "$APP/iso_data/DGO/" 2>/dev/null || true
+  # BOT18 regression (2026-08-15): the retail iso_data DGOs use the PS2 v3
+  # object format (first word 0x0), which the no-emit linker cannot process.
+  # TIT.DGO must stay the RECOMPILED one copied after this loop; skip it here
+  # so the retail file cannot overwrite the recompiled TIT.DGO.
+  if [ "$base" = "TIT.DGO" ]; then
+    continue
   fi
   cp "$f" "$APP/iso_data/DGO/" 2>/dev/null || true
 done
+# S2.1 (BOT13): ship the RECOMPILED TIT.DGO (goalc-built, no-emit
+# "GOAL"-magic title-obs/static-screen objects whose top-levels define the
+# title state symbols) LAST so it wins over the retail DGO copy above.
+if [ -f "$WORKTREE/out/jak1/iso/TIT.DGO" ]; then
+  cp "$WORKTREE/out/jak1/iso/TIT.DGO" "$APP/iso_data/DGO/TIT.DGO" 2>/dev/null || true
+fi
 cp "$WORKTREE/iso_data/jak1/VIS/TIT.VIS" "$APP/iso_data/TIT.VIS" 2>/dev/null || true
 plutil -lint "$APP/Info.plist" >/dev/null
 codesign --force --sign - "$APP" >/dev/null 2>&1 || true
