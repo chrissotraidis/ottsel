@@ -945,7 +945,7 @@ void gfx_send_chain(const void* data, u32 offset) {
       lg::info("OTTSEL VIFCTL: chain={} t{} qwc0 v0=0x{:x}(k{}) v1=0x{:x}(k{}) off=0x{:x}",
                g_chain_no, count, t.vif0(), (u32)v0.kind, t.vif1(), (u32)v1.kind, off);
     }
-    if (g_tfrag_dump && g_tfrag_dump_recs < 600 &&
+    if (g_tfrag_dump && g_tfrag_dump_recs < 4000 &&
         (v1.kind == VifCode::Kind::UNPACK_V4_32 || v1.kind == VifCode::Kind::UNPACK_V4_16 ||
          v1.kind == VifCode::Kind::UNPACK_V4_8 || v1.kind == VifCode::Kind::UNPACK_V3_32 ||
          v1.kind == VifCode::Kind::UNPACK_V2_16 || v0.kind == VifCode::Kind::UNPACK_V4_8 ||
@@ -955,7 +955,7 @@ void gfx_send_chain(const void* data, u32 offset) {
       fwrite(rec, 16, 1, g_tfrag_dump);
       fwrite(t.data, t.size_bytes, 1, g_tfrag_dump);
     }
-    if (g_tfrag_dump && g_tfrag_dump_recs < 600 &&
+    if (g_tfrag_dump && g_tfrag_dump_recs < 4000 &&
         (v1.kind == VifCode::Kind::MSCAL || v1.kind == VifCode::Kind::MSCALF ||
          v0.kind == VifCode::Kind::MSCAL || v0.kind == VifCode::Kind::MSCALF)) {
       u32 rec[4] = {0xffffffff, v1.num, v1.immediate, 0};
