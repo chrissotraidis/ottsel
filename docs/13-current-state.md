@@ -1,5 +1,24 @@
 # 13 — Current state (handoff snapshot)
 
+## 2026-08-15 update (BOT16) — S2.2 texture decode verified; composed frame next
+
+The BOT15 "pixel noise" frame is FIXED and verified (one boot, one Simulator,
+Windowed, zero faults).  Root cause: Jak textures are pre-scrambled for a
+128-px PSMCT32 GS upload, so the tpage segment data is not linear texels and
+the CLUT is not found by a heuristic.  Fix (runtime-side only): replay the
+GS upload into a 4 MB fake VRAM (`psmct32_addr(x,y,128) + seg.dest*4`) and
+un-swizzle with the texture's real `clutpsm`/`clut_dest`
+(download_rgba8888 logic).  Real game textures now present through Metal
+(128x64, 128x128, 256x512; on-screen 256x512 tpage 0x408 tex 3 is a coherent
+Jak image — `docs/evidence/S2/s22-bot16-texture-frame.png`).  Added the
+renderer-core VIF/GIF draw-state decoder (register tracking + prim building);
+the title direct bucket draws framebuffer-copy quads and the 3D buckets use
+VIF UNPACK (title-vis-tfrag tpage 0x1a0 uploads, mode=2).  S2.2 full gate
+(composed title frame) needs the direct-bucket rasterizer + the 3D bucket
+renderers; see `docs/reports/2026-08-15-bot16-handoff.md`.
+
+---
+
 ## 2026-08-15 update (BOT14) — S2.2 Metal backend wired; first correct frame pending
 
 S2.1's stable title boot is committed (3d15997).  S2.2 progress this loop: a

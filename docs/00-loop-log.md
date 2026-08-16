@@ -1,5 +1,27 @@
 # 00 — Loop log
 
+## 2026-08-15 — BOT16: S2.2 texture decode verified (first real Jak frame via Metal)
+
+- **Acted:** fixed the BOT15 noise-frame bug.  Jak textures are
+  pre-scrambled for a 128-px PSMCT32 GS upload (texture.gc
+  `upload-vram-data`), so the tpage segment data must be replayed into a
+  4 MB fake VRAM (`psmct32_addr(x,y,128) + seg.dest*4`) and un-swizzled with
+  the texture's real `clutpsm`/`clut_dest` (download_rgba8888 logic).  Also
+  added the renderer-core VIF/GIF draw-state decoder (register tracking +
+  prim building) as the rasterizer foundation.
+- **Verified:** one boot, one Simulator, Windowed, zero faults; title
+  reached and held; real game textures present through Metal (128x64,
+  128x128, 256x512 — on-screen 256x512 tpage 0x408 tex 3 is a coherent Jak
+  image, `s22-bot16-texture-frame.png`).  tpage probe confirms the GOAL
+  texture-page layout; the title direct bucket draws framebuffer-copy quads;
+  title-vis-tfrag (0x1a0) uploads (mode=2).
+- **Honest boundary:** S2.2 full gate NOT passed — the composed title frame
+  needs the direct-bucket rasterizer + the 3D bucket renderers (title-vis
+  tfrag/pris/alpha/water, VIF UNPACK).  No game source patched; nothing
+  committed that is not ROM-safe.
+- **Docs:** evidence `s22-bot16-texture-decode.md` + frame.png/log; BOT16
+  handoff written; STATUS + 13-current-state updated.
+
 ## 2026-08-15 — BOT14: S2.2 Metal Gfx backend wired (first game-driven present)
 
 - **Acted:** implemented + wired a Metal GfxRendererModule
