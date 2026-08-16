@@ -87,7 +87,7 @@ int main(int argc, char** argv) {
     st.data[0x350 * 4 + i * 4 + 3] = 0x3f800000;  // w = 1.0 (float)
   }
   set_top(0x400);
-  st.pc = 0;
+  st.pc = 8;  // MSCAL imm=8 -> the L3 draw case (bal vi15, L12)
   execute(st, 200000);
   printf("executed; pc=%d gif_out_words=%zu\n", st.pc, st.gif_out.size());
   for (size_t i = 0; i < st.gif_out.size() && i < 64; i++) {
