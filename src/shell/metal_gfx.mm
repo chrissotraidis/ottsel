@@ -953,7 +953,12 @@ void gfx_send_chain(const void* data, u32 offset) {
       lg::info("OTTSEL VIFCTL: chain={} t{} qwc0 v0=0x{:x}(k{}) v1=0x{:x}(k{}) off=0x{:x}",
                g_chain_no, count, t.vif0(), (u32)v0.kind, t.vif1(), (u32)v1.kind, off);
     }
-    if (g_tfrag_dump && g_tfrag_dump_recs >= 4000 && g_tfrag_dump_recs < 8000 &&
+    // S2.2 BOT19: capture EVERY UNPACK from the start of the frame.  The
+    // once-per-frame 0x290 tfrag-data init upload writes the frag-list block
+    // at vi14 = 0x2a0 (the VU1 reads count@+1, pointers@+2/+4, matrix rows
+    // @+5..+8); the previous window began at record 4000 (after the DIRECT
+    // captures) and missed it, so the interpreter never saw a real frag list.
+    if (g_tfrag_dump && g_tfrag_dump_recs < 12000 &&
         (v1.kind == VifCode::Kind::UNPACK_V4_32 || v1.kind == VifCode::Kind::UNPACK_V4_16 ||
          v1.kind == VifCode::Kind::UNPACK_V4_8 || v1.kind == VifCode::Kind::UNPACK_V3_32 ||
          v1.kind == VifCode::Kind::UNPACK_V2_16 || v0.kind == VifCode::Kind::UNPACK_V4_8 ||
@@ -963,8 +968,10 @@ void gfx_send_chain(const void* data, u32 offset) {
       fwrite(rec, 16, 1, g_tfrag_dump);
       fwrite(t.data, t.size_bytes, 1, g_tfrag_dump);
     }
-    // Also capture the small DIRECT GIF transfers (possible frag-list data).
-    if (g_tfrag_dump && g_tfrag_dump_recs < 4000 && t.size_bytes <= 256 &&
+    // Also capture the small DIRECT GIF transfers (BOT18e: mostly
+    // uninitialized DMA gaps, kept for reference after the UNPACKs).
+    if (g_tfrag_dump && g_tfrag_dump_recs >= 12000 && g_tfrag_dump_recs < 14000 &&
+        t.size_bytes <= 256 &&
         (v1.kind == VifCode::Kind::DIRECT || v0.kind == VifCode::Kind::DIRECT ||
          v1.kind == VifCode::Kind::DIRECTHL || v0.kind == VifCode::Kind::DIRECTHL ||
          v1.kind == VifCode::Kind::PC_PORT || v0.kind == VifCode::Kind::PC_PORT)) {

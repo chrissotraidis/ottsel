@@ -111,3 +111,19 @@ The XGKICK output produced by the interpreter (gif_out) then feeds the
 existing OttselRaster; the degenerate PRIM packets currently decoded
 (vertices 0x70000000/0x90000000) come from the raw DIRECT/GIF data and are
 not the VU1-transformed strips.
+
+## BOT19d update (same day) — fresh frame capture; frag-list source still open
+
+The dump probe now captures EVERY UNPACK from the frame start (window
+0..12000; the once-per-frame 0x290 tfrag-data init is inside: 1 record,
+224 bytes = 14 qwords, 0x290..0x29e).  Verified dests (V4-32): 5, 0x14d,
+0x290, 0x160, 0x381, 0x384, 0x3d4 -- plus 75 small DIRECT-capture markers
+(imm = 0x80000000 | kind; kind 0x00/0x08/0x50 = the uninitialized DMA gaps).
+
+The frag-list block at the microcode's draw base is still NOT written by any
+captured UNPACK.  The VIF code stream per chain is `MSCAL imm=0` +
+`UNPACK_V4_16 n=10` (the 160-byte per-draw constant block) with an ITOP
+(imm=0) command; the VIF TOP register state that fixes the frag-list base is
+the missing piece.  Next: emulate the VIF registers (TOP/TOPS/STCYCL/ITOP)
+in the tool while replaying the capture so the frag-list address resolves,
+then run the microcode to XGKICK and rasterize.
