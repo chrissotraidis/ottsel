@@ -1,4 +1,21 @@
-# 00 — Loop log
+## 2026-08-16 — BOT21c: mips2c ln restored (game tfrag pipeline runs); SPR->VIF1 scaffold
+
+- **Acted:** restored the 4 commented `(draw-inline-array-tfrag ...)` calls
+  in goal_src tfrag-methods.gc (matching the retail reference), recompiled
+  GAME.CGO (7d44395a), rebuilt the runtime lib with TFASM/TFRAGSTASH/SPADTO
+  probes, and added an SPR->VIF1 scaffold to the shell (parses the
+  tfragment's stored dma-chain: UNPACKs -> VU mem, frag-list header at VU
+  0x0).  Regenerated patches/h3-jak1-host-boot.patch (reverse-apply clean).
+- **Verified:** one boot, zero faults; TFASM fires (far ln, 1 tfragment);
+  *tfrag-work* +0xb0 set; the dma-chain VIF stream located (frag-list
+  UNPACK to VU 0x0); the far tfragment's vis bit is 0 (port's cull
+  disabled) so it is skipped without a diagnostic force.
+- **Honest boundary:** gif_out still 0 -- the SPR scaffold parses only the
+  first 3 UNPACKs (the stream's DIRECT-embedded VIF commands and the far
+  geometry UNPACKs at VU 27+ are not yet consumed) and the vis bit needs
+  the cull/vis-list resolution.  S2.2 composed frame not reached.
+- **Docs:** evidence s22-bot21c-ln-restored.md; 13-current-state updated.
+
 
 ## 2026-08-16 — BOT21: black-window present regression fixed; frag-list blocker root-caused
 

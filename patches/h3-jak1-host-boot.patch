@@ -2405,6 +2405,106 @@ index ab8a32c48..e65e1e508 100644
  s32 InitHeapAndSymbol();
  u64 call_goal_function_by_name(const char* name);
  Ptr<Type> alloc_and_init_type(Ptr<Symbol> sym, u32 method_count);
+diff --git a/game/mips2c/jak1_functions/tfrag.cpp b/game/mips2c/jak1_functions/tfrag.cpp
+index 6baf04440..8468f2f59 100644
+--- a/game/mips2c/jak1_functions/tfrag.cpp
++++ b/game/mips2c/jak1_functions/tfrag.cpp
+@@ -2,6 +2,7 @@
+ //--------------------------MIPS2C---------------------
+ #include "game/kernel/jak1/kscheme.h"
+ #include "game/mips2c/mips2c_private.h"
++#include "common/log/log.h"
+ using namespace jak1;
+ namespace Mips2C::jak1 {
+ namespace draw_inline_array_tfrag {
+@@ -18,6 +19,29 @@ struct Cache {
+ u64 execute(void* ctxt) {
+   auto* c = (ExecutionContext*)ctxt;
+   load_vfs_from_tf_regs(cache.transform_regs, c);
++  // Ottsel S2.2 BOT19g probe: log the draw-inline-array-tfrag invocation so
++  // the frag-list construction can be traced (a0 = vis-list, a1 = dma data,
++  // a2 = tfrag count, a3 = dma buffer).
++  lg::info("OTTSEL TFASM: draw-inline-array-tfrag a0=0x{:x} a1=0x{:x} a2=0x{:x} a3=0x{:x}",
++           (u64)c->sgpr64(a0), (u64)c->sgpr64(a1), (u64)c->sgpr64(a2), (u64)c->sgpr64(a3));
++  // Ottsel S2.2 BOT21c probe: dump the first tfragment (a1 points at the
++  // drawable-inline-array-tfrag data array) so the dma-chain (per-draw VIF
++  // data) and vis-list can be checked.
++  {
++    u32 a1v = (u32)c->sgpr64(a1);
++    if (a1v >= 0x080000 && a1v < 0x08000000) {
++      u8* tf = g_ee_main_mem + a1v;
++      lg::info("OTTSEL TFRAG: a1=0x{:x} words: {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} "
++               "{:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
++               a1v, *(u32*)(tf + 0), *(u32*)(tf + 4), *(u32*)(tf + 8), *(u32*)(tf + 12),
++               *(u32*)(tf + 16), *(u32*)(tf + 20), *(u32*)(tf + 24), *(u32*)(tf + 28),
++               *(u32*)(tf + 32), *(u32*)(tf + 36), *(u32*)(tf + 40), *(u32*)(tf + 44),
++               *(u32*)(tf + 48), *(u32*)(tf + 52), *(u32*)(tf + 56), *(u32*)(tf + 60));
++      lg::info("OTTSEL TFRAG: dma-chain = 0x{:x}/0x{:x}/0x{:x} qwc = {:02x} {:02x} {:02x} {:02x}",
++               *(u32*)(tf + 32), *(u32*)(tf + 36), *(u32*)(tf + 40), tf[44], tf[45], tf[46],
++               tf[47]);
++    }
++  }
+   bool bc = false;
+   c->daddiu(sp, sp, -128);                          // daddiu sp, sp, -128
+   c->sd(ra, 0, sp);                                 // sd ra, 0(sp)
+@@ -57,6 +81,32 @@ u64 execute(void* ctxt) {
+   c->addiu(t6, r0, 0);                              // addiu t6, r0, 0
+   c->mov64(ra, a3);                                 // or ra, a3, r0
+ 
++  // Ottsel S2.2 BOT21c probe: the vis check and the first loop iteration.
++  lg::info("OTTSEL TFASM2: vis=0x{:x} (lh(0,a0)) a0=0x{:x} a1=0x{:x} a2={} spad-sym=0x{:x}",
++           (u16)c->sgpr64(t7), (u32)c->sgpr64(a0), (u32)c->sgpr64(a1), (s64)c->sgpr64(a2),
++           (u64)cache.fake_scratchpad_data);
++  // S2.2 BOT21c: stash the first tfragment's dma-chain (the per-draw VIF
++  // stream) + qwc into tfrag-work fields the shell reads at the tfrag MSCAL
++  // (the port's SPR->VIF1 path is not emulated, so the shell must process
++  // the stored VIF data itself).  tfrag-work+0xb8/+0xbc are the dma-buffer
++  // / wait fields left zero when ln is disabled.
++  {
++    u32 a1v = (u32)c->sgpr64(a1);
++    if (a1v >= 0x080000 && a1v < 0x08000000) {
++      u8* tf = g_ee_main_mem + a1v + 4;  // a1 was pre-decremented by 4
++      u32 chain = *(u32*)(tf + 32);      // dma-chain[0]
++      u32 qwcv = tf[44];
++      u32 tw = 0;
++      memcpy(&tw, cache.tfrag_work, 4);  // *tfrag-work* value at sym+0
++      if (tw && chain >= 0x080000 && chain < 0x08000000 && qwcv && qwcv < 256) {
++        u8* twp = g_ee_main_mem + tw;
++        *(u32*)(twp + 0xb8) = chain;
++        *(u32*)(twp + 0xbc) = qwcv;
++        lg::info("OTTSEL TFRAGSTASH: chain=0x{:x} qwc={} tw=0x{:x}", chain, qwcv, tw);
++      }
++    }
++  }
++
+   block_1:
+   bc = c->sgpr64(t7) != 0;                          // bne t7, r0, L42
+   // nop                                            // sll r0, r0, 0
+@@ -113,7 +163,24 @@ u64 execute(void* ctxt) {
+ 
+     // GO!
+     //c->sw(t7, 0, t4);                                 // sw t7, 0(t4)
++    // Ottsel S2.2 BOT21c probe: log the SPR TO transfer so the scratchpad
++    // VIF stream can be located.
++    lg::info("OTTSEL SPADTO: madr=0x{:x} sadr=0x{:x} qwc={} fake-spad-sym=0x{:x}", madr, sadr,
++             qwc, (u64)cache.fake_scratchpad_data);
+     spad_to_dma(cache.fake_scratchpad_data, madr, sadr, qwc);
++    // Dump the copied region so the shell can locate the tfrag VIF stream.
++    {
++      u32 goal;
++      memcpy(&goal, align4_ptr(cache.fake_scratchpad_data), 4);
++      u8* dst = g_ee_main_mem + goal + (sadr - goal);
++      lg::info("OTTSEL SPADDUMP: dst=0x{:x}: {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} "
++               "{:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
++               (u32)(uintptr_t)(dst - g_ee_main_mem), *(u32*)(dst + 0), *(u32*)(dst + 4),
++               *(u32*)(dst + 8), *(u32*)(dst + 12), *(u32*)(dst + 16), *(u32*)(dst + 20),
++               *(u32*)(dst + 24), *(u32*)(dst + 28), *(u32*)(dst + 32), *(u32*)(dst + 36),
++               *(u32*)(dst + 40), *(u32*)(dst + 44), *(u32*)(dst + 48), *(u32*)(dst + 52),
++               *(u32*)(dst + 56), *(u32*)(dst + 60));
++    }
+     // nop                                            // sll r0, r0, 0
+   }
+ 
 diff --git a/game/mips2c/mips2c_private.h b/game/mips2c/mips2c_private.h
 index f3124154e..e43a4fc93 100644
 --- a/game/mips2c/mips2c_private.h
@@ -3496,6 +3596,46 @@ index 4355cb922..c1034ba72 100644
  
    void load_settings();
    void save_settings();
+diff --git a/goal_src/jak1/engine/gfx/tfrag/tfrag-methods.gc b/goal_src/jak1/engine/gfx/tfrag/tfrag-methods.gc
+index 086d33216..8e7a6de3f 100644
+--- a/goal_src/jak1/engine/gfx/tfrag/tfrag-methods.gc
++++ b/goal_src/jak1/engine/gfx/tfrag/tfrag-methods.gc
+@@ -90,7 +90,7 @@
+             ;; do the draw!
+             (reset! (-> *perf-stats* data 5))
+             ;;(format 0 "DRAW: ~D~%" s3-0)
+-            ;; (draw-inline-array-tfrag sv-16 (the-as drawable-inline-array s4-1) s3-0 s1-0)
++            (draw-inline-array-tfrag sv-16 (the-as drawable-inline-array s4-1) s3-0 s1-0)
+             (read! (-> *perf-stats* data 5))
+             ;; update stats for the draw
+             (update-wait-stats (-> *perf-stats* data 5)
+@@ -202,7 +202,7 @@
+                              1
+                              lev)
+           (reset! (-> *perf-stats* data 5))
+-          ;; (draw-inline-array-tfrag sv-16 s5-1 s4-1 s2-0)
++          (draw-inline-array-tfrag sv-16 s5-1 s4-1 s2-0)
+           (update-wait-stats (-> *perf-stats* data 5)
+                              (the-as uint 0)
+                              (-> *tfrag-work* wait-to-spr)
+@@ -357,7 +357,7 @@
+           (set! (-> *tfrag-work* wait-from-spr) (the-as uint 0))
+           (tfrag-init-buffer s2-0 (new 'static 'gs-test :ate #x1 :afail #x1 :zte #x1 :ztst (gs-ztest greater-equal)) 1 lev)
+           (reset! (-> *perf-stats* data 5))
+-          ;; (draw-inline-array-tfrag sv-16 s5-1 s4-1 s2-0)
++          (draw-inline-array-tfrag sv-16 s5-1 s4-1 s2-0)
+           (update-wait-stats (-> *perf-stats* data 5)
+                              (the-as uint 0)
+                              (-> *tfrag-work* wait-to-spr)
+@@ -495,7 +495,7 @@
+                              1
+                              lev)
+           (reset! (-> *perf-stats* data 5))
+-          ;; (draw-inline-array-tfrag sv-16 s5-1 s4-1 s2-0)
++          (draw-inline-array-tfrag sv-16 s5-1 s4-1 s2-0)
+           (update-wait-stats (-> *perf-stats* data 5)
+                              (the-as uint 0)
+                              (-> *tfrag-work* wait-to-spr)
 diff --git a/goal_src/jak1/kernel/gkernel.gc b/goal_src/jak1/kernel/gkernel.gc
 index 73a056e45..96a03cb9f 100644
 --- a/goal_src/jak1/kernel/gkernel.gc

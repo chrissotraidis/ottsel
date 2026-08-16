@@ -958,6 +958,88 @@ void gfx_send_chain(const void* data, u32 offset) {
       g_vu.code[i] = ottsel_vu1::kTfragMicrocode[i];
     }
   }
+  // S2.2 BOT21c: the game's mips2c ln stashes the first tfragment's
+  // dma-chain (the per-draw VIF stream incl. the frag-list header at VU
+  // 0x0) into tfrag-work+0xb8/+0xbc.  The port has no SPR->VIF1 DMA, so
+  // process that stored VIF stream here (once per frame) as the SPR->VIF1
+  // emulation: UNPACKs -> VU mem, then run the microcode on the stream's
+  // MSCAL/MSCALF so the frag-list is populated before the frame-init draw.
+  {
+    static bool ottsel_spr_done = false;
+    if (!ottsel_spr_done && g_ee_main_mem) {
+      auto twi = g_pc_port_funcs.intern_from_c("*tfrag-work*");
+      if (twi.offset) {
+        u32 tw = 0;
+        memcpy(&tw, g_ee_main_mem + twi.offset, 4);
+        if (tw) {
+          const u8* twp = g_ee_main_mem + tw;
+          u32 chain = *(u32*)(twp + 0xb8);
+          u32 qwcv = *(u32*)(twp + 0xbc);
+          if (chain >= 0x080000 && chain < 0x08000000 && qwcv > 0 && qwcv <= 256) {
+            ottsel_spr_done = true;
+            lg::info("OTTSEL SPR: process tfrag dma chain=0x{:x} qwc={}", chain, qwcv);
+            const u32* w = (const u32*)(g_ee_main_mem + chain);
+            u32 nwords = qwcv * 4;
+            u32 i = 0;
+            int unpacks = 0, mscals = 0;
+            while (i + 1 < nwords) {
+              u32 vw = w[i];
+              VifCode v(vw);
+              switch (v.kind) {
+                case VifCode::Kind::UNPACK_V4_32:
+                case VifCode::Kind::UNPACK_V4_16:
+                case VifCode::Kind::UNPACK_V4_8:
+                case VifCode::Kind::UNPACK_V3_32:
+                case VifCode::Kind::UNPACK_V2_16: {
+                  u32 dest = (v.immediate & 0x3ff) & 0xfff;
+                  u32 qwords = v.num;
+                  if (dest < 4096 && i + 1 + qwords * 4 <= nwords) {
+                    memcpy(&g_vu.data[dest * 4], &w[i + 1], qwords * 16);
+                    unpacks++;
+                    if (unpacks <= 8) {
+                      lg::info("OTTSEL SPR UNPACK: addr=0x{:x} num={} d0={:08x} d1={:08x} "
+                               "d2={:08x} d3={:08x}",
+                               dest, qwords, w[i + 1], w[i + 2], w[i + 3], w[i + 4]);
+                    }
+                  }
+                  i += 1 + qwords * 4;
+                  break;
+                }
+                case VifCode::Kind::MSCAL:
+                case VifCode::Kind::MSCALF: {
+                  ottsel_vu1::set_top(0);
+                  g_vu.pc = 8;
+                  g_vu.gif_out.clear();
+                  ottsel_vu1::execute(g_vu, 200000);
+                  mscals++;
+                  lg::info("OTTSEL SPR MSCAL: pc={} gif_out={} frag0={:08x} frag1={:08x} "
+                           "frag2={:08x}",
+                           g_vu.pc, g_vu.gif_out.size(), g_vu.data[0 * 4], g_vu.data[1 * 4],
+                           g_vu.data[2 * 4]);
+                  if (!g_vu.gif_out.empty()) {
+                    decode_gif_packets((const u8*)g_vu.gif_out.data(),
+                                       (u32)g_vu.gif_out.size() * 4, g_dec);
+                  }
+                  i += 1;
+                  break;
+                }
+                case VifCode::Kind::DIRECT:
+                case VifCode::Kind::DIRECTHL: {
+                  i += 1 + (v.immediate & 0xffff) * 4;
+                  break;
+                }
+                default:
+                  i += 1;
+                  break;
+              }
+            }
+            lg::info("OTTSEL SPR done: unpacks={} mscals={} gif_out_total={}", unpacks, mscals,
+                     (int)g_vu.gif_out.size());
+          }
+        }
+      }
+    }
+  }
   auto ottsel_handle_vif = [&](u32 vifword, const u8* payload, u32 payload_size) {
     VifCode v(vifword);
     switch (v.kind) {
@@ -984,7 +1066,7 @@ void gfx_send_chain(const void* data, u32 offset) {
         // thread responsive while still allowing real frag data (validated
         // runs reached the output phase well within it).
         ottsel_vu1::execute(g_vu, 50000);
-        if (ottsel_vu1_runs < 8) {
+        if (ottsel_vu1_runs < 20) {
           ottsel_vu1_runs++;
           lg::info("OTTSEL VU1: run#{} mscal imm=0x{:x} top=0x{:x} pc={} gif_out={} "
                    "frag[0..2]=0x{:x}/0x{:x}/0x{:x}",
@@ -1114,16 +1196,79 @@ void gfx_send_chain(const void* data, u32 offset) {
                  fn.offset ? *(u32*)(g_ee_main_mem + fn.offset) : 0,
                  fn.offset ? *(u32*)(g_ee_main_mem + fn.offset + 4) : 0);
       }
+      // S2.2 BOT21c probe: after the mips2c ln runs (restored call), dump
+      // the fake scratchpad (where the ported spad_to_dma wrote the tfrag
+      // VIF data) and the tfrag-work draw-state so the frag-list can be
+      // located.  The scratchpad base comes from *fake-scratchpad-data*
+      // (runtime value ~0x7000186964, NOT the old 0x1d0000 guess).
+      {
+        auto fsp = g_pc_port_funcs.intern_from_c("*fake-scratchpad-data*");
+        u32 spad_ee = 0;
+        if (fsp.offset) {
+          memcpy(&spad_ee, g_ee_main_mem + fsp.offset, 4);
+        }
+        lg::info("OTTSEL SPADBASE: sym=0x{:x} val=0x{:x}", fsp.offset, spad_ee);
+        const u8* spad = g_ee_main_mem + spad_ee;
+        for (int q = 0; q < 64; q += 8) {
+          lg::info("OTTSEL SPAD {:04x}: {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
+                   q * 16, *(u32*)(spad + q * 16), *(u32*)(spad + q * 16 + 4),
+                   *(u32*)(spad + q * 16 + 8), *(u32*)(spad + q * 16 + 12),
+                   *(u32*)(spad + q * 16 + 16), *(u32*)(spad + q * 16 + 20),
+                   *(u32*)(spad + q * 16 + 24), *(u32*)(spad + q * 16 + 28));
+        }
+        // The TFASM a0 (vis-list) — dump the terrain-context vis-list region
+        // near the fake scratchpad so the tfragment's vis bit can be checked.
+        const u8* vis = spad + 0x38b0;
+        lg::info("OTTSEL VISLIST @+0x38b0: {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} "
+                 "{:08x}",
+                 *(u32*)(vis + 0), *(u32*)(vis + 4), *(u32*)(vis + 8), *(u32*)(vis + 12),
+                 *(u32*)(vis + 16), *(u32*)(vis + 20), *(u32*)(vis + 24), *(u32*)(vis + 28));
+      }
       auto info = g_pc_port_funcs.intern_from_c("*tfrag-work*");
       if (info.offset) {
         u32 val = 0;
-        memcpy(&val, g_ee_main_mem + info.offset + 4, 4);
+        memcpy(&val, g_ee_main_mem + info.offset, 4);
         lg::info("OTTSEL TFRAGWORK: sym=0x{:x} sym[0..3]={:08x} {:08x} {:08x} {:08x} value=0x{:x}",
                  info.offset, *(u32*)(g_ee_main_mem + info.offset),
                  *(u32*)(g_ee_main_mem + info.offset + 4), *(u32*)(g_ee_main_mem + info.offset + 8),
                  *(u32*)(g_ee_main_mem + info.offset + 12), val);
         if (val) {
           const u8* tw = g_ee_main_mem + val;
+          // Dump the tfragment's dma-chain data (the far VIF stream ln
+          // processes).  The TFASM a1 from the last run was 0x22978c4 and
+          // its dma-chain[0] was 0x2297920 (qwc 0x80 = 128 qwords).
+          {
+            u32 dma_chain = *(u32*)(tw + 0xb0);  // tfrag-work src-ptr is the dma-buffer
+            (void)dma_chain;
+            const u8* tfd = g_ee_main_mem + 0x2297920;
+            for (int q = 0; q < 128; q += 4) {
+              lg::info("OTTSEL TFRAGDMA {:04x}: {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} "
+                       "{:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} "
+                       "{:08x}",
+                       q * 16, *(u32*)(tfd + q * 16), *(u32*)(tfd + q * 16 + 4),
+                       *(u32*)(tfd + q * 16 + 8), *(u32*)(tfd + q * 16 + 12),
+                       *(u32*)(tfd + q * 16 + 16), *(u32*)(tfd + q * 16 + 20),
+                       *(u32*)(tfd + q * 16 + 24), *(u32*)(tfd + q * 16 + 28),
+                       *(u32*)(tfd + q * 16 + 32), *(u32*)(tfd + q * 16 + 36),
+                       *(u32*)(tfd + q * 16 + 40), *(u32*)(tfd + q * 16 + 44),
+                       *(u32*)(tfd + q * 16 + 48), *(u32*)(tfd + q * 16 + 52),
+                       *(u32*)(tfd + q * 16 + 56), *(u32*)(tfd + q * 16 + 60));
+            }
+          }
+          // The vis-list pointer ln received (TFASM a0) points into the
+          // scratchpad terrain-context; dump the tfragment ln processed
+          // (TFASM a1) so the dma-chain (per-draw VIF data) can be checked.
+          // The TFASM a1 is logged by the runtime; probe the known village
+          // tfragment from the last run if present.
+          lg::info("OTTSEL TFRAGWORK: +0xa8..0xbf = {:08x} {:08x} {:08x} {:08x} {:08x} {:08x}",
+                   *(u32*)(tw + 0xa8), *(u32*)(tw + 0xac), *(u32*)(tw + 0xb0), *(u32*)(tw + 0xb4),
+                   *(u32*)(tw + 0xb8), *(u32*)(tw + 0xbc));
+          lg::info("OTTSEL TFRAGWORK: +0xa0..0xdf = {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} "
+                   "{:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
+                   *(u32*)(tw + 0xa0), *(u32*)(tw + 0xa4), *(u32*)(tw + 0xa8), *(u32*)(tw + 0xac),
+                   *(u32*)(tw + 0xb0), *(u32*)(tw + 0xb4), *(u32*)(tw + 0xb8), *(u32*)(tw + 0xbc),
+                   *(u32*)(tw + 0xc0), *(u32*)(tw + 0xc4), *(u32*)(tw + 0xc8), *(u32*)(tw + 0xcc),
+                   *(u32*)(tw + 0xd0), *(u32*)(tw + 0xd4), *(u32*)(tw + 0xd8), *(u32*)(tw + 0xdc));
           lg::info("OTTSEL TFRAGWORK: +0..63 = {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} "
                    "{:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
                    *(u32*)(tw + 0), *(u32*)(tw + 4), *(u32*)(tw + 8), *(u32*)(tw + 12),
@@ -1275,7 +1420,7 @@ void gfx_texture_upload_now(const u8* tpage, int mode, u32 s7_ptr) {
       auto info = g_pc_port_funcs.intern_from_c("*tfrag-work*");
       if (info.offset) {
         u32 val = 0;
-        memcpy(&val, g_ee_main_mem + info.offset + 4, 4);
+        memcpy(&val, g_ee_main_mem + info.offset, 4);
         const u8* tw = g_ee_main_mem + val;
         lg::info("OTTSEL TFRAGWORK: sym=0x{:x} obj=0x{:x} +160..184 = {:08x} {:08x} {:08x} "
                  "{:08x} {:08x} {:08x} {:08x}",

@@ -1,4 +1,19 @@
-# 13 — Current state (handoff snapshot)
+## 2026-08-16 update (BOT21c) — mips2c ln restored; the game's tfrag draw pipeline now runs
+
+The far `(draw-inline-array-tfrag ...)` calls in goal_src tfrag-methods.gc
+are RESTORED (the port had commented them out) and GAME.CGO is recompiled
+(7d44395a).  Live verification (one boot, zero faults): the TFASM probe
+inside draw_inline_array_tfrag::execute now fires (a2=1 far tfragment), the
+mips2c writes *tfrag-work* +0xb0 (dma-buffer), and the tfragment's stored
+dma-chain (0x2297920, 128 qwords) contains the per-draw VIF stream incl.
+the frag-list header UNPACK to VU 0x0.  The far tfragment's vis bit is 0
+(the port's draw-node-cull is disabled -> vis-list never set), so ln skips
+it without a diagnostic force.  The shell now has an SPR->VIF1 scaffold
+(parses the stashed dma data, UNPACKs -> VU mem); the composed frame still
+needs the full VIF stream parse (the DIRECT-embedded commands + the far
+geometry UNPACKs) and the vis-list resolution.  Evidence:
+docs/evidence/S2/s22-bot21c-ln-restored.md.
+
 
 ## 2026-08-16 update (BOT21) — black-window present regression fixed; frag-list blocker root-caused
 
