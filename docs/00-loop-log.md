@@ -2074,3 +2074,28 @@ return address, not the call-site continuation
   level load / data-less ART) so the display process can spawn and the
   renderer path can start.  Evidence: docs/evidence/S2/s21-bot11-play-fix.md,
   s21-bot11-play-levelload-runtime.log.
+
+## 2026-08-16 — S2.1 verified; S2.2 renderer side verified; S2.2 BLOCKED on level activation
+
+- VERIFIED (S2.1): stable title boot, 0 faults — the DGO loader serves the
+  recompiled TIT.DGO (title-obs), the v3 "GOAL"-magic blocks link, the
+  process tree is complete, the dispatcher loops.  Committed.
+- VERIFIED (S2.2 renderer side): Metal presents real Jak textures (the GS
+  un-swizzle decode; village tpage 0x1cf tex 44 visible); the per-draw
+  renderer attribution corrected (the per-draw VIF groups are the TFRAG
+  program at pc0/L11, not the generic renderer — UNPACK addr flag bit 15,
+  tfrag pc0 entry); the VU1 interpreter + tfrag microcode + rasterizer
+  work; the tie-ln call is restored in goal_src + recompiled GAME.CGO
+  (md5 4e33a7fb, `--isa arm64`).
+- VERIFIED (the village1 data): the bsp-header linked (type 'bsp-header,
+  name 'village1) with 11 drawable trees incl. the tie trees with real
+  instance data (6+42, 2+14); the bsp-header relocate RETURNS SUCCESS.
+- BLOCKED (S2.2): the level never activates — the level slots end
+  `'inactive` with bsp=0 and no bsp-header reference anywhere in the
+  level-group objects (full-object scans); the background-work list stays
+  empty (tfrag-count=0, tie-count=0) so the bsp's trees are never drawn
+  and no geometry frame appears.  The unresolved piece is the relocate's
+  x22-based bsp-write target (Track A: the port's codegen "off" register
+  semantics / level-status tracing) or Track B: compose the evidence frame
+  from the loaded tie geometry via the shell renderer.  Roadmap:
+  docs/BOT8_HANDOFF.md + docs/evidence/S2/s22-reorientation.md.

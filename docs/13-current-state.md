@@ -115,6 +115,34 @@ restore draw-node-cull in goal_src tfrag-methods.gc, recompile GAME.CGO,
 verify ln builds the frag-list.  Evidence:
 docs/evidence/S2/s22-bot21g-perdraw-attribution.md.
 
+## 2026-08-16 update (BOT21g–u) — S2.2 BLOCKED: the level never activates; the compose-frame roadmap
+
+The S2.2 composed-frame blocker is now precisely attributed and blocked:
+the bsp-header relocate RETURNS SUCCESS (`RELOC7RET: arg=0x2ef80d4
+ret=0x2ef80d4` — the goal `(else ... this)` branch ran), yet the level
+slots end `'inactive` with bsp=0 and NO bsp-header reference (0x2ef8xxx)
+anywhere in the loading-level (0x3fdd674) or the level0/level1 slots
+(full-object scans, BOT21u).  The served-object buffer at 0x2ef80d0 reads
+zeros right after the relocate (the v2 link moved the object and the
+double-buffer churns — earlier served-buffer reads may be churned data,
+BOT21t).  The background-work list stays empty every frame
+(tfrag-count=0, tie-count=0), so the bsp's 11 drawable trees — including
+the tie trees with real instance data (6+42, 2+14) — are never added and
+never drawn; the tfrag VU1 chains that appear come from a loading-state
+path, not the bsp's trees.  The tie-ln (draw-inline-array-instance-tie)
+is restored in goal_src + recompiled GAME.CGO (md5 4e33a7fb, `--isa
+arm64`) but never runs.
+
+Roadmap (docs/BOT8_HANDOFF.md + docs/evidence/S2/s22-reorientation.md):
+Track A = decode the relocate's x22-based bsp-write target (the port's
+codegen "off" register semantics) or trace the level status transitions
+(loading → loaded → alive → active) to pin where the level dies after
+login-begin.  Track B = compose the S2.2 evidence frame from the loaded
+tie geometry through the shell's renderer (tie instances + tie.txt
+microcode + the proven VU1/GIF/rasterizer path) — the more direct route
+to the gate.  Constraint: one Simulator, one runtime, Windowed; verify
+against the running app, bundle logs, and compiled ground truth.
+
 
 ## 2026-08-15 update (BOT13) — stable title boot; enter-state fault fixed
 
