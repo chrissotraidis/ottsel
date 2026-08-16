@@ -90,3 +90,24 @@ microcode loops on synthetic data (no XGKICK reached) until the real entry
 
 - `tools/ottsel_vu1/` (interpreter + loader).
 - `src/shell/metal_gfx.mm` (VIF/draw probes: VIFSEQ, VIF payloads, VUFUNC).
+
+## BOT18d update (same day) — data blocks identified; no reference renderer exists
+
+- The 0x381 (897) per-draw block (10 qwords) = the ADGIF register setup +
+  floats (TEST_1=0x5026b at addr 0x47, TEXFLUSH=0x80808080 at 0x3f, and
+  floats 0x303e4000/0x42e00000/0x3e600000) -- the output-header data, not
+  the frag list.
+- The 0x160 (352) block (139 qwords) = degenerate vertex/position floats
+  ((0,0,0,-1792.0) every other qword) -- the camera at the origin sees the
+  origin, so the title frame is empty at this point in the boot.
+- The 0x3d4 (980) block (41 qwords) = 16-bit page/uv values; the 0x384
+  (900) blocks (5 + 80 qwords) = 0x80000000/NaN markers.
+- The old jak-project never shipped a VIF-based TfragRenderer (the first
+  renderer was tfrag3/FR3-preloaded), so the raw-ISO tfrag VIF format must
+  be reverse-engineered from the microcode + the game data -- there is no
+  reference implementation to port.
+- The open question remains: the frag list (count + pointers) the microcode
+  reads at vi14 = 0x2a0 is not written by any VIF unpack in the capture
+  (all 7 dests are absolute and none is 0x2a0).  Candidates: a boot-time /
+  tfrag-work write outside the VIF chain, or a second address space (the VU
+  reads the frag list from the scratchpad window).

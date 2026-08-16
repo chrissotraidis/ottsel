@@ -935,14 +935,23 @@ void gfx_send_chain(const void* data, u32 offset) {
     u32 off = (u32)(g - base);
     VifCode v1(t.vif1());
     VifCode v0(t.vif0());
+    // qwc=0 transfers carry the VIF base/offset commands - log the first few.
+    static u32 ottsel_vifctl = 0;
+    if (ottsel_vifctl < 12 && t.size_bytes == 0 &&
+        (v0.kind == VifCode::Kind::BASE || v0.kind == VifCode::Kind::OFFSET ||
+         v1.kind == VifCode::Kind::BASE || v1.kind == VifCode::Kind::OFFSET ||
+         v0.kind == VifCode::Kind::STCYCL || v1.kind == VifCode::Kind::STCYCL)) {
+      ottsel_vifctl++;
+      lg::info("OTTSEL VIFCTL: chain={} t{} qwc0 v0=0x{:x}(k{}) v1=0x{:x}(k{}) off=0x{:x}",
+               g_chain_no, count, t.vif0(), (u32)v0.kind, t.vif1(), (u32)v1.kind, off);
+    }
     if (g_tfrag_dump && g_tfrag_dump_recs < 600 &&
-        (v1.kind == VifCode::Kind::UNPACK_V4_32 ||
-         v1.kind == VifCode::Kind::UNPACK_V4_16 ||
-         v1.kind == VifCode::Kind::UNPACK_V4_8 ||
-         v1.kind == VifCode::Kind::UNPACK_V3_32 ||
-         v1.kind == VifCode::Kind::UNPACK_V2_16)) {
+        (v1.kind == VifCode::Kind::UNPACK_V4_32 || v1.kind == VifCode::Kind::UNPACK_V4_16 ||
+         v1.kind == VifCode::Kind::UNPACK_V4_8 || v1.kind == VifCode::Kind::UNPACK_V3_32 ||
+         v1.kind == VifCode::Kind::UNPACK_V2_16 || v0.kind == VifCode::Kind::UNPACK_V4_8 ||
+         v0.kind == VifCode::Kind::UNPACK_V4_16)) {
       g_tfrag_dump_recs++;
-      u32 rec[4] = {v1.immediate, v1.num, t.size_bytes, 0};
+      u32 rec[4] = {v1.immediate | ((u32)v1.kind << 16), v1.num, t.size_bytes, 0};
       fwrite(rec, 16, 1, g_tfrag_dump);
       fwrite(t.data, t.size_bytes, 1, g_tfrag_dump);
     }
