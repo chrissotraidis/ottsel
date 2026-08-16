@@ -1,3 +1,22 @@
+## 2026-08-16 — BOT26: village1 DISPLAYS on macOS; the title stall root-caused to the vis wait
+
+- **Root cause of the movie/title stall:** target-continue (target-death.gc)
+  suspends in `(while (and (= all-visible? 'loading) (-> *level* vis?)))`
+  right after "GAMEPLAY: enter title" — waiting for title VIS data that
+  never loads (VIS streaming not yet wired on this port).  That is why
+  target-title is never entered and the intro spool is never pushed.
+- **Acted:** added a host file trigger (/tmp/ottsel-bg-village1) for the
+  existing (bg 'village1) driver in libpad.cpp.  bg sets vis? #f — which
+  releases the stuck wait by its own exit condition — discards the title,
+  and activates village1 under *artist-all-visible*.
+- **Verified:** "Discarding level title" → "Displaying level village1
+  [display]" on the host with the real renderer; zero crashes; game alive.
+  Keyboard input is live host-side (SDL InputManager; Enter=START).
+- **Honest boundary:** the proper fix for the retail title flow is VIS
+  (RAMDISK) streaming + the STR spool chain; bg-mode is the engine's own
+  non-vis debug mode.  Target respawn into village1 after the release not
+  yet log-confirmed (needs a state probe or eyes on the window).
+
 ## 2026-08-16 — BOT25: black screen diagnosed — game-commanded blackout, spool chain stalls before art-control
 
 - **Acted:** proved the black screen is the game holding blackout while

@@ -3438,12 +3438,14 @@ index 4f7cc5e18..6d5641e19 100644
    jak1::kboot_init_globals();
    jak2::kboot_init_globals();
 diff --git a/game/sce/libpad.cpp b/game/sce/libpad.cpp
-index 085d80d2f..1019b7ea4 100644
+index 085d80d2f..efe8662a3 100644
 --- a/game/sce/libpad.cpp
 +++ b/game/sce/libpad.cpp
-@@ -1,7 +1,13 @@
+@@ -1,7 +1,15 @@
  #include "libpad.h"
  
++#include <unistd.h>
++
 +#include "common/log/log.h"
  #include "common/util/Assert.h"
  
@@ -3455,7 +3457,7 @@ index 085d80d2f..1019b7ea4 100644
  #include "game/graphics/display.h"
  #include "game/graphics/gfx.h"
  #include "game/kernel/common/kernel_types.h"
-@@ -12,6 +18,20 @@
+@@ -12,6 +20,20 @@
   * Stub implementation of the EE pad (controller) library
   */
  
@@ -3476,7 +3478,7 @@ index 085d80d2f..1019b7ea4 100644
  namespace ee {
  
  int scePadPortOpen(int port, int slot, void*) {
-@@ -92,6 +112,80 @@ int scePadRead(int port, int /*slot*/, u8* rdata) {
+@@ -92,6 +114,93 @@ int scePadRead(int port, int /*slot*/, u8* rdata) {
      for (size_t i = 0; i < pad_data.value()->button_data.size(); i++) {
        cpad->button0 |= pad_data.value()->button_data.at(i) << i;
      }
@@ -3497,6 +3499,19 @@ index 085d80d2f..1019b7ea4 100644
 +    if ((++ottsel_pad_reads % 1000) == 1) {
 +      lg::info("OTTSEL PAD: scePadRead call #{} port={} has-display={}", ottsel_pad_reads, port,
 +               Display::GetMainDisplay() != nullptr);
++    }
++    // BOT26: host-side trigger for the (bg 'village1) driver (the iOS
++    // shell has its own bundle-file trigger).  The title flow stalls in
++    // target-continue's vis wait (no VIS streaming yet); bg sets vis? #f
++    // which releases that wait, discards the title, activates village1
++    // with the all-visible fallback, and the target then spawns at the
++    // village continue point with live SDL input.
++    if ((ottsel_pad_reads % 1000) == 3 && g_ottsel_bg_village1_request == 0) {
++      if (access("/tmp/ottsel-bg-village1", F_OK) == 0) {
++        unlink("/tmp/ottsel-bg-village1");
++        g_ottsel_bg_village1_request = 1;
++        lg::info("OTTSEL BG: host file trigger accepted");
++      }
 +    }
 +    // BOT25: periodic art-control dump — the logo spool never issues a
 +    // str-load; dump the control + buffer state raw so the stalled field
