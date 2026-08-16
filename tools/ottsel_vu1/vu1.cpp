@@ -196,6 +196,13 @@ inline int32_t unpack_int(uint32_t w) {
   return (int32_t)(w >> 16);
 }
 
+// The VU's vi0 is hardwired to 0; writes to it are ignored.
+inline void set_vi(Vu1State& st, int idx, uint16_t val) {
+  if (idx != 0) {
+    st.vi[idx] = val;
+  }
+}
+
 void write_vf(VfReg& dst, uint32_t mask, const float* vals) {
   if (mask & 1) dst.f[0] = vals[0];
   if (mask & 2) dst.f[1] = vals[1];
@@ -489,12 +496,12 @@ void execute(Vu1State& st, int max_instructions) {
       } break;
       case Op::LQD: {
         uint32_t addr = ((int32_t)(int16_t)st.vi[lis] - 1) & 0xfff;
-        st.vi[lis] = addr;
+        set_vi(st, lis, addr);
         memcpy(&st.vf[lit].u[0], &st.data[addr * 4], 16);
       } break;
       case Op::LQI: {
         uint32_t addr = st.vi[lis] & 0xfff;
-        st.vi[lis] = (st.vi[lis] + 1) & 0xfff;
+        set_vi(st, lis, (st.vi[lis] + 1) & 0xfff);
         if (g_readlog) {
           printf("R LQI 0x%x -> vf%d (vi%d)\n", addr, lit, lis);
         }
@@ -506,12 +513,12 @@ void execute(Vu1State& st, int max_instructions) {
       } break;
       case Op::SQD: {
         uint32_t addr = ((int32_t)(int16_t)st.vi[lis] - 1) & 0xfff;
-        st.vi[lis] = addr;
+        set_vi(st, lis, addr);
         memcpy(&st.data[addr * 4], &st.vf[lit].u[0], 16);
       } break;
       case Op::SQI: {
         uint32_t addr = st.vi[lis] & 0xfff;
-        st.vi[lis] = (st.vi[lis] + 1) & 0xfff;
+        set_vi(st, lis, (st.vi[lis] + 1) & 0xfff);
         memcpy(&st.data[addr * 4], &st.vf[lit].u[0], 16);
       } break;
       case Op::ILW: {
@@ -519,7 +526,7 @@ void execute(Vu1State& st, int max_instructions) {
         if (g_readlog) {
           printf("R ILW 0x%x -> vi%d\n", addr, lit);
         }
-        st.vi[lit] = st.data[addr * 4] >> 16;
+        set_vi(st, lit, st.data[addr * 4] >> 16);
       } break;
       case Op::ISW: {
         uint32_t addr = ((int32_t)(int16_t)st.vi[lis] + limm11) & 0xfff;
@@ -530,32 +537,32 @@ void execute(Vu1State& st, int max_instructions) {
         if (g_readlog) {
           printf("R ILWR 0x%x -> vi%d (vi%d=0x%x)\n", addr, lit, lis, st.vi[lis]);
         }
-        st.vi[lit] = st.data[addr * 4] >> 16;
+        set_vi(st, lit, st.data[addr * 4] >> 16);
       } break;
       case Op::ISWR: {
         uint32_t addr = st.vi[lis] & 0xfff;
         st.data[addr * 4] = (uint32_t)st.vi[lit] << 16;
       } break;
       case Op::IADD:
-        st.vi[lid] = (uint16_t)(st.vi[lis] + st.vi[lit]);
+        set_vi(st, lid, (uint16_t)(st.vi[lis] + st.vi[lit]));
         break;
       case Op::IADDI:
-        st.vi[lit] = (uint16_t)(st.vi[lis] + (int16_t)(lo_imm5(lower) << 11 >> 11));
+        set_vi(st, lit, (uint16_t)(st.vi[lis] + (int16_t)(lo_imm5(lower) << 11 >> 11)));
         break;
       case Op::IADDIU:
-        st.vi[lit] = (uint16_t)(st.vi[lis] + lo_imm15(lower));
+        set_vi(st, lit, (uint16_t)(st.vi[lis] + lo_imm15(lower)));
         break;
       case Op::IAND:
-        st.vi[lid] = st.vi[lis] & st.vi[lit];
+        set_vi(st, lid, st.vi[lis] & st.vi[lit]);
         break;
       case Op::IOR:
-        st.vi[lid] = st.vi[lis] | st.vi[lit];
+        set_vi(st, lid, st.vi[lis] | st.vi[lit]);
         break;
       case Op::ISUB:
-        st.vi[lid] = (uint16_t)(st.vi[lis] - st.vi[lit]);
+        set_vi(st, lid, (uint16_t)(st.vi[lis] - st.vi[lit]));
         break;
       case Op::ISUBIU:
-        st.vi[lit] = (uint16_t)(st.vi[lis] - lo_imm15(lower));
+        set_vi(st, lit, (uint16_t)(st.vi[lis] - lo_imm15(lower)));
         break;
       case Op::MOVE:
         memcpy(st.vf[lit].u, st.vf[lis].u, 16);
@@ -569,7 +576,7 @@ void execute(Vu1State& st, int max_instructions) {
         st.vf[lit].u[0] = (uint32_t)st.vi[lis] << 16;
         break;
       case Op::MTIR:
-        st.vi[lit] = st.vf[lis].u[0] >> 16;
+        set_vi(st, lit, st.vf[lis].u[0] >> 16);
         break;
       case Op::DIV: {
         float num = st.vf[lis].f[(lower >> 21) & 3];
@@ -587,7 +594,7 @@ void execute(Vu1State& st, int max_instructions) {
       case Op::WAITQ: case Op::WAITP:
         break;
       case Op::XTOP:
-        st.vi[lit] = g_vu_top;
+        set_vi(st, lit, g_vu_top);
         break;
       case Op::XGKICK: {
         uint32_t addr = st.vi[lis] & 0xfff;
@@ -599,19 +606,19 @@ void execute(Vu1State& st, int max_instructions) {
         st.status = (st.status & ~0xffffff) | (lower & 0xffffff);
         break;
       case Op::FCAND:
-        st.vi[lid] = (st.status & (lower & 0xffffff)) ? 1 : 0;
+        set_vi(st, lid, (st.status & (lower & 0xffffff)) ? 1 : 0);
         break;
       case Op::FCOR:
-        st.vi[lid] = ((st.status | (lower & 0xffffff)) == 0xffffff) ? 1 : 0;
+        set_vi(st, lid, ((st.status | (lower & 0xffffff)) == 0xffffff) ? 1 : 0);
         break;
       case Op::FSAND:
-        st.vi[lid] = (st.status & (lower & 0xffffff)) ? 1 : 0;
+        set_vi(st, lid, (st.status & (lower & 0xffffff)) ? 1 : 0);
         break;
       case Op::FMAND:
-        st.vi[lid] = (st.vi[lis] & lo_imm15(lower)) ? 1 : 0;
+        set_vi(st, lid, (st.vi[lis] & lo_imm15(lower)) ? 1 : 0);
         break;
       case Op::FCGET:
-        st.vi[lid] = st.status & 0xffff;
+        set_vi(st, lid, st.status & 0xffff);
         break;
       case Op::MFP:
         st.vf[lit].f[0] = st.p;
@@ -626,7 +633,7 @@ void execute(Vu1State& st, int max_instructions) {
       } break;
       case Op::BAL: {
         int32_t off = (int32_t)(limm11 << 21) >> 21;
-        st.vi[lid] = (uint16_t)((this_pc + 1) & 0xffff);
+        set_vi(st, lid, (uint16_t)((this_pc + 1) & 0xffff));
         branch_target = (this_pc + 1 + off) & 0x7ff;
         branch = true;
       } break;
@@ -635,11 +642,15 @@ void execute(Vu1State& st, int max_instructions) {
         branch = true;
         break;
       case Op::JALR:
-        st.vi[lid] = (uint16_t)((this_pc + 1) & 0xffff);
+        set_vi(st, lid, (uint16_t)((this_pc + 1) & 0xffff));
         branch_target = st.vi[lis] & 0x7ff;
         branch = true;
         break;
       case Op::IBEQ: {
+        if (g_trace && this_pc >= 105 && this_pc <= 145) {
+          printf("IBEQ pc=%d vi%d vs vi%d (vals %d %d) tgt=%d\n", this_pc, lis, lit, st.vi[lis],
+                 st.vi[lit], (this_pc + 1 + (int)(limm11 << 21 >> 21)) & 0x7ff);
+        }
         if (st.vi[lis] == st.vi[lit]) {
           int32_t off = (int32_t)(limm11 << 21) >> 21;
           branch_target = (this_pc + 1 + off) & 0x7ff;
