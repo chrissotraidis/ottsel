@@ -21,6 +21,9 @@
 
 #include "common/log/log.h"
 
+// The app's bundle directory (src/shell/ios_boot.cpp), for evidence dumps.
+extern std::string ottsel_ios_bundle_dir();
+
 // The in-game texture-page structures (mirrored from
 // game/graphics/texture/TexturePool.h; defined here to keep the iOS shell
 // free of the GL/glad dependency chain).
@@ -906,6 +909,18 @@ void gfx_send_chain(const void* data, u32 offset) {
   static u32 ottsel_tfrag_dumps = 0;
   static u32 ottsel_chain_transfers = 0;
   static u32 ottsel_chain_unpacks = 0;
+  // Dump the full tfrag-bucket UNPACK payloads (imm = VU dest) to a file so
+  // the VU1 interpreter can be tested offline with the real data.
+  static FILE* g_tfrag_dump = nullptr;
+  static u32 g_tfrag_dump_recs = 0;
+  if (!g_tfrag_dump) {
+    std::string path = ottsel_ios_bundle_dir() + "tfrag-vu-data.bin";
+    g_tfrag_dump = fopen(path.c_str(), "wb");
+    if (g_tfrag_dump) {
+      u32 hdr[2] = {0};
+      fwrite(hdr, 8, 1, g_tfrag_dump);  // placeholder: entry/count
+    }
+  }
   const u8* base = (const u8*)data;
   DmaFollower dma(base, offset);
   int count = 0;
@@ -920,6 +935,23 @@ void gfx_send_chain(const void* data, u32 offset) {
     u32 off = (u32)(g - base);
     VifCode v1(t.vif1());
     VifCode v0(t.vif0());
+    if (g_tfrag_dump && g_tfrag_dump_recs < 600 &&
+        (v1.kind == VifCode::Kind::UNPACK_V4_32 ||
+         v1.kind == VifCode::Kind::UNPACK_V4_16 ||
+         v1.kind == VifCode::Kind::UNPACK_V4_8 ||
+         v1.kind == VifCode::Kind::UNPACK_V3_32 ||
+         v1.kind == VifCode::Kind::UNPACK_V2_16)) {
+      g_tfrag_dump_recs++;
+      u32 rec[4] = {v1.immediate, v1.num, t.size_bytes, 0};
+      fwrite(rec, 16, 1, g_tfrag_dump);
+      fwrite(t.data, t.size_bytes, 1, g_tfrag_dump);
+    }
+    if (g_tfrag_dump && g_tfrag_dump_recs < 600 &&
+        (v1.kind == VifCode::Kind::MSCAL || v1.kind == VifCode::Kind::MSCALF ||
+         v0.kind == VifCode::Kind::MSCAL || v0.kind == VifCode::Kind::MSCALF)) {
+      u32 rec[4] = {0xffffffff, v1.num, v1.immediate, 0};
+      fwrite(rec, 16, 1, g_tfrag_dump);
+    }
     // Full VIF sequence dump for the first few chains (the tfrag bucket).
     static u32 ottsel_vifseq_chains = 0;
     if (ottsel_vifseq_chains < 4 &&
