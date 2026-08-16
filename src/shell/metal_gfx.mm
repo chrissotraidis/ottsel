@@ -955,6 +955,14 @@ void gfx_send_chain(const void* data, u32 offset) {
       fwrite(rec, 16, 1, g_tfrag_dump);
       fwrite(t.data, t.size_bytes, 1, g_tfrag_dump);
     }
+    // Also capture the small DIRECT GIF transfers (possible frag-list data).
+    if (g_tfrag_dump && g_tfrag_dump_recs < 4000 && t.size_bytes <= 224 &&
+        (v1.kind == VifCode::Kind::DIRECT || v0.kind == VifCode::Kind::DIRECT)) {
+      g_tfrag_dump_recs++;
+      u32 rec[4] = {0x80000000 | (u32)v1.kind, v1.num, t.size_bytes, 0};
+      fwrite(rec, 16, 1, g_tfrag_dump);
+      fwrite(t.data, t.size_bytes, 1, g_tfrag_dump);
+    }
     if (g_tfrag_dump && g_tfrag_dump_recs < 4000 &&
         (v1.kind == VifCode::Kind::MSCAL || v1.kind == VifCode::Kind::MSCALF ||
          v0.kind == VifCode::Kind::MSCAL || v0.kind == VifCode::Kind::MSCALF)) {

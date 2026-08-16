@@ -111,3 +111,19 @@ microcode loops on synthetic data (no XGKICK reached) until the real entry
   (all 7 dests are absolute and none is 0x2a0).  Candidates: a boot-time /
   tfrag-work write outside the VIF chain, or a second address space (the VU
   reads the frag list from the scratchpad window).
+
+## BOT18e update (same day) — frag list not in the VIF chain (definitive)
+
+- A 3994-record capture confirms the tfrag draws use ONLY V4-32 unpacks at
+  the 7 absolute dests (5/0x14d/0x290/0x160/0x381/0x384/0x3d4); the V4-8
+  color path (imm 0xc000, TOPS-relative) never fires in the boot/title.
+- The small DIRECT GIF transfers in the tfrag chains are uninitialized DMA
+  buffer gaps (0xeeeeeeee fill), not the frag list.
+- The vertex math fits dest = base + imm (vi14 + word1 = the 0x400 vertex
+  list when word1 = 0x160), so the per-draw batches ARE at 0x2a0+imm
+  (0x400/0x621/0x624/0x674), but the frag LIST (the count + pointer fields
+  the microcode reads at vi14 = 0x2a0) is still not produced by any captured
+  transfer.  It is likely written once at boot by a path outside the chain
+  (candidate: the tfrag-work scratchpad handoff) - the next probe should log
+  the VU data-memory READ addresses the microcode touches (instrument the
+  interpreter's LQ/ILW) to discover the expected layout empirically.
