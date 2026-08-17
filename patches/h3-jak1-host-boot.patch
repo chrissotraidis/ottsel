@@ -1465,7 +1465,7 @@ index 859b7e13a..db8984015 100644
        // use a hack to just run the listener function if there's no GOAL kernel.
        if (ListenerFunction->value != s7.offset) {
 diff --git a/game/kernel/jak1/klink.cpp b/game/kernel/jak1/klink.cpp
-index fd7199959..9b6897569 100644
+index fd7199959..c1915468f 100644
 --- a/game/kernel/jak1/klink.cpp
 +++ b/game/kernel/jak1/klink.cpp
 @@ -14,7 +14,38 @@
@@ -1507,7 +1507,7 @@ index fd7199959..9b6897569 100644
  /*!
   * Make progress on linking.
   */
-@@ -74,7 +105,63 @@ uint32_t cross_seg_dist_link_v3(Ptr<uint8_t> link,
+@@ -74,7 +105,76 @@ uint32_t cross_seg_dist_link_v3(Ptr<uint8_t> link,
    // both 32-bit and 64-bit pointer links are supported, though 64-bit ones are no longer in use.
    // we still support it just in case we want to run ancient code.
    if (size == 4) {
@@ -1549,7 +1549,20 @@ index fd7199959..9b6897569 100644
 +      word = (word & 0x9F00001F) | (immlo << 29) | (immhi << 5);
 +      *Ptr<uint32_t>(offset_of_patch).c() = word;
 +      uint32_t add_word = *Ptr<uint32_t>(offset_of_patch + 4).c();
-+      add_word = (add_word & ~(0xFFFu << 10)) | ((uint32_t(target_addr) & 0xFFF) << 10);
++      // BOT30: the successor may be an ADD (raw lo12) or an LDR/STR unsigned-
++      // imm (imm12 scaled by access size; 4-bit shift for 128-bit Q).  Writing
++      // raw lo12 into a scaled LDR lands the access lo12*scale bytes high
++      // (this is what zeroed compiled sin's rip float constants).
++      uint32_t lo12 = uint32_t(target_addr) & 0xFFF;
++      uint32_t field = lo12;
++      if ((add_word & 0x3B000000) == 0x39000000) {
++        uint32_t ldst_size = (add_word >> 30) & 3;
++        uint32_t ldst_opc = (add_word >> 22) & 3;
++        uint32_t shift = (ldst_size == 0 && (ldst_opc & 2)) ? 4 : ldst_size;
++        ASSERT((lo12 & ((1u << shift) - 1)) == 0);
++        field = lo12 >> shift;
++      }
++      add_word = (add_word & ~(0xFFFu << 10)) | (field << 10);
 +      *Ptr<uint32_t>(offset_of_patch + 4).c() = add_word;
 +    } else if ((word & 0x3B000000) == 0x18000000) {
 +      // LDR literal: imm19 = diff/4 in bits 23-5.
@@ -1571,7 +1584,7 @@ index fd7199959..9b6897569 100644
    } else if (size == 8) {
      *Ptr<int64_t>(offset_of_patch).c() = diff;
    } else {
-@@ -160,6 +247,8 @@ uint32_t symlink_v3(Ptr<uint8_t> link, Ptr<uint8_t> data) {
+@@ -160,6 +260,8 @@ uint32_t symlink_v3(Ptr<uint8_t> link, Ptr<uint8_t> data) {
      uint32_t offset = offsets.c()[i];
      seek += 4;
      auto data_ptr = (data + offset).cast<int32_t>();
@@ -1580,7 +1593,7 @@ index fd7199959..9b6897569 100644
  
      if (*data_ptr == -1) {
        // a "-1" indicates that we should store the address.
-@@ -168,6 +257,8 @@ uint32_t symlink_v3(Ptr<uint8_t> link, Ptr<uint8_t> data) {
+@@ -168,6 +270,8 @@ uint32_t symlink_v3(Ptr<uint8_t> link, Ptr<uint8_t> data) {
        // otherwise store the offset to st.  Eventually this should become an s16 instead.
        *(data + offset).cast<int32_t>() = sym_offset;
      }
@@ -1589,7 +1602,7 @@ index fd7199959..9b6897569 100644
    }
  
    return seek;
-@@ -217,7 +308,35 @@ uint32_t link_control::jak1_work_v3() {
+@@ -217,7 +321,38 @@ uint32_t link_control::jak1_work_v3() {
          if (ofh->code_infos[seg_id].size == 0) {
            ofh->code_infos[seg_id].offset = 0;
          } else {
@@ -1621,11 +1634,14 @@ index fd7199959..9b6897569 100644
 +          }
 +          g_ottsel_code_cur = seg_end;
 +          ofh->code_infos[seg_id].offset = seg_start;
++          // BOT30: map crash PCs in the code region back to their object.
++          lg::info("OTTSEL CODEMAP: {} main-seg 0x{:x}..0x{:x} (code 0x{:x})", m_object_name,
++                   seg_start, seg_start + ofh->code_infos[seg_id].size, ofh->code_size[seg_id]);
 +#else
            ofh->code_infos[seg_id].offset =
                kmalloc(m_heap, ofh->code_infos[seg_id].size, 0, "main-segment").offset;
            if (ofh->code_infos[seg_id].offset == 0) {
-@@ -225,6 +344,7 @@ uint32_t link_control::jak1_work_v3() {
+@@ -225,6 +360,7 @@ uint32_t link_control::jak1_work_v3() {
                     ofh->code_infos[seg_id].size);
              return 1;
            }
@@ -1633,7 +1649,7 @@ index fd7199959..9b6897569 100644
            jak1::ultimate_memcpy(Ptr<u8>(ofh->code_infos[seg_id].offset).c(), src.c(),
                                  ofh->code_infos[seg_id].size);
          }
-@@ -233,6 +353,26 @@ uint32_t link_control::jak1_work_v3() {
+@@ -233,6 +369,26 @@ uint32_t link_control::jak1_work_v3() {
            ofh->code_infos[seg_id].offset = 0;
          } else {
            Ptr<u8> src(ofh->code_infos[seg_id].offset);
@@ -1660,7 +1676,7 @@ index fd7199959..9b6897569 100644
            ofh->code_infos[seg_id].offset =
                kmalloc(m_heap, ofh->code_infos[seg_id].size, KMALLOC_TOP, "top-level-segment")
                    .offset;
-@@ -241,6 +381,7 @@ uint32_t link_control::jak1_work_v3() {
+@@ -241,6 +397,7 @@ uint32_t link_control::jak1_work_v3() {
                     ofh->code_infos[seg_id].size);
              return 1;
            }
@@ -1668,7 +1684,7 @@ index fd7199959..9b6897569 100644
            jak1::ultimate_memcpy(Ptr<u8>(ofh->code_infos[seg_id].offset).c(), src.c(),
                                  ofh->code_infos[seg_id].size);
          }
-@@ -514,6 +655,17 @@ uint32_t link_control::jak1_work_v2() {
+@@ -514,6 +671,17 @@ uint32_t link_control::jak1_work_v2() {
   * Complete linking. This will execute the top-level code for v3 object files, if requested.
   */
  void link_control::jak1_finish(bool jump_from_c_to_goal) {
@@ -1686,7 +1702,7 @@ index fd7199959..9b6897569 100644
    CacheFlush(m_code_start.c(), m_code_size);
    auto old_debug_segment = DebugSegment;
    if (m_keep_debug) {
-@@ -527,6 +679,8 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
+@@ -527,6 +695,8 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
  
    ObjectFileHeader* ofh = m_link_block_ptr.cast<ObjectFileHeader>().c();
    lg::debug("link finish: {}", m_object_name);
@@ -1695,7 +1711,7 @@ index fd7199959..9b6897569 100644
    if (ofh->object_file_version == 3) {
      // todo check function type of entry
  
-@@ -538,14 +692,152 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
+@@ -538,14 +708,152 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
        }
      }
  
@@ -1831,7 +1847,7 @@ index fd7199959..9b6897569 100644
 +        printf("OTTSEL link: executing top-level (no stack switch) of %s\n", m_object_name);
          call_goal(m_entry.cast<Function>(), 0, 0, 0, s7.offset, g_ee_main_mem);
 +        printf("OTTSEL link: top-level (no stack switch) of %s returned\n", m_object_name);
-       }
++      }
 +#ifdef OTTSEL_NO_EMIT
 +      // Top-level code is one-shot: after it returns, give the pages back to
 +      // the heap so the next object's top-level segment (same page-aligned
@@ -1844,12 +1860,12 @@ index fd7199959..9b6897569 100644
 +          }
 +        }
 +        lg::debug("OTTSEL no-emit: top-level code pages back to RW ({}..{})", tl_lo, tl_hi);
-+      }
+       }
 +#endif
      }
  
      // inform compiler that we loaded.
-@@ -581,6 +873,16 @@ Ptr<uint8_t> link_and_exec(Ptr<uint8_t> data,
+@@ -581,6 +889,16 @@ Ptr<uint8_t> link_and_exec(Ptr<uint8_t> data,
                             Ptr<kheapinfo> heap,
                             uint32_t flags,
                             bool jump_from_c_to_goal) {
@@ -1866,7 +1882,7 @@ index fd7199959..9b6897569 100644
    link_control lc;
    lc.jak1_jak2_begin(data, name, size, heap, flags);
    uint32_t done;
-@@ -588,6 +890,31 @@ Ptr<uint8_t> link_and_exec(Ptr<uint8_t> data,
+@@ -588,6 +906,31 @@ Ptr<uint8_t> link_and_exec(Ptr<uint8_t> data,
      done = lc.jak1_work();
    } while (!done);
    lc.jak1_finish(jump_from_c_to_goal);
@@ -1898,7 +1914,7 @@ index fd7199959..9b6897569 100644
    return lc.m_entry;
  }
  
-@@ -610,14 +937,20 @@ uint64_t link_begin(u64* args) {
+@@ -610,14 +953,20 @@ uint64_t link_begin(u64* args) {
    // object data, name size, heap flags
    saved_link_control.jak1_jak2_begin(Ptr<u8>(args[0]), Ptr<char>(args[1]).c(), args[2],
                                       Ptr<kheapinfo>(args[3]), args[4]);
@@ -2719,6 +2735,171 @@ index ab8a32c48..abedfb1f8 100644
  s32 InitHeapAndSymbol();
  u64 call_goal_function_by_name(const char* name);
  Ptr<Type> alloc_and_init_type(Ptr<Symbol> sym, u32 method_count);
+diff --git a/game/mips2c/jak1_functions/collide_cache.cpp b/game/mips2c/jak1_functions/collide_cache.cpp
+index 1c4de4397..819642df2 100644
+--- a/game/mips2c/jak1_functions/collide_cache.cpp
++++ b/game/mips2c/jak1_functions/collide_cache.cpp
+@@ -1,5 +1,6 @@
+ //--------------------------MIPS2C---------------------
+ #include "common/dma/gs.h"
++#include "common/log/log.h"
+ 
+ #include "game/kernel/jak1/kscheme.h"
+ #include "game/mips2c/mips2c_private.h"
+@@ -21,6 +22,153 @@ namespace Mips2C::jak1 {
+ namespace pc_upload_collide_frag {
+ u64 execute(void* ctxt) {
+   auto* c = (ExecutionContext*)ctxt;
++  // BOT30 probe: this runs once per collide-list item during fill-from-background
++  // step 2, so *collide-list* num-items here is the size of the just-built list.
++  // The engine-connection crash is really a *collide-list* overflow trampling
++  // global-heap type method tables; log the overflow the moment it exists.
++  {
++    static u32 s_collide_list = 0;
++    static int s_max_items = 0;
++    if (!s_collide_list) {
++      s_collide_list = ::jak1::intern_from_c("*collide-list*")->value;
++    }
++    if (s_collide_list && g_ee_main_mem) {
++      int n = *(const s32*)(g_ee_main_mem + s_collide_list);
++      if (n > s_max_items) {
++        s_max_items = n;
++        if (n > 200) {
++          lg::info("OTTSEL COLLIDE: *collide-list* num-items={} (cap 256!) list=0x{:x}", n,
++                   s_collide_list);
++          // BOT30 cycle 4: culling test is now semantically correct but still
++          // passes everything — dump the box it tests against.
++          // collide-work: sphere@0, box4w min@16, box4w max@32 (int words).
++          u32 cw = ::jak1::intern_from_c("*collide-work*")->value;
++          if (cw) {
++            const s32* p = (const s32*)(g_ee_main_mem + cw);
++            lg::info("OTTSEL COLLIDE: work=0x{:x} sphere-neg-r=({:.1f},{:.1f},{:.1f},{:.1f}) "
++                     "box4w min=({},{},{},{}) max=({},{},{},{})",
++                     cw, *(const float*)(p + 0), *(const float*)(p + 1), *(const float*)(p + 2),
++                     *(const float*)(p + 3), p[4], p[5], p[6], p[7], p[8], p[9], p[10], p[11]);
++            // first item's mesh ptr + its owning frag bsphere is 16 bytes before
++            // the mesh field in collide-fragment; log the raw first 3 items.
++            const u32* it = (const u32*)(g_ee_main_mem + s_collide_list + 4);
++            lg::info("OTTSEL COLLIDE: items[0..2]= {:08x} {:08x} | {:08x} {:08x} | {:08x} {:08x}",
++                     it[0], it[1], it[2], it[3], it[4], it[5]);
++            // BOT30 cycle 8: identify the flooding QUERY — the collide-cache
++            // holds the current query's proc, float box and kind (ref R:
++            // num-tris@0, proc@12, collide-box@28 min/max floats, kind@92).
++            u32 cc = ::jak1::intern_from_c("*collide-cache*")->value;
++            if (cc) {
++              const u32* q = (const u32*)(g_ee_main_mem + cc);
++              const float* bf = (const float*)(g_ee_main_mem + cc + 28);
++              u32 proc = q[3];
++              lg::info("OTTSEL QUERY: cache=0x{:x} proc=0x{:x} kind=0x{:x} box-min=({:.0f},{:.0f},"
++                       "{:.0f}) box-max=({:.0f},{:.0f},{:.0f})",
++                       cc, proc, q[23], bf[0], bf[1], bf[2], bf[4], bf[5], bf[6]);
++              if (proc > 0x1000 && proc < (100u << 20)) {
++                u32 nm = *(const u32*)(g_ee_main_mem + proc);
++                if (nm > 0x1000 && nm < (100u << 20)) {
++                  char buf[32] = {0};
++                  memcpy(buf, g_ee_main_mem + nm + 4, 31);
++                  buf[31] = 0;
++                  lg::info("OTTSEL QUERY: proc-name='{}'", buf);
++                }
++              }
++              const float* im = (const float*)(g_ee_main_mem + cw + 48);
++              lg::info("OTTSEL QUERY: work inv-mat rows: ({:.2f},{:.2f},{:.2f},{:.2f}) "
++                       "({:.2f},{:.2f},{:.2f},{:.2f}) ({:.2f},{:.2f},{:.2f},{:.2f}) "
++                       "({:.1f},{:.1f},{:.1f},{:.1f})",
++                       im[0], im[1], im[2], im[3], im[4], im[5], im[6], im[7], im[8], im[9], im[10],
++                       im[11], im[12], im[13], im[14], im[15]);
++            }
++            // BOT30 cycle 5b: the cull test is proven correct in vivo, so the
++            // iterated fragment records must be wrong.  Dump the village1
++            // drawable-tree-array (deterministic 0x2e7e824), each tree, and
++            // each tree's data-override array + first inline elements.
++            static bool s_tree_dumped = false;
++            if (!s_tree_dumped) {
++              s_tree_dumped = true;
++              auto w = [](u32 a) { return *(const u32*)(g_ee_main_mem + a); };
++              auto okp = [](u32 a) { return a >= 0x1000 && a < (100u << 20); };
++              u32 ta = 0x2e7e824;
++              lg::info("OTTSEL TREES: array@0x{:x} type={:08x} w0..7= {:08x} {:08x} {:08x} "
++                       "{:08x} {:08x} {:08x} {:08x} {:08x}",
++                       ta, w(ta - 4), w(ta), w(ta + 4), w(ta + 8), w(ta + 12), w(ta + 16),
++                       w(ta + 20), w(ta + 24), w(ta + 28));
++              int ntrees = (int)(s16)(w(ta + 4) >> 16 & 0xffff);
++              // length int16 :offset 6 -> upper half of word at +4
++              for (int j = 0; j < 11; j++) {
++                u32 tr = w(ta + 28 + 4 * j);
++                if (!okp(tr)) {
++                  break;
++                }
++                lg::info("OTTSEL TREES[{}]: @0x{:08x} type={:08x} w0..7= {:08x} {:08x} {:08x} "
++                         "{:08x} {:08x} {:08x} {:08x} {:08x}",
++                         j, tr, w(tr - 4), w(tr), w(tr + 4), w(tr + 8), w(tr + 12), w(tr + 16),
++                         w(tr + 20), w(tr + 24), w(tr + 28));
++                u32 dov = w(tr + 28);
++                if (okp(dov)) {
++                  lg::info("OTTSEL TREES[{}]: dov@0x{:08x} type={:08x} hdr= {:08x} {:08x} {:08x} "
++                           "{:08x} {:08x} {:08x} {:08x} {:08x} | elem0@+32.. {:08x} {:08x} {:08x} "
++                           "{:08x} {:08x} {:08x} {:08x} {:08x} {:08x} {:08x} {:08x} {:08x}",
++                           j, dov, w(dov - 4), w(dov), w(dov + 4), w(dov + 8), w(dov + 12),
++                           w(dov + 16), w(dov + 20), w(dov + 24), w(dov + 28), w(dov + 32),
++                           w(dov + 36), w(dov + 40), w(dov + 44), w(dov + 48), w(dov + 52),
++                           w(dov + 56), w(dov + 60), w(dov + 64), w(dov + 68), w(dov + 72),
++                           w(dov + 76));
++                }
++              }
++              lg::info("OTTSEL TREES: ntrees(len@+6)={}", ntrees);
++            }
++            // BOT30 cycle 7: correct item layout is items@+16 stride 16 (per
++            // all-types size-assert 0x1010).  Frag-path items carry inst = #f
++            // (0x18fe04); tie-path items carry the instance-tie pointer.  The
++            // culls are proven correct, so dump the actual instance records —
++            // their bspheres (ref+12) decide whether the tie data or the tie
++            // loop is broken.
++            static bool s_items_dumped = false;
++            if (!s_items_dumped) {
++              s_items_dumped = true;
++              auto w = [](u32 a) { return *(const u32*)(g_ee_main_mem + a); };
++              auto okp = [](u32 a) { return a >= 0x1000 && a < (100u << 20); };
++              int frag_items = 0, tie_items = 0, other = 0;
++              u32 insts[3] = {0, 0, 0};
++              int ninst = 0;
++              for (int i = 0; i < n; i++) {
++                u32 base = s_collide_list + 16 + 16 * i;
++                u32 inst = w(base + 4);
++                if (inst == 0x18fe04) {
++                  frag_items++;
++                } else if (okp(inst)) {
++                  tie_items++;
++                  if (ninst < 3 && inst != insts[0] && inst != insts[1] && inst != insts[2]) {
++                    insts[ninst++] = inst;
++                  }
++                } else {
++                  other++;
++                }
++              }
++              lg::info("OTTSEL ITEMS2: n={} frag(inst=#f):{} tie:{} other:{}", n, frag_items,
++                       tie_items, other);
++              for (int i = 0; i < 6; i++) {
++                u32 base = s_collide_list + 16 + 16 * i;
++                lg::info("OTTSEL ITEMS2[{}]: mesh={:08x} inst={:08x} pad={:08x} {:08x}", i, w(base),
++                         w(base + 4), w(base + 8), w(base + 12));
++              }
++              for (int k = 0; k < ninst; k++) {
++                u32 it = insts[k];
++                const float* bs = (const float*)(g_ee_main_mem + it + 12);
++                lg::info("OTTSEL INST[{}]: @0x{:08x} type={:08x} w= {:08x} {:08x} {:08x} | "
++                         "bsphere=({:.1f},{:.1f},{:.1f},{:.1f}) raw {:08x} {:08x} {:08x} {:08x}",
++                         k, it, w(it - 4), w(it), w(it + 4), w(it + 8), bs[0], bs[1], bs[2], bs[3],
++                         w(it + 12), w(it + 16), w(it + 20), w(it + 24));
++              }
++            }
++          }
++        }
++      }
++    }
++  }
+   // vif init is
+   // #x30000000 = STROW
+   // #x4d000000 ROW x
 diff --git a/game/mips2c/jak1_functions/tfrag.cpp b/game/mips2c/jak1_functions/tfrag.cpp
 index 6baf04440..8468f2f59 100644
 --- a/game/mips2c/jak1_functions/tfrag.cpp
@@ -3507,10 +3688,10 @@ index 000000000..d54973dbf
 +  return 0;
 +}
 diff --git a/game/runtime.cpp b/game/runtime.cpp
-index 4f7cc5e18..eff62d8d2 100644
+index 4f7cc5e18..cceba8f11 100644
 --- a/game/runtime.cpp
 +++ b/game/runtime.cpp
-@@ -87,6 +87,49 @@
+@@ -87,6 +87,183 @@
  #include "system/SystemThread.h"
  
  u8* g_ee_main_mem = nullptr;
@@ -3524,6 +3705,126 @@ index 4f7cc5e18..eff62d8d2 100644
 +std::atomic<int> g_ottsel_exec_heals{0};
 +static struct sigaction s_ottsel_old_bus;
 +static struct sigaction s_ottsel_old_segv;
++
++static struct sigaction s_ottsel_old_ill;
++
++// BOT30 probe: at a genuine (unhealable) fault, dump ground truth for the
++// engine-connection crash: registers, the caller code around lr, the bytes at
++// pc, and *background-draw-engine*'s alive/dead connection lists.
++static bool ottsel_ee_ok(uint32_t a) {
++  return a >= 0x1000 && a < (128u << 20);
++}
++static uint32_t ottsel_ee_word(uint32_t a) {
++  return *(const uint32_t*)(g_ee_main_mem + a);
++}
++static void ottsel_dump_ee_words(const char* tag, uint32_t ee_addr, int nwords) {
++  for (int i = 0; i < nwords; i += 4) {
++    uint32_t a = ee_addr + i * 4;
++    if (!ottsel_ee_ok(a) || !ottsel_ee_ok(a + 12)) {
++      fprintf(stderr, "OTTSEL CRASH %s: 0x%08x <out of EE range>\n", tag, a);
++      return;
++    }
++    fprintf(stderr, "OTTSEL CRASH %s: 0x%08x: %08x %08x %08x %08x\n", tag, a, ottsel_ee_word(a),
++            ottsel_ee_word(a + 4), ottsel_ee_word(a + 8), ottsel_ee_word(a + 12));
++  }
++}
++static void ottsel_dump_connection_list(const char* tag, uint32_t head_node, uint32_t end_node) {
++  // head_node/end_node: EE addresses of the inline connectable terminators.
++  // walk next0 (offset 0). Each connection: {next0,prev0,next1,prev1,p0,p1,p2,p3}.
++  uint32_t node = ottsel_ee_ok(head_node) ? ottsel_ee_word(head_node) : 0;
++  for (int i = 0; i < 14; i++) {
++    if (!ottsel_ee_ok(node)) {
++      fprintf(stderr, "OTTSEL CRASH %s[%d]: node 0x%08x out of range, stop\n", tag, i, node);
++      return;
++    }
++    if (node == end_node) {
++      fprintf(stderr, "OTTSEL CRASH %s[%d]: reached end node 0x%08x OK\n", tag, i, node);
++      return;
++    }
++    fprintf(stderr,
++            "OTTSEL CRASH %s[%d]: @0x%08x next0=%08x prev0=%08x next1=%08x prev1=%08x "
++            "p0=%08x p1=%08x p2=%08x p3=%08x\n",
++            tag, i, node, ottsel_ee_word(node), ottsel_ee_word(node + 4), ottsel_ee_word(node + 8),
++            ottsel_ee_word(node + 12), ottsel_ee_word(node + 16), ottsel_ee_word(node + 20),
++            ottsel_ee_word(node + 24), ottsel_ee_word(node + 28));
++    node = ottsel_ee_word(node);
++  }
++  fprintf(stderr, "OTTSEL CRASH %s: walk truncated at 14 nodes\n", tag);
++}
++static void ottsel_crash_dump(int sig, ucontext_t* uc) {
++  static volatile bool s_dumping = false;
++  if (s_dumping) {
++    return;  // faulted inside the dump; give up quietly
++  }
++  s_dumping = true;
++  uint64_t base = (uint64_t)g_ee_main_mem;
++  constexpr uint64_t kEeSize = 128ull * (1 << 20);
++  auto& ss = uc->uc_mcontext->__ss;
++  uint64_t pc = (uint64_t)ss.__pc;
++  uint64_t lr = (uint64_t)ss.__lr;
++  fprintf(stderr, "OTTSEL CRASH: sig=%d pc=0x%llx lr=0x%llx sp=0x%llx fp=0x%llx base=0x%llx\n",
++          (unsigned long long)sig, (unsigned long long)pc, (unsigned long long)lr,
++          (unsigned long long)ss.__sp, (unsigned long long)ss.__fp, (unsigned long long)base);
++  for (int i = 0; i < 29; i += 4) {
++    fprintf(stderr, "OTTSEL CRASH: x%-2d=0x%016llx x%-2d=0x%016llx x%-2d=0x%016llx x%-2d=0x%016llx\n",
++            i, (unsigned long long)ss.__x[i], i + 1,
++            (unsigned long long)(i + 1 < 29 ? ss.__x[i + 1] : 0), i + 2,
++            (unsigned long long)(i + 2 < 29 ? ss.__x[i + 2] : 0), i + 3,
++            (unsigned long long)(i + 3 < 29 ? ss.__x[i + 3] : 0));
++  }
++  if (!g_ee_main_mem) {
++    s_dumping = false;
++    return;
++  }
++  if (pc >= base && pc < base + kEeSize) {
++    fprintf(stderr, "OTTSEL CRASH: EE pc=0x%llx\n", (unsigned long long)(pc - base));
++    ottsel_dump_ee_words("pc-bytes", (uint32_t)(pc - base) - 0x10, 16);
++  }
++  if (lr >= base && lr < base + kEeSize) {
++    fprintf(stderr, "OTTSEL CRASH: EE lr=0x%llx (call site at lr-4)\n",
++            (unsigned long long)(lr - base));
++    ottsel_dump_ee_words("caller-code", (uint32_t)(lr - base) - 0x60, 32);
++  }
++  // BOT30 cycle 17: the do-joint-math crash holds the process-drawable in
++  // x19 — dump the process header (name at +0) and its node-list region.
++  {
++    uint64_t x19 = ss.__x[19];
++    if (x19 > 0x1000 && x19 < (100ull << 20)) {
++      uint32_t p = (uint32_t)x19;
++      ottsel_dump_ee_words("x19-proc", p - 4, 24);
++      uint32_t nm = ottsel_ee_ok(p) ? ottsel_ee_word(p) : 0;
++      if (ottsel_ee_ok(nm)) {
++        char buf[32];
++        memcpy(buf, g_ee_main_mem + nm + 4, 31);
++        buf[31] = 0;
++        fprintf(stderr, "OTTSEL CRASH: x19 proc-name='%s'\n", buf);
++      }
++      uint32_t nl = ottsel_ee_ok(p + 0x70) ? ottsel_ee_word(p + 0x70) : 0;
++      fprintf(stderr, "OTTSEL CRASH: node-list=0x%08x\n", nl);
++      if (ottsel_ee_ok(nl)) {
++        ottsel_dump_ee_words("node-list", nl - 4, 40);
++      }
++    }
++  }
++  // engine ground truth (symbol table is stable by the time this crash fires)
++  uint32_t eng = jak1::intern_from_c("*background-draw-engine*")->value;
++  uint32_t abd = jak1::intern_from_c("add-bsp-drawable")->value;
++  fprintf(stderr, "OTTSEL CRASH: *background-draw-engine*=0x%08x add-bsp-drawable=0x%08x\n", eng,
++          abd);
++  if (ottsel_ee_ok(eng)) {
++    // engine (basic, ref R): type@R-4 name@R+0 len@R+4(s16) alloc@R+6(s16)
++    // alive-list@R+28 alive-list-end@R+44 dead-list@R+60 dead-list-end@R+76 data@R+92
++    fprintf(stderr, "OTTSEL CRASH ENG: type=%08x name=%08x len=%d alloc=%d\n",
++            ottsel_ee_word(eng - 4), ottsel_ee_word(eng),
++            (int)(int16_t)(ottsel_ee_word(eng + 4) & 0xffff),
++            (int)(int16_t)((ottsel_ee_word(eng + 4) >> 16) & 0xffff));
++    ottsel_dump_ee_words("ENG-hdr", eng - 4, 24);
++    ottsel_dump_connection_list("ENG-alive", eng + 28, eng + 44);
++    ottsel_dump_connection_list("ENG-dead", eng + 60, eng + 76);
++  }
++  fflush(stderr);
++  s_dumping = false;
++}
 +
 +static void ottsel_exec_fault_healer(int sig, siginfo_t* info, void* ucontext_v) {
 +  auto* uc = (ucontext_t*)ucontext_v;
@@ -3539,9 +3840,17 @@ index 4f7cc5e18..eff62d8d2 100644
 +      return;  // retry the faulting instruction
 +    }
 +  }
-+  // genuine fault: restore the previous handler and re-raise
++  // genuine fault: dump ground truth, restore the previous handler and re-raise
++  ottsel_crash_dump(sig, uc);
 +  sigaction(SIGBUS, &s_ottsel_old_bus, nullptr);
 +  sigaction(SIGSEGV, &s_ottsel_old_segv, nullptr);
++  raise(sig);
++}
++
++static void ottsel_sigill_hook(int sig, siginfo_t* /*info*/, void* ucontext_v) {
++  // the healed bad call lands here: page flipped RX but the bytes are data.
++  ottsel_crash_dump(sig, (ucontext_t*)ucontext_v);
++  sigaction(SIGILL, &s_ottsel_old_ill, nullptr);
 +  raise(sig);
 +}
 +
@@ -3554,13 +3863,19 @@ index 4f7cc5e18..eff62d8d2 100644
 +  sigemptyset(&sa.sa_mask);
 +  sigaction(SIGBUS, &sa, &s_ottsel_old_bus);
 +  sigaction(SIGSEGV, &sa, &s_ottsel_old_segv);
-+  lg::info("OTTSEL no-emit: exec-fault healer installed");
++  struct sigaction sa_ill;
++  memset(&sa_ill, 0, sizeof(sa_ill));
++  sa_ill.sa_sigaction = ottsel_sigill_hook;
++  sa_ill.sa_flags = SA_SIGINFO;
++  sigemptyset(&sa_ill.sa_mask);
++  sigaction(SIGILL, &sa_ill, &s_ottsel_old_ill);
++  lg::info("OTTSEL no-emit: exec-fault healer installed (+SIGILL crash dump)");
 +}
 +#endif
  std::thread::id g_main_thread_id = std::thread::id();
  GameVersion g_game_version = GameVersion::Jak1;
  BackgroundWorker g_background_worker;
-@@ -156,9 +199,16 @@ void ee_runner(SystemThreadInterface& iface) {
+@@ -156,9 +333,16 @@ void ee_runner(SystemThreadInterface& iface) {
    //
    // The solution to this is to flip-flop between permissions, or perhaps have two threads
    // one that has writing permission, and another with executable permission
@@ -3578,7 +3893,7 @@ index 4f7cc5e18..eff62d8d2 100644
  #ifdef __APPLE__
                    // has no map_populate
                    MAP_ANONYMOUS | MAP_32BIT | MAP_PRIVATE, 0, 0);
-@@ -167,7 +217,7 @@ void ee_runner(SystemThreadInterface& iface) {
+@@ -167,7 +351,7 @@ void ee_runner(SystemThreadInterface& iface) {
  #endif
    } else {
      g_ee_main_mem =
@@ -3587,7 +3902,7 @@ index 4f7cc5e18..eff62d8d2 100644
                    MAP_ANONYMOUS | MAP_PRIVATE, 0, 0);
    }
  
-@@ -190,7 +240,28 @@ void ee_runner(SystemThreadInterface& iface) {
+@@ -190,7 +374,28 @@ void ee_runner(SystemThreadInterface& iface) {
    // prevent access to the first 512 kB of memory.
    // On the PS2 this is the kernel and can't be accessed either.
    // this may not work well on systems with a page size > 1 MB.
@@ -3617,7 +3932,7 @@ index 4f7cc5e18..eff62d8d2 100644
    jak1::kboot_init_globals();
    jak2::kboot_init_globals();
 diff --git a/game/sce/libpad.cpp b/game/sce/libpad.cpp
-index 085d80d2f..355955c04 100644
+index 085d80d2f..53129e84b 100644
 --- a/game/sce/libpad.cpp
 +++ b/game/sce/libpad.cpp
 @@ -1,7 +1,15 @@
@@ -3657,7 +3972,7 @@ index 085d80d2f..355955c04 100644
  namespace ee {
  
  int scePadPortOpen(int port, int slot, void*) {
-@@ -92,6 +114,107 @@ int scePadRead(int port, int /*slot*/, u8* rdata) {
+@@ -92,6 +114,277 @@ int scePadRead(int port, int /*slot*/, u8* rdata) {
      for (size_t i = 0; i < pad_data.value()->button_data.size(); i++) {
        cpad->button0 |= pad_data.value()->button_data.at(i) << i;
      }
@@ -3714,6 +4029,176 @@ index 085d80d2f..355955c04 100644
 +                     w[12], w[13], w[14], w[15], w[16], w[17], w[18], w[19], w[20], w[21], w[22],
 +                     w[23], w[24], w[25]);
 +          }
++        }
++      }
++    }
++    // BOT30 cycle 2: one-shot hex dump of the compiled collide cull tests
++    // (suspected broken ARM64 SIMD codegen lets every frag pass, overflowing
++    // *collide-list* and trampling the type method tables at ~0x153e2d4).
++    {
++      static bool s_dumped_tests = false;
++      if (!s_dumped_tests && g_ee_main_mem && (ottsel_pad_reads % 250) == 5) {
++        u32 fy = jak1::intern_from_c("collide-cache-using-y-probe-test")->value;
++        u32 fb = jak1::intern_from_c("collide-cache-using-box-test")->value;
++        if (fy && fb) {
++          s_dumped_tests = true;
++          auto dumpfn = [](const char* name, u32 fn) {
++            lg::info("OTTSEL FN {}: entry=0x{:x}", name, fn);
++            for (u32 i = 0; i < 96; i += 4) {
++              const u32* p = (const u32*)(g_ee_main_mem + fn + i * 4);
++              // stop at the next function's 0xaeaeaeae type tag
++              lg::info("OTTSEL FN {}: +0x{:03x}: {:08x} {:08x} {:08x} {:08x}", name, i * 4, p[0],
++                       p[1], p[2], p[3]);
++              if (p[0] == 0xaeaeaeae || p[1] == 0xaeaeaeae || p[2] == 0xaeaeaeae ||
++                  p[3] == 0xaeaeaeae) {
++                break;
++              }
++            }
++          };
++          dumpfn("y-probe-test", fy);
++          dumpfn("box-test", fb);
++        }
++      }
++    }
++    // BOT30 cycle 5: in-vivo verification of the compiled cull test.  The
++    // static disassembly of collide-cache-using-y-probe-test is semantically
++    // correct, yet the village1 y-probe passes all 1734 frags.  Call the
++    // compiled function directly with synthetic inputs to see what it really
++    // returns (runs on the EE thread since scePadRead is called from GOAL).
++    {
++      static int s_invivo_state = 0;  // 0=pending, 1=done
++      if (s_invivo_state == 0 && g_ee_main_mem && (ottsel_pad_reads % 250) == 7) {
++        u32 fy = jak1::intern_from_c("collide-cache-using-y-probe-test")->value;
++        u32 cw = jak1::intern_from_c("*collide-work*")->value;
++        u32 cl = jak1::intern_from_c("*collide-list*")->value;
++        if (fy && cw && cl) {
++          s_invivo_state = 1;
++          // save box4w (min@+16 4 ints, max@+32 4 ints)
++          u32 saved[8];
++          memcpy(saved, g_ee_main_mem + cw + 16, 32);
++          s32* box = (s32*)(g_ee_main_mem + cw + 16);
++          box[0] = box[1] = box[2] = -100;
++          box[3] = 0;
++          box[4] = box[5] = box[6] = 100;
++          box[7] = 0;
++          // craft a bsphere vector in the collide-list item area (scratch)
++          u32 vec = cl + 0x700;
++          float* v = (float*)(g_ee_main_mem + vec);
++          auto run = [&](float x, float y, float z, float r, const char* tag) {
++            v[0] = x; v[1] = y; v[2] = z; v[3] = r;
++            u64 rv = call_goal(Ptr<Function>(fy), vec, 0, 0, s7.offset, g_ee_main_mem);
++            lg::info("OTTSEL INVIVO {}: bsphere=({},{},{},{}) -> 0x{:x} ({})", tag, x, y, z, r, rv,
++                     rv == s7.offset ? "#f culled" : (rv == s7.offset + 8 ? "#t PASS" : "?"));
++          };
++          run(1000.f, 1000.f, 1000.f, 10.f, "A-far");
++          run(0.f, 0.f, 0.f, 10.f, "B-origin");
++          run(50.f, 50.f, 50.f, 10.f, "C-inside");
++          run(0.f, 250.f, 0.f, 10.f, "D-above");
++          memcpy(g_ee_main_mem + cw + 16, saved, 32);
++          lg::info("OTTSEL INVIVO: done (box restored)");
++          // BOT30 cycle 10: the camera orbit position is (nan,0,nan) from
++          // boot — test the compiled trig itself (jak1 rotation units:
++          // 65536.0 = full circle, so sin(16384)=1).
++          auto runf = [&](const char* sym, float x, const char* tag) {
++            u32 fn = jak1::intern_from_c(sym)->value;
++            if (!fn) {
++              lg::info("OTTSEL TRIG {}: '{}' not found", tag, sym);
++              return;
++            }
++            u32 bits;
++            memcpy(&bits, &x, 4);
++            u64 rv = call_goal(Ptr<Function>(fn), bits, 0, 0, s7.offset, g_ee_main_mem);
++            float rf;
++            u32 rl = (u32)rv;
++            memcpy(&rf, &rl, 4);
++            lg::info("OTTSEL TRIG {}: {}({}) = {} (raw 0x{:x})", tag, sym, x, rf, rl);
++          };
++          runf("sin", 0.0f, "T1");
++          runf("sin", 16384.0f, "T2");
++          runf("cos", 0.0f, "T3");
++          runf("cos", 16384.0f, "T4");
++          // BOT30 cycle 14: sin==0.0 exactly means its adrp+ldr static float
++          // constant (2pi/65536) loads as zero.  Dump sin's runtime code and
++          // resolve its first adrp+ldr-s target to see what's really there.
++          {
++            u32 sfn = jak1::intern_from_c("sin")->value;
++            if (sfn) {
++              const u32* code = (const u32*)(g_ee_main_mem + sfn);
++              for (int i = 0; i < 12; i += 4) {
++                lg::info("OTTSEL SINCODE +{:02x}: {:08x} {:08x} {:08x} {:08x}", i * 4, code[i],
++                         code[i + 1], code[i + 2], code[i + 3]);
++              }
++              // decode first adrp (imm) + following ldr-s imm12
++              for (int i = 0; i < 16; i++) {
++                u32 w = code[i];
++                if ((w & 0x9F000000) == 0x90000000) {  // ADRP
++                  u64 pc = (u64)(sfn + i * 4);
++                  u64 immhi = (w >> 5) & 0x7FFFF;
++                  u64 immlo = (w >> 29) & 3;
++                  s64 imm = (s64)((immhi << 2) | immlo);
++                  imm = (imm << 43) >> 43;  // sign extend 21 bits
++                  u64 page = (pc & ~0xFFFULL) + (imm << 12);
++                  u32 w2 = code[i + 1];
++                  u32 off = 0;
++                  if ((w2 & 0xFFC00000) == 0xBD400000) {  // LDR s, [x, #imm]
++                    off = ((w2 >> 10) & 0xFFF) << 2;
++                  } else if ((w2 & 0xFFC00000) == 0x3DC00000) {  // LDR q
++                    off = ((w2 >> 10) & 0xFFF) << 4;
++                  }
++                  u64 target = page + off;
++                  lg::info("OTTSEL SINADRP: pc=0x{:x} imm-pages={} page=0x{:x} next={:08x} "
++                           "off=0x{:x} target=0x{:x} [target]={:08x}",
++                           pc, imm, page, w2, off, target,
++                           target < (128ull << 20) ? *(const u32*)(g_ee_main_mem + target) : 0);
++                  break;
++                }
++              }
++            }
++          }
++        }
++      }
++    }
++    // BOT30 cycle 2: watch the clobber target — type object 0x153e2d4's method
++    // slot 12 (offset +64) — and *collide-list* num-items (~1/s).
++    if ((ottsel_pad_reads % 250) == 6 && g_ee_main_mem) {
++      u32 cl = jak1::intern_from_c("*collide-list*")->value;
++      auto w = [](u32 a) { return *(const u32*)(g_ee_main_mem + a); };
++      lg::info("OTTSEL TYPEWATCH: [0x153e2d4-4..]={:08x} {:08x} {:08x} slot12@+64={:08x} "
++               "[0x153db74+64]={:08x} collide-list=0x{:x} num-items={}",
++               w(0x153e2d0), w(0x153e2d4), w(0x153e2d8), w(0x153e2d4 + 64), w(0x153db74 + 64), cl,
++               cl ? (int)w(cl) : -1);
++      // BOT30 cycle 9: the flooding probe is camera line-sphere with NaN
++      // inputs — track when *math-camera* trans (ref+844) goes NaN.
++      u32 mc = jak1::intern_from_c("*math-camera*")->value;
++      if (mc > 0x1000 && mc < (100u << 20)) {
++        const float* t = (const float*)(g_ee_main_mem + mc + 844);
++        const float* r = (const float*)(g_ee_main_mem + mc + 364);
++        lg::info("OTTSEL CAMWATCH: trans=({},{},{},{}) rot0=({},{},{},{})", t[0], t[1], t[2], t[3],
++                 r[0], r[1], r[2], r[3]);
++      }
++    }
++    // BOT30: periodic *background-draw-engine* connection-list dump (~1/s).
++    // The post-spawn crash calls a connection param slot as a function; this
++    // gives the list's ground truth before/after the title discard and in the
++    // frames leading up to the crash (offsets: engine ref R, alive-list@R+28,
++    // alive-list-end@R+44, connection {next0,prev0,next1,prev1,p0..p3}).
++    if ((ottsel_pad_reads % 250) == 4 && g_ee_main_mem) {
++      u32 eng = jak1::intern_from_c("*background-draw-engine*")->value;
++      u32 abd = jak1::intern_from_c("add-bsp-drawable")->value;
++      auto eeok = [](u32 a) { return a >= 0x1000 && a < (128u << 20); };
++      auto w = [](u32 a) { return *(const u32*)(g_ee_main_mem + a); };
++      if (eeok(eng)) {
++        u32 lenw = w(eng + 4);
++        lg::info("OTTSEL ENG: eng=0x{:x} abd=0x{:x} len={} alloc={} alive-head=0x{:x} "
++                 "alive-end-node=0x{:x}",
++                 eng, abd, (s16)(lenw & 0xffff), (s16)(lenw >> 16), w(eng + 28), eng + 44);
++        u32 node = w(eng + 28);
++        for (int i = 0; i < 12 && eeok(node) && node != eng + 44; i++) {
++          lg::info("OTTSEL ENG[{}]: @0x{:08x} next0={:08x} prev0={:08x} next1={:08x} "
++                   "prev1={:08x} p0={:08x} p1={:08x} p2={:08x} p3={:08x}",
++                   i, node, w(node), w(node + 4), w(node + 8), w(node + 12), w(node + 16),
++                   w(node + 20), w(node + 24), w(node + 28));
++          node = w(node);
 +        }
 +      }
 +    }
@@ -4177,81 +4662,6 @@ index 4355cb922..c1034ba72 100644
  
    void load_settings();
    void save_settings();
-diff --git a/goal_src/jak1/engine/gfx/tfrag/tfrag-methods.gc b/goal_src/jak1/engine/gfx/tfrag/tfrag-methods.gc
-index 086d33216..8e7a6de3f 100644
---- a/goal_src/jak1/engine/gfx/tfrag/tfrag-methods.gc
-+++ b/goal_src/jak1/engine/gfx/tfrag/tfrag-methods.gc
-@@ -90,7 +90,7 @@
-             ;; do the draw!
-             (reset! (-> *perf-stats* data 5))
-             ;;(format 0 "DRAW: ~D~%" s3-0)
--            ;; (draw-inline-array-tfrag sv-16 (the-as drawable-inline-array s4-1) s3-0 s1-0)
-+            (draw-inline-array-tfrag sv-16 (the-as drawable-inline-array s4-1) s3-0 s1-0)
-             (read! (-> *perf-stats* data 5))
-             ;; update stats for the draw
-             (update-wait-stats (-> *perf-stats* data 5)
-@@ -202,7 +202,7 @@
-                              1
-                              lev)
-           (reset! (-> *perf-stats* data 5))
--          ;; (draw-inline-array-tfrag sv-16 s5-1 s4-1 s2-0)
-+          (draw-inline-array-tfrag sv-16 s5-1 s4-1 s2-0)
-           (update-wait-stats (-> *perf-stats* data 5)
-                              (the-as uint 0)
-                              (-> *tfrag-work* wait-to-spr)
-@@ -357,7 +357,7 @@
-           (set! (-> *tfrag-work* wait-from-spr) (the-as uint 0))
-           (tfrag-init-buffer s2-0 (new 'static 'gs-test :ate #x1 :afail #x1 :zte #x1 :ztst (gs-ztest greater-equal)) 1 lev)
-           (reset! (-> *perf-stats* data 5))
--          ;; (draw-inline-array-tfrag sv-16 s5-1 s4-1 s2-0)
-+          (draw-inline-array-tfrag sv-16 s5-1 s4-1 s2-0)
-           (update-wait-stats (-> *perf-stats* data 5)
-                              (the-as uint 0)
-                              (-> *tfrag-work* wait-to-spr)
-@@ -495,7 +495,7 @@
-                              1
-                              lev)
-           (reset! (-> *perf-stats* data 5))
--          ;; (draw-inline-array-tfrag sv-16 s5-1 s4-1 s2-0)
-+          (draw-inline-array-tfrag sv-16 s5-1 s4-1 s2-0)
-           (update-wait-stats (-> *perf-stats* data 5)
-                              (the-as uint 0)
-                              (-> *tfrag-work* wait-to-spr)
-diff --git a/goal_src/jak1/engine/gfx/tie/tie-methods.gc b/goal_src/jak1/engine/gfx/tie/tie-methods.gc
-index d3e58b6f8..69aa3cce9 100644
---- a/goal_src/jak1/engine/gfx/tie/tie-methods.gc
-+++ b/goal_src/jak1/engine/gfx/tie/tie-methods.gc
-@@ -299,12 +299,12 @@
-             (set! (-> a1-7 generic-next-clear) (the-as uint128 0)))
-           0)
-         (let* ((s1-0 (-> (the-as drawable-inline-array-instance-tie v1-16) data)) ;; the inline array of instances
--               ;; (s0-0 (&-> (scratchpad-object terrain-context) work background vis-list (if (zero? (-> arg0 length)) 0 (/ (-> s1-0 0 id) 8)))) ;; vis for first.
-+               (s0-0 (&-> (scratchpad-object terrain-context) work background vis-list (if (zero? (-> arg0 length)) 0 (/ (-> s1-0 0 id) 8)))) ;; vis for first.
-                (s3-1 (-> *display* frames (-> *display* on-screen) frame global-buf)) ;; dma buf to write to
-+               (sv-16 (-> (the-as drawable-inline-array-node v1-16) length)) ;; number of instances
-                )
--          ;; (set! sv-16 (-> (the-as drawable-inline-array-node v1-16) length)) ;; number of instances
-           ;; if we actually have things to draw
--          (when #t ;; (nonzero? sv-16)
-+          (when (nonzero? sv-16)
-             ;; this is some buffer for the generic renderer
-             (let* ((v1-21 (logand (the-as int *gsf-buffer*) 8191))
-                    (v1-23 (logand (the-as int (&- (logand (the-as int (&-> (-> s4-1 data) -512)) 8191) (the-as uint v1-21))) 8191)))
-@@ -325,9 +325,11 @@
-               ;; note: this is a bit wasteful because we only care about generic ties.
-               ;; non-generics are drawn fully in C++, but we're computing unused stuff here.
-               ;; This ends up being so fast it's probably not worth worrying about yet.
--              ;; (when (not *use-etie*)
--              ;;  (with-profiler "tie-instance"
--              ;;    (draw-inline-array-instance-tie s0-0 s1-0 sv-16 s3-1)))
-+              ;; Ottsel S2.2 BOT21k: restore the retail TIE instance draw
-+              ;; (the no-emit runtime has no C++ tie renderer, so the port's
-+              ;; *use-etie* skip removed the only tie geometry path).
-+              (with-profiler "tie-instance"
-+                (draw-inline-array-instance-tie s0-0 s1-0 sv-16 s3-1))
-               ;; finish perf stats
-               (read! (-> *perf-stats* data 9))
-               (update-wait-stats (-> *perf-stats* data 9)
 diff --git a/goal_src/jak1/kernel/gkernel.gc b/goal_src/jak1/kernel/gkernel.gc
 index 73a056e45..96a03cb9f 100644
 --- a/goal_src/jak1/kernel/gkernel.gc
@@ -6348,7 +6758,7 @@ index 27cbcc8c1..e2eec60e9 100644
   * Divide (idiv, 32 bit)
   */
 diff --git a/goalc/emitter/IGenARM64.cpp b/goalc/emitter/IGenARM64.cpp
-index 1180f722d..d0bf19782 100644
+index 1180f722d..5a3b1f5d8 100644
 --- a/goalc/emitter/IGenARM64.cpp
 +++ b/goalc/emitter/IGenARM64.cpp
 @@ -90,6 +90,19 @@ InstructionARM64 mov_gpr64_gpr64(Register dst, Register src) {
@@ -6481,7 +6891,8 @@ index 1180f722d..d0bf19782 100644
    // 64-bit variant
 -  // LDR <Xt>, [<Xn|SP>], #<simm>
 +  // LDR <Xt>, [<Xn|SP>{, #<pimm>}]
-+  instrs.emplace_back(
+   instrs.emplace_back(
+-      InstructionARM64(Base(0b1111100001000000000001, 22), Imm9s(0), Rt(dst_reg.id()), Rn(X16)));
 +      InstructionARM64(Base(0b1111100101, 10), Imm12(0), Rt(dst_reg.id()), Rn(X16)));
 +  return InstructionARM64(instrs);
 +}
@@ -6512,8 +6923,7 @@ index 1180f722d..d0bf19782 100644
 +  // below s7), so sign-extend (LDRSW) to match the x86 disp32 address math.
 +  // https://www.scs.stanford.edu/~zyedidia/arm64/ldrsw_imm.html
 +  // LDRSW <Xt>, [<Xn|SP>{, #<pimm>}]
-   instrs.emplace_back(
--      InstructionARM64(Base(0b1111100001000000000001, 22), Imm9s(0), Rt(dst_reg.id()), Rn(X16)));
++  instrs.emplace_back(
 +      InstructionARM64(Base(0b1011100110, 10), Imm12(0), Rt(dst_reg.id()), Rn(X16)));
    return InstructionARM64(instrs);
  }
@@ -7117,7 +7527,31 @@ index 1180f722d..d0bf19782 100644
  }
  
  //;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-@@ -2459,7 +2627,17 @@ InstructionARM64 mov_vf_vf(Register dst, Register src) {
+@@ -2411,14 +2579,21 @@ InstructionARM64 int32_to_f32(Register dst, Register src) {
+   // https://www.scs.stanford.edu/~zyedidia/arm64/scvtf_float_int.html
+   // 32-bit to single-precision (sf == 0 && ftype == 00)
+   // SCVTF <Sd>, <Wn>
+-  return InstructionARM64(Base(0b0001111000100010000000, 22), Rd(dst.id()), Rn(dst.id()));
++  // BOT30: Rn must be the SOURCE gpr.  The previous Rn(dst.id()) read
++  // whatever register shared the destination's id, so every int->float
++  // conversion where the allocator picked different ids converted garbage
++  // (compiled `cos` returned 0, camera matrices went NaN, the NaN camera
++  // line-sphere probe flooded *collide-list* and trampled the type tables
++  // -> the village1 EE 0x3075274 crash).
++  return InstructionARM64(Base(0b0001111000100010000000, 22), Rd(dst.id()), Rn(src.id()));
+ }
+ 
+ InstructionARM64 f32_to_int32(Register dst, Register src) {
+   // https://www.scs.stanford.edu/~zyedidia/arm64/fcvtzs_float_int.html
+   // 32-bit to single-precision (sf == 0 && ftype == 00)
+   // FCVTZS <Wd>, <Sn>
+-  return InstructionARM64(Base(0b0001111000111000000000, 22), Rd(dst.id()), Rn(dst.id()));
++  // BOT30: Rn must be the SOURCE float register (see int32_to_f32 above).
++  return InstructionARM64(Base(0b0001111000111000000000, 22), Rd(dst.id()), Rn(src.id()));
+ }
+ 
+ InstructionARM64 nop() {
+@@ -2459,7 +2634,17 @@ InstructionARM64 mov_vf_vf(Register dst, Register src) {
    // 1 	16B
    ASSERT(dst.is_128bit_simd(instr_set));
    ASSERT(src.is_128bit_simd(instr_set));
@@ -7136,7 +7570,7 @@ index 1180f722d..d0bf19782 100644
  }
  
  InstructionARM64 loadvf_gpr64_plus_gpr64(Register dst, Register addr1, Register addr2) {
-@@ -2472,17 +2650,17 @@ InstructionARM64 loadvf_gpr64_plus_gpr64(Register dst, Register addr1, Register
+@@ -2472,17 +2657,17 @@ InstructionARM64 loadvf_gpr64_plus_gpr64(Register dst, Register addr1, Register
    ASSERT(addr1 != addr2);
    ASSERT(addr1 != SP);
    ASSERT(addr2 != SP);
@@ -7159,7 +7593,7 @@ index 1180f722d..d0bf19782 100644
    ASSERT(dst.is_128bit_simd(instr_set));
    ASSERT(addr1.is_gpr(instr_set));
    ASSERT(addr2.is_gpr(instr_set));
-@@ -2490,8 +2668,28 @@ InstructionARM64 loadvf_gpr64_plus_gpr64_plus_s8(Register dst,
+@@ -2490,8 +2675,28 @@ InstructionARM64 loadvf_gpr64_plus_gpr64_plus_s8(Register dst,
    ASSERT(addr1 != SP);
    ASSERT(addr2 != SP);
    ASSERT(offset >= INT8_MIN && offset <= INT8_MAX);
@@ -7190,7 +7624,7 @@ index 1180f722d..d0bf19782 100644
  }
  
  InstructionARM64 loadvf_gpr64_plus_gpr64_plus_s32(Register dst,
-@@ -2537,7 +2735,9 @@ InstructionARM64 storevf_gpr64_plus_gpr64(Register value, Register addr1, Regist
+@@ -2537,7 +2742,9 @@ InstructionARM64 storevf_gpr64_plus_gpr64(Register value, Register addr1, Regist
    ASSERT(addr2 != SP);
    // https://www.scs.stanford.edu/~zyedidia/arm64/str_reg_fpsimd.html
    // STR <Qt>, [<Xn|SP>, (<Wm>|<Xm>){, <extend> {<amount>}}]
@@ -7201,7 +7635,7 @@ index 1180f722d..d0bf19782 100644
                            Rm(addr2.id()));
  }
  
-@@ -2609,8 +2809,6 @@ InstructionARM64 storevf_gpr64_plus_gpr64_plus_s32(Register value,
+@@ -2609,8 +2816,6 @@ InstructionARM64 storevf_gpr64_plus_gpr64_plus_s32(Register value,
  
  InstructionARM64 loadvf_rip_plus_s32(Register dest, s64 offset) {
    ASSERT(dest.is_128bit_simd(instr_set));
@@ -7210,7 +7644,7 @@ index 1180f722d..d0bf19782 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -2635,19 +2833,80 @@ InstructionARM64 shuffle_vf(Register dst, Register src, u8 dx, u8 dy, u8 dz, u8
+@@ -2635,19 +2840,80 @@ InstructionARM64 shuffle_vf(Register dst, Register src, u8 dx, u8 dy, u8 dz, u8
    return InstructionARM64(0b0);
  }
  
@@ -7295,7 +7729,28 @@ index 1180f722d..d0bf19782 100644
        break;
      default:
        ASSERT(false);
-@@ -2687,18 +2946,20 @@ InstructionARM64 mul_vf(Register dst, Register src1, Register src2) {
+@@ -2671,10 +2937,16 @@ InstructionARM64 sub_vf(Register dst, Register src1, Register src2) {
+ }
+ 
+ InstructionARM64 add_vf(Register dst, Register src1, Register src2) {
+-  // https://www.scs.stanford.edu/~zyedidia/arm64/add_advsimd.html
+-  // ADD <Vd>.<T>, <Vn>.<T>, <Vm>.<T>
+-  // 4 single precision floats
+-  return InstructionARM64(Base(0b0100111010100000100001, 22), Rn(src1.id()), Rm(src2.id()),
++  // https://www.scs.stanford.edu/~zyedidia/arm64/fadd_advsimd.html
++  // FADD <Vd>.4S, <Vn>.4S, <Vm>.4S
++  // The previous encoding here (0b0100111010100000100001) was integer
++  // ADD .4S, not float: it int-added float bit patterns, which broke every
++  // GOAL-compiled `.add.vf` — proven by the collide cull tests passing all
++  // fragments (sphere-max garbage -> fcvtzs saturates -> *collide-list*
++  // overflow -> global-heap type-table trample -> the village1 EE crash at
++  // pc=0x3075274).  FADD is FSUB's opcode (110101) with sz=0:
++  // fadd.4s v6,v1,v6 = 0x4E26D426 (verified with clang).
++  return InstructionARM64(Base(0b0100111000100000110101, 22), Rn(src1.id()), Rm(src2.id()),
+                           Rd(dst.id()));
+ }
+ 
+@@ -2687,18 +2959,20 @@ InstructionARM64 mul_vf(Register dst, Register src1, Register src2) {
  }
  
  InstructionARM64 max_vf(Register dst, Register src1, Register src2) {
@@ -7324,7 +7779,7 @@ index 1180f722d..d0bf19782 100644
                            Rd(dst.id()));
  }
  
-@@ -2739,8 +3000,9 @@ InstructionARM64 pw_sra(Register dst, Register src, u8 imm) {
+@@ -2739,8 +3013,9 @@ InstructionARM64 pw_sra(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/sshr_advsimd.html
    // - vector, 4S
    // SSHR <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -7335,7 +7790,7 @@ index 1180f722d..d0bf19782 100644
  }
  
  // - logical_shift_right_32bit_vf
-@@ -2748,8 +3010,9 @@ InstructionARM64 pw_srl(Register dst, Register src, u8 imm) {
+@@ -2748,8 +3023,9 @@ InstructionARM64 pw_srl(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/ushr_advsimd.html
    // - vector, 4S
    // USHR <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -7346,7 +7801,7 @@ index 1180f722d..d0bf19782 100644
  }
  
  // - logical_shift_left_32bit_vf
-@@ -2757,8 +3020,9 @@ InstructionARM64 pw_sll(Register dst, Register src, u8 imm) {
+@@ -2757,8 +3033,9 @@ InstructionARM64 pw_sll(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/shl_advsimd.html
    // - vector, 4S
    // SHL <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -7357,7 +7812,7 @@ index 1180f722d..d0bf19782 100644
  }
  
  // - logical_shift_right_16bit_vf
-@@ -2766,8 +3030,9 @@ InstructionARM64 ph_srl(Register dst, Register src, u8 imm) {
+@@ -2766,8 +3043,9 @@ InstructionARM64 ph_srl(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/ushr_advsimd.html
    // - vector, 8H
    // USHR <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -7368,7 +7823,7 @@ index 1180f722d..d0bf19782 100644
  }
  
  // - logical_shift_left_16bit_vf
-@@ -2775,8 +3040,9 @@ InstructionARM64 ph_sll(Register dst, Register src, u8 imm) {
+@@ -2775,8 +3053,9 @@ InstructionARM64 ph_sll(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/shl_advsimd.html
    // - vector, 8H
    // SHL <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -7695,7 +8150,7 @@ index bc998f09f..30070cb34 100644
  
  /*!
 diff --git a/goalc/emitter/ObjectGenerator.cpp b/goalc/emitter/ObjectGenerator.cpp
-index 9f1ffc514..64d61343f 100644
+index 9f1ffc514..2e63bfcaa 100644
 --- a/goalc/emitter/ObjectGenerator.cpp
 +++ b/goalc/emitter/ObjectGenerator.cpp
 @@ -13,6 +13,7 @@
@@ -7787,7 +8242,7 @@ index 9f1ffc514..64d61343f 100644
    }
  }
  
-@@ -440,6 +489,67 @@ void ObjectGenerator::handle_temp_instr_sym_links(int seg) {
+@@ -440,6 +489,90 @@ void ObjectGenerator::handle_temp_instr_sym_links(int seg) {
    }
  }
  
@@ -7830,11 +8285,34 @@ index 9f1ffc514..64d61343f 100644
 +    uint32_t immhi = (uint32_t(page_delta) >> 2) & 0x7FFFF;
 +    word = (word & 0x9F00001F) | (immlo << 29) | (immhi << 5);
 +    std::memcpy(data.data() + patch_location, &word, 4);
-+    // Patch the following ADD's imm12 (low 12 bits of target).
++    // Patch the following instruction's low-12 field.  This is an ADD for
++    // address materialization, but float/vector constant loads emit
++    // ADRP + LDR (unsigned imm), whose imm12 is SCALED by the access size.
++    // BOT30: writing the raw lo12 into a scaled LDR made every rip float
++    // constant load land at lo12*scale (compiled sin read zeros 0x3F0 high —
++    // the NaN-camera -> collide-list-overflow -> village1 crash chain).
 +    int add_loc = patch_location + 4;
 +    u32 add_word = 0;
 +    std::memcpy(&add_word, data.data() + add_loc, 4);
-+    add_word = (add_word & ~(0xFFFu << 10)) | ((uint32_t(target_offset_in_seg) & 0xFFF) << 10);
++    uint32_t lo12 = uint32_t(target_offset_in_seg) & 0xFFF;
++    uint32_t field;
++    if ((add_word & 0x3B000000) == 0x39000000) {
++      // LDR/STR (unsigned imm): size in bits 31:30, opc<1>+size selects scale;
++      // for simple loads the shift is size (00=B,01=H,10=W/S,11=X/D) and 4 for
++      // 128-bit Q (size=00, opc=11).
++      uint32_t size = (add_word >> 30) & 3;
++      uint32_t opc = (add_word >> 22) & 3;
++      uint32_t shift = (size == 0 && (opc & 2)) ? 4 : size;
++      ASSERT_MSG((lo12 & ((1u << shift) - 1)) == 0,
++                 fmt::format("patch_arm64_static_ref: unaligned lo12 0x{:x} for scaled load "
++                             "(shift {})",
++                             lo12, shift));
++      field = lo12 >> shift;
++    } else {
++      // ADD (immediate): raw byte offset.
++      field = lo12;
++    }
++    add_word = (add_word & ~(0xFFFu << 10)) | (field << 10);
 +    std::memcpy(data.data() + add_loc, &add_word, 4);
 +    return;
 +  } else if ((word & 0x3B000000) == 0x18000000) {
@@ -7855,7 +8333,7 @@ index 9f1ffc514..64d61343f 100644
  void ObjectGenerator::handle_temp_rip_func_links(int seg) {
    for (const auto& link : m_rip_func_temp_links_by_seg.at(seg)) {
      RipLink result;
-@@ -447,6 +557,11 @@ void ObjectGenerator::handle_temp_rip_func_links(int seg) {
+@@ -447,6 +580,11 @@ void ObjectGenerator::handle_temp_rip_func_links(int seg) {
      result.target_segment = link.target.seg;
      const auto& target_func = m_function_data_by_seg.at(link.target.seg).at(link.target.func_id);
      result.offset_in_segment = target_func.instruction_to_byte_in_data.at(0);
@@ -7867,7 +8345,7 @@ index 9f1ffc514..64d61343f 100644
      m_rip_links_by_seg.at(seg).push_back(result);
    }
  }
-@@ -458,6 +573,9 @@ void ObjectGenerator::handle_temp_rip_data_links(int seg) {
+@@ -458,6 +596,9 @@ void ObjectGenerator::handle_temp_rip_data_links(int seg) {
      result.target_segment = link.data.seg;
      const auto& target = m_static_data_by_seg.at(link.data.seg).at(link.data.static_id);
      result.offset_in_segment = target.location + link.offset;
@@ -7877,7 +8355,7 @@ index 9f1ffc514..64d61343f 100644
      m_rip_links_by_seg.at(seg).push_back(result);
    }
  }
-@@ -543,6 +661,11 @@ void ObjectGenerator::emit_link_ptr(int seg) {
+@@ -543,6 +684,11 @@ void ObjectGenerator::emit_link_ptr(int seg) {
  }
  
  void ObjectGenerator::emit_link_rip(int seg) {
@@ -7889,7 +8367,7 @@ index 9f1ffc514..64d61343f 100644
    auto& out = m_link_by_seg.at(seg);
    for (auto& rec : m_rip_links_by_seg.at(seg)) {
      // kind (u8)
-@@ -557,16 +680,27 @@ void ObjectGenerator::emit_link_rip(int seg) {
+@@ -557,16 +703,27 @@ void ObjectGenerator::emit_link_rip(int seg) {
      out.push_back(rec.target_segment);
      // offset into current
      const auto& src_func = m_function_data_by_seg.at(rec.instr.seg).at(rec.instr.func_id);
@@ -7922,7 +8400,7 @@ index 9f1ffc514..64d61343f 100644
    }
  }
  
-@@ -601,6 +735,7 @@ std::vector<u8> ObjectGenerator::generate_header_v3() {
+@@ -601,6 +758,7 @@ std::vector<u8> ObjectGenerator::generate_header_v3() {
    offset += push_data<u32>(N_SEG, result);
  
    offset += sizeof(u32) * N_SEG * 4;  // 4 u32's per segment
@@ -7930,7 +8408,7 @@ index 9f1ffc514..64d61343f 100644
    offset += 4;
    struct SizeOffset {
      uint32_t offset, size;
-@@ -629,7 +764,12 @@ std::vector<u8> ObjectGenerator::generate_header_v3() {
+@@ -629,7 +787,12 @@ std::vector<u8> ObjectGenerator::generate_header_v3() {
    }
  
    push_data<SizeOffsetTable>(table, result);
@@ -7944,7 +8422,7 @@ index 9f1ffc514..64d61343f 100644
    return result;
  }
  
-@@ -640,4 +780,59 @@ ObjectGeneratorStats ObjectGenerator::get_stats() const {
+@@ -640,4 +803,59 @@ ObjectGeneratorStats ObjectGenerator::get_stats() const {
  void ObjectGenerator::count_eliminated_move() {
    m_stats.moves_eliminated++;
  }
@@ -8915,10 +9393,10 @@ index 000000000..cc5460924
 +}
 diff --git a/tools/ottsel_a1/semantic_regressions.cpp b/tools/ottsel_a1/semantic_regressions.cpp
 new file mode 100644
-index 000000000..b66b0ac45
+index 000000000..4d26c72ec
 --- /dev/null
 +++ b/tools/ottsel_a1/semantic_regressions.cpp
-@@ -0,0 +1,952 @@
+@@ -0,0 +1,991 @@
 +// Ottsel A1.0 semantic ARM64 regression harness.
 +//
 +// The emission validator proves only that words decode as legal A64
@@ -9329,6 +9807,45 @@ index 000000000..b66b0ac45
 +    if ((w & 0xFFE0FC00) != 0x4EA01C00 || rm != rn) {
 +      std::cout << "    word=0x" << std::hex << w << std::dec << " rm=" << rm << " rn=" << rn
 +                << "\n";
++    }
++  }
++
++  // 24. add_vf must be FADD .4S (0x4E20D400 base), not integer ADD .4S
++  // (0x4EA08400 base).  The integer encoding int-added float bit patterns:
++  // in collide-cache-using-y-probe-test the sphere-max side (.add.w.vf.xyz)
++  // became garbage, fcvtzs saturated, box_min>sphere_max never culled, the
++  // village1 y-probe pushed 1734 items into the 256-slot *collide-list*, and
++  // the overflow trampled global-heap type method tables (the EE 0x3075274
++  // crash).  fadd.4s v6,v1,v6 = 0x4E26D426 (verified with clang).
++  {
++    auto ins = IGen::ARM64::add_vf(emitter::V6, emitter::V1, emitter::V6);
++    u32 w = ins.encodings[ins.count - 1];
++    check(w == 0x4E26D426, "add_vf emits FADD .4S (0x4E26D426 for v6,v1,v6)");
++    check((w & 0xFFE0FC00) != 0x4EA08400, "add_vf is not integer ADD .4S (old encoding)");
++    if (w != 0x4E26D426) {
++      std::cout << "    word=0x" << std::hex << w << std::dec << "\n";
++    }
++  }
++
++  // 25. Scalar int<->float conversions must read the SOURCE register.  The
++  // old encodings used Rn(dst.id()), so fcvtzs/scvtf converted whatever
++  // register shared the destination's id whenever the allocator split ids —
++  // compiled `cos` returned 0, camera matrices went NaN, and the NaN camera
++  // line-sphere probe flooded *collide-list* (1734/256), trampling the type
++  // method tables above it (the village1 EE 0x3075274 crash).
++  {
++    auto ins = IGen::ARM64::f32_to_int32(emitter::X0, emitter::V1);
++    u32 w = ins.encodings[ins.count - 1];
++    u32 rd = w & 0x1F, rn = (w >> 5) & 0x1F;
++    check((w & 0xFFFFFC00) == 0x1E380000 && rd == 0 && rn == 1,
++          "f32_to_int32 emits FCVTZS Wd, S<src> (reads the source float reg)");
++    auto ins2 = IGen::ARM64::int32_to_f32(emitter::V1, emitter::X0);
++    u32 w2 = ins2.encodings[ins2.count - 1];
++    u32 rd2 = w2 & 0x1F, rn2 = (w2 >> 5) & 0x1F;
++    check((w2 & 0xFFFFFC00) == 0x1E220000 && rd2 == 1 && rn2 == 0,
++          "int32_to_f32 emits SCVTF S<dst>, W<src> (reads the source gpr)");
++    if (rd != 0 || rn != 1 || rd2 != 1 || rn2 != 0) {
++      std::cout << "    f2i=0x" << std::hex << w << " i2f=0x" << w2 << std::dec << "\n";
 +    }
 +  }
 +}
