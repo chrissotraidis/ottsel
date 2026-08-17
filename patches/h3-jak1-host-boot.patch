@@ -75,7 +75,7 @@ index 2a7b5c400..060ea5d37 100644
      set_target_properties(gk PROPERTIES VS_DPI_AWARE "PerMonitor")
  endif()
 diff --git a/game/graphics/opengl_renderer/background/TFragment.cpp b/game/graphics/opengl_renderer/background/TFragment.cpp
-index 78b6c4772..fbb76a8bc 100644
+index 78b6c4772..9e4864b0a 100644
 --- a/game/graphics/opengl_renderer/background/TFragment.cpp
 +++ b/game/graphics/opengl_renderer/background/TFragment.cpp
 @@ -1,5 +1,7 @@
@@ -86,7 +86,7 @@ index 78b6c4772..fbb76a8bc 100644
  #include "game/graphics/opengl_renderer/dma_helpers.h"
  
  #include "third-party/imgui/imgui.h"
-@@ -145,9 +147,21 @@ void TFragment::render(DmaFollower& dma,
+@@ -145,13 +147,41 @@ void TFragment::render(DmaFollower& dma,
    }
  
    if (level_name.empty()) {
@@ -108,7 +108,27 @@ index 78b6c4772..fbb76a8bc 100644
      setup_for_level(m_tree_kinds, level_name, render_state);
      TfragRenderSettings settings;
  
-@@ -454,6 +468,17 @@ void TFragment::render_tree(int geom,
+     settings.camera = m_pc_port_data.camera;
++    // BOT30: dump the GOAL-built camera packet ~1/s — the screen collapses to
++    // a horizontal band, so the projection matrix reaching GL is suspect.
++    {
++      static int frame_ctr = 0;
++      if ((frame_ctr++ % 60) == 0) {
++        const auto& c = settings.camera;
++        lg::info("OTTSEL CAMMTX: r0=({:.4f},{:.4f},{:.4f},{:.4f}) r1=({:.4f},{:.4f},{:.4f},{:.4f}) "
++                 "r2=({:.4f},{:.4f},{:.4f},{:.4f}) r3=({:.1f},{:.1f},{:.1f},{:.1f}) "
++                 "hvdf=({:.1f},{:.1f},{:.1f},{:.1f}) fog=({:.4f},{:.1f},{:.1f},{:.1f})",
++                 c.camera[0][0], c.camera[0][1], c.camera[0][2], c.camera[0][3], c.camera[1][0],
++                 c.camera[1][1], c.camera[1][2], c.camera[1][3], c.camera[2][0], c.camera[2][1],
++                 c.camera[2][2], c.camera[2][3], c.camera[3][0], c.camera[3][1], c.camera[3][2],
++                 c.camera[3][3], c.hvdf_off[0], c.hvdf_off[1], c.hvdf_off[2], c.hvdf_off[3],
++                 c.fog[0], c.fog[1], c.fog[2], c.fog[3]);
++      }
++    }
+     settings.tree_idx = 0;
+     if (render_state->occlusion_vis[m_level_id].valid) {
+       settings.occlusion_culling = render_state->occlusion_vis[m_level_id].data;
+@@ -454,6 +484,17 @@ void TFragment::render_tree(int geom,
    }
  
    prof.add_tri(total_tris);
@@ -6888,7 +6908,7 @@ index 27cbcc8c1..e2eec60e9 100644
   * Divide (idiv, 32 bit)
   */
 diff --git a/goalc/emitter/IGenARM64.cpp b/goalc/emitter/IGenARM64.cpp
-index 1180f722d..f161a4cda 100644
+index 1180f722d..32e3505aa 100644
 --- a/goalc/emitter/IGenARM64.cpp
 +++ b/goalc/emitter/IGenARM64.cpp
 @@ -90,6 +90,19 @@ InstructionARM64 mov_gpr64_gpr64(Register dst, Register src) {
@@ -8000,6 +8020,83 @@ index 1180f722d..f161a4cda 100644
  }
  
  InstructionARM64 parallel_add_byte(Register dst, Register src0, Register src1) {
+@@ -2812,50 +3095,52 @@ InstructionARM64 parallel_bitwise_and(Register dst, Register src0, Register src1
+ }
+ 
+ InstructionARM64 pextub_swapped(Register dst, Register src0, Register src1) {
+-  // https://www.scs.stanford.edu/~zyedidia/arm64/uzp2_advsimd.html
+-  // - 16B
+-  // UZP2 <Vd>.<T>, <Vn>.<T>, <Vm>.<T>
+-  return InstructionARM64(Base(0b0100111000000000010110, 22), Rn(src0.id()), Rm(src1.id()),
++  // https://www.scs.stanford.edu/~zyedidia/arm64/zip2_advsimd.html
++  // - 16B (x86 PUNPCKHBW semantics; was wrongly UZP2)
++  // ZIP2 <Vd>.<T>, <Vn>.<T>, <Vm>.<T>
++  return InstructionARM64(Base(0b0100111000000000011110, 22), Rn(src0.id()), Rm(src1.id()),
+                           Rd(dst.id()));
+ }
+ 
+ InstructionARM64 pextuh_swapped(Register dst, Register src0, Register src1) {
+-  // https://www.scs.stanford.edu/~zyedidia/arm64/uzp2_advsimd.html
+-  // - 8H
+-  // UZP2 <Vd>.<T>, <Vn>.<T>, <Vm>.<T>
+-  return InstructionARM64(Base(0b0100111001000000010110, 22), Rn(src0.id()), Rm(src1.id()),
++  // BOT30: x86 reference is PUNPCKHWD -> ZIP2.8H (was wrongly UZP2).
++  // https://www.scs.stanford.edu/~zyedidia/arm64/zip2_advsimd.html
++  // ZIP2 <Vd>.8H, <Vn>.8H, <Vm>.8H
++  return InstructionARM64(Base(0b0100111001000000011110, 22), Rn(src0.id()), Rm(src1.id()),
+                           Rd(dst.id()));
+ }
+ 
+ InstructionARM64 pextuw_swapped(Register dst, Register src0, Register src1) {
+-  // https://www.scs.stanford.edu/~zyedidia/arm64/uzp2_advsimd.html
+-  // - 4S
+-  // UZP2 <Vd>.<T>, <Vn>.<T>, <Vm>.<T>
+-  return InstructionARM64(Base(0b0100111010000000010110, 22), Rn(src0.id()), Rm(src1.id()),
++  // BOT30: x86 reference is PUNPCKHDQ -> ZIP2.4S (was wrongly UZP2).
++  // https://www.scs.stanford.edu/~zyedidia/arm64/zip2_advsimd.html
++  // ZIP2 <Vd>.4S, <Vn>.4S, <Vm>.4S
++  return InstructionARM64(Base(0b0100111010000000011110, 22), Rn(src0.id()), Rm(src1.id()),
+                           Rd(dst.id()));
+ }
+ 
+ InstructionARM64 pextlb_swapped(Register dst, Register src0, Register src1) {
+-  // https://www.scs.stanford.edu/~zyedidia/arm64/uzp1_advsimd.html
+-  // - 16B
+-  // UZP1 <Vd>.<T>, <Vn>.<T>, <Vm>.<T>
+-  return InstructionARM64(Base(0b0100111000000000000110, 22), Rn(src0.id()), Rm(src1.id()),
++  // BOT30: x86 reference is PUNPCKLBW -> ZIP1.16B (was wrongly UZP1).
++  // https://www.scs.stanford.edu/~zyedidia/arm64/zip1_advsimd.html
++  // ZIP1 <Vd>.16B, <Vn>.16B, <Vm>.16B
++  return InstructionARM64(Base(0b0100111000000000001110, 22), Rn(src0.id()), Rm(src1.id()),
+                           Rd(dst.id()));
+ }
+ 
+ InstructionARM64 pextlh_swapped(Register dst, Register src0, Register src1) {
+-  // https://www.scs.stanford.edu/~zyedidia/arm64/uzp1_advsimd.html
+-  // - 8H
+-  // UZP1 <Vd>.<T>, <Vn>.<T>, <Vm>.<T>
+-  return InstructionARM64(Base(0b0100111001000000000110, 22), Rn(src0.id()), Rm(src1.id()),
++  // BOT30: x86 reference is PUNPCKLWD -> ZIP1.8H (was wrongly UZP1).
++  // https://www.scs.stanford.edu/~zyedidia/arm64/zip1_advsimd.html
++  // ZIP1 <Vd>.8H, <Vn>.8H, <Vm>.8H
++  return InstructionARM64(Base(0b0100111001000000001110, 22), Rn(src0.id()), Rm(src1.id()),
+                           Rd(dst.id()));
+ }
+ 
+ InstructionARM64 pextlw_swapped(Register dst, Register src0, Register src1) {
+-  // https://www.scs.stanford.edu/~zyedidia/arm64/uzp1_advsimd.html
+-  // - 4S
+-  // UZP1 <Vd>.<T>, <Vn>.<T>, <Vm>.<T>
+-  return InstructionARM64(Base(0b0100111010000000000110, 22), Rn(src0.id()), Rm(src1.id()),
++  // BOT30: x86 reference is PUNPCKLDQ (interleave low dwords) -> ZIP1.4S.
++  // The old UZP1 (deinterleave) broke matrix-transpose!: the camera matrix
++  // reached GL with zeroed/duplicated rows (the black screen + single band).
++  // https://www.scs.stanford.edu/~zyedidia/arm64/zip1_advsimd.html
++  // ZIP1 <Vd>.4S, <Vn>.4S, <Vm>.4S
++  return InstructionARM64(Base(0b0100111010000000001110, 22), Rn(src0.id()), Rm(src1.id()),
+                           Rd(dst.id()));
+ }
+ 
 diff --git a/goalc/emitter/IGenARM64.h b/goalc/emitter/IGenARM64.h
 index 1bd210c7a..7ca9c263c 100644
 --- a/goalc/emitter/IGenARM64.h
@@ -9559,10 +9656,10 @@ index 000000000..cc5460924
 +}
 diff --git a/tools/ottsel_a1/semantic_regressions.cpp b/tools/ottsel_a1/semantic_regressions.cpp
 new file mode 100644
-index 000000000..cdcf2b073
+index 000000000..4280a358e
 --- /dev/null
 +++ b/tools/ottsel_a1/semantic_regressions.cpp
-@@ -0,0 +1,1039 @@
+@@ -0,0 +1,1055 @@
 +// Ottsel A1.0 semantic ARM64 regression harness.
 +//
 +// The emission validator proves only that words decode as legal A64
@@ -10061,6 +10158,22 @@ index 000000000..cdcf2b073
 +    (void)names;
 +    check(mapped == saved,
 +          "kernel-asm saved regs (rbx/rbp/r10/r11/r12) cover the ARM64 saved set incl. X26");
++  }
++
++  // 28. The pext (punpck) family must be ZIP (interleave), not UZP
++  // (deinterleave).  x86 references: PUNPCKLDQ/PUNPCKHDQ etc.  The UZP
++  // versions broke matrix-transpose!: the camera matrix reached GL with
++  // zeroed/duplicated rows — the black screen with a single horizontal band.
++  // zip1.4s v2,v0,v1 = 0x4E813802; zip2.4s = 0x4E817802 (verified w/ clang).
++  {
++    auto lw = IGen::ARM64::pextlw_swapped(emitter::V2, emitter::V0, emitter::V1);
++    auto uw = IGen::ARM64::pextuw_swapped(emitter::V2, emitter::V0, emitter::V1);
++    u32 wl = lw.encodings[lw.count - 1], wu = uw.encodings[uw.count - 1];
++    check(wl == 0x4E813802, "pextlw_swapped emits ZIP1.4S (0x4E813802 for v2,v0,v1)");
++    check(wu == 0x4E817802, "pextuw_swapped emits ZIP2.4S (0x4E817802 for v2,v0,v1)");
++    if (wl != 0x4E813802 || wu != 0x4E817802) {
++      std::cout << "    lw=0x" << std::hex << wl << " uw=0x" << wu << std::dec << "\n";
++    }
 +  }
 +}
 +

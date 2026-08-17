@@ -178,3 +178,25 @@ to identify the exact calling frame.
   in-vivo cull test driver.
 - collide_cache.cpp (`pc_upload_collide_frag`): overflow log + query/items
   classification dumps.
+
+## Root cause #6 — pext family ported as UZP instead of ZIP (the black screen)
+
+User ground truth: the window showed a black screen with a single
+horizontal band despite "GAMEPLAY: enter village1" and healthy telemetry.
+Renderer probes proved TFragment was submitting ~6.7M tris/600 calls for
+village1 — geometry flowed, pixels didn't.  Dumping the GOAL-built camera
+packet in TFragment: the 4x4 was garbage (title: rows 1,2 all-zero and
+row3 == row0; village: y-scale 0.0006 -> the image collapses into exactly
+the observed band), while hvdf/fog in the same packet were classic sane
+values.  Zeroed/duplicated rows are the signature of a broken transpose:
+`pextlw/pextuw/pextlh/pextuh/pextlb/pextub` were ported as **UZP1/UZP2
+(deinterleave)** but the x86 references are PUNPCKL/H* (**interleave** =
+ZIP1/ZIP2) — `matrix-transpose!` and every punpck-based unpack was wrong.
+Fixed all six encodings (A1.0 regression 28 pins zip1.4s/zip2.4s).
+After the fix the camera matrix is textbook (title diagonal
+-0.4/-0.2334/-8184; village view*proj with proper cross terms), 60s+
+stable, session left running for visual confirmation.
+
+Honesty note: earlier "playable/visible" claims in this doc were based on
+game-logic telemetry plus inherited display claims; the visual gate was
+not verified until the user's screenshot forced this investigation.
