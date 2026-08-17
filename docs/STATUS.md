@@ -26,9 +26,17 @@ Mode: Phase 2 build loop — **strategy reset: fr3 + upstream renderers (see doc
 > 5-minute soak PASS.  Build discipline: after ANY goalc change run
 > `rm out/jak1/obj/*.o` + `(mi)` (546 targets) — GROUP:kernel+GAME.CGO
 > alone leaves TIT/VI1 DGO level code stale.  Evidence:
-> `docs/evidence/M1/m1-collide-list-overflow.md`.  Remaining for full M1:
-> on-screen visual + keyboard confirmation (screen-capture permission
-> blocked for the agent shell), then VIS/STR retail-flow wiring.
+> `docs/evidence/M1/m1-collide-list-overflow.md`.
+>
+> **Retail flow (same day): VIS + STR streaming WORK** — untriggered boot
+> loads VI1.VIS via the real overlord RAMDISK and streams LOLOOP.STR (the
+> title logo-loop plays from streamed data); synthetic input drives the
+> title (START/X via /tmp/ottsel-press-start | echo hex >
+> /tmp/ottsel-press-button).  Retail-only blocker: the auto-save process
+> spawn after new-game jumps to NULL (pc=0) — next session's target.
+> Remaining for full M1 gate: a human eyeball on the window + physical
+> keyboard (agent shell lacks Screen Recording permission; the pad input
+> path is verified via synthetic injection).
 
 > 2026-08-16: read `docs/14-roadmap-to-playable.md` first.  The renderer
 > strategy changed: the software-rasterizer/VU1-interpreter track is

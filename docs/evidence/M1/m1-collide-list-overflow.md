@@ -132,6 +132,28 @@ machine (the agent shell lacks Screen Recording permission); the input
 PATH is verified separately via the synthetic START injection
 (`touch /tmp/ottsel-press-start`).
 
+## Retail flow status (cycles 28-29): VIS + STR STREAMING WORK
+
+An untriggered boot (no /tmp driver) proved the "unwired" premise stale —
+it was more codegen collateral:
+
+- `Swapping in vi1 VIS [dumping tit]` + `[OVERLORD RAMDISK] loading file
+  vi1.VIS size 617696` — the real overlord RAMDISK VIS path works.
+- `LoadISOFileChunkToEE LOLOOP STR : 14336 offset 64/71/78...` — STR spool
+  streaming works; the title logo-loop animation PLAYS from streamed data
+  (camera flying the attract path, live coords).
+- Synthetic input (`touch /tmp/ottsel-press-start`, or hex button0 via
+  `echo 4000 > /tmp/ottsel-press-button`) drives the title: START stops
+  the logo loop and advances the title state.
+
+NEXT BLOCKER (retail only; the bg-trigger village1 path is unaffected):
+after START + X (new game), the **auto-save process spawn jumps to NULL**
+(sig=11 pc=0 lr=0; x1='auto-save symbol, proc type 'auto-save'; note
+'waiting-to-run' symbol value = 0).  mc-* C exports ARE registered
+(kscheme.cpp:2135-2140).  Suspect the auto-save init-function slot or a
+state handler is 0 — next session: dump the auto-save type's method/state
+table and the process-spawn args at the crash.
+
 ## Superseded investigation note (cycles 20-24)
 
 With trig/camera/collide/joint-index all fixed AND the level DGOs
