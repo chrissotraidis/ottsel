@@ -3688,10 +3688,10 @@ index 000000000..d54973dbf
 +  return 0;
 +}
 diff --git a/game/runtime.cpp b/game/runtime.cpp
-index 4f7cc5e18..bc5ea191b 100644
+index 4f7cc5e18..08ef81729 100644
 --- a/game/runtime.cpp
 +++ b/game/runtime.cpp
-@@ -87,6 +87,266 @@
+@@ -87,6 +87,277 @@
  #include "system/SystemThread.h"
  
  u8* g_ee_main_mem = nullptr;
@@ -3888,6 +3888,17 @@ index 4f7cc5e18..bc5ea191b 100644
 +      }
 +    }
 +  }
++  // BOT30 cycle 30: NULL-pc spawn diagnosis — dump the auto-save spawn chain
++  // symbol values.
++  if (pc == 0 || (pc >= base && pc - base < 0x1000)) {
++    const char* syms[] = {"auto-save-init-by-other", "auto-save", "run-now-in-process",
++                          "set-to-run",              "activate",  "*kernel-dram-stack*",
++                          "*default-pool*",          "mc-run"};
++    for (const char* s : syms) {
++      fprintf(stderr, "OTTSEL CRASH sym '%s' value=0x%08x\n", s,
++              jak1::intern_from_c(s)->value);
++    }
++  }
 +  // engine ground truth (symbol table is stable by the time this crash fires)
 +  uint32_t eng = jak1::intern_from_c("*background-draw-engine*")->value;
 +  uint32_t abd = jak1::intern_from_c("add-bsp-drawable")->value;
@@ -3958,7 +3969,7 @@ index 4f7cc5e18..bc5ea191b 100644
  std::thread::id g_main_thread_id = std::thread::id();
  GameVersion g_game_version = GameVersion::Jak1;
  BackgroundWorker g_background_worker;
-@@ -156,9 +416,16 @@ void ee_runner(SystemThreadInterface& iface) {
+@@ -156,9 +427,16 @@ void ee_runner(SystemThreadInterface& iface) {
    //
    // The solution to this is to flip-flop between permissions, or perhaps have two threads
    // one that has writing permission, and another with executable permission
@@ -3976,7 +3987,7 @@ index 4f7cc5e18..bc5ea191b 100644
  #ifdef __APPLE__
                    // has no map_populate
                    MAP_ANONYMOUS | MAP_32BIT | MAP_PRIVATE, 0, 0);
-@@ -167,7 +434,7 @@ void ee_runner(SystemThreadInterface& iface) {
+@@ -167,7 +445,7 @@ void ee_runner(SystemThreadInterface& iface) {
  #endif
    } else {
      g_ee_main_mem =
@@ -3985,7 +3996,7 @@ index 4f7cc5e18..bc5ea191b 100644
                    MAP_ANONYMOUS | MAP_PRIVATE, 0, 0);
    }
  
-@@ -190,7 +457,28 @@ void ee_runner(SystemThreadInterface& iface) {
+@@ -190,7 +468,28 @@ void ee_runner(SystemThreadInterface& iface) {
    // prevent access to the first 512 kB of memory.
    // On the PS2 this is the kernel and can't be accessed either.
    // this may not work well on systems with a page size > 1 MB.
