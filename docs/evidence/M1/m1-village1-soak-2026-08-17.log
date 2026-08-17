@@ -1,0 +1,28 @@
+# BOT30 cycle-26 soak log excerpts (2026-08-17)
+
+## Boot/link
+[12:00] [[38;2;064;224;208mdebug[0m] Using development repo path: /Users/chrissotraidis/GitHub/ottsel/out/jak-project
+[12:04] [[38;2;144;238;144minfo[0m] OTTSEL no-emit: dedicated code region 0x3ebc000..0x4ee0000 (page 0x4000)
+
+## Trig/camera health at boot (post-fix)
+[12:04] [[38;2;144;238;144minfo[0m] OTTSEL FFAUDIT: intern('false-func')=0x192c2c value=0x3ebc1f4 | s7+0x2e28=0x192c2c [slot]=0x3ebc1f4
+[12:04] [[38;2;144;238;144minfo[0m] OTTSEL TRIG T1: sin(0) = 0 (raw 0x0)
+[12:04] [[38;2;144;238;144minfo[0m] OTTSEL TRIG T2: sin(16384) = 1 (raw 0x3f800000)
+[12:04] [[38;2;144;238;144minfo[0m] OTTSEL TRIG T3: cos(0) = 1 (raw 0x3f800000)
+[12:04] [[38;2;144;238;144minfo[0m] OTTSEL TRIG T4: cos(16384) = -3.6507845e-07 (raw 0xb4c40000)
+
+## Gameplay markers
+109006:GAMEPLAY: enter title
+110807:GAMEPLAY: enter title
+120314:GAMEPLAY: enter village1
+120344:GAMEPLAY: enter village1
+
+## Camera during soak (real village1 world coords, live micro-motion)
+[17:48] [[38;2;144;238;144minfo[0m] OTTSEL CAMWATCH: trans=(-657147.9,157806.34,806641.2,1) rot0=(1.0000527,-0.00068899273,0.00071865803,1.0000044)
+[17:49] [[38;2;144;238;144minfo[0m] OTTSEL CAMWATCH: trans=(-657147.9,157806.34,806641.2,1) rot0=(1.0000527,-0.0006887109,0.0007183755,1.0000044)
+[17:50] [[38;2;144;238;144minfo[0m] OTTSEL CAMWATCH: trans=(-657147.9,157806.34,806641.2,1) rot0=(1.0000527,-0.0006889477,0.0007186314,1.0000044)
+[17:51] [[38;2;144;238;144minfo[0m] OTTSEL CAMWATCH: trans=(-657147.9,157806.34,806641.2,1) rot0=(1.0000527,-0.00068892195,0.0007186147,1.0000044)
+
+## Crash/overflow counters at soak end
+OTTSEL CRASH lines: 0
+collide overflow lines: 0

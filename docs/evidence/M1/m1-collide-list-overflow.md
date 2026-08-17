@@ -82,6 +82,73 @@ lo12 >> scale (scale from size/opc bits, incl. the 128-bit Q case) with an
 alignment assert; ADD keeps raw lo12.  Verified in the rebuilt object:
 sin now encodes `ldr s0, [x16, #0x150]`.
 
+## Root cause #4 — u8/u16 field loads double-apply the offset (cycles 15-20)
+
+With trig fixed, boot got past the old wall and died at EE 0x45182e0 —
+`vector<-cspace!` reading a bone pointer that was a matrix float.  The
+caller (do-joint-math!'s origin-joint-index path in process-drawable)
+disassembles to:
+
+    add  x16, x16, #0xb6      ; draw + 0xB6
+    ldrb w1, [x16, #0xb6]     ; offset applied AGAIN -> reads draw+0x16C
+
+`IGenARM64 load8u_gpr64_gpr64_plus_gpr64_plus_s32` (and the load16u twin)
+fold the offset into X16 via the add/sub helper AND encode it again in the
+final LDRB/LDRH imm12 — every unsigned byte/halfword field load with
+offset > 127 read base+2*offset.  origin-joint-index came back as garbage
+(45), the cspace index walked past the 50-entry node-list into the bones
+matrix array, and the "bone" was the float 0.92.  (The crash-time dump of
+all 50 real cspaces was healthy — the giveaway that the INDEX, not the
+data, was wrong.)
+
+Fix: final LDRB/LDRH imm12 = 0 in both emitters; A1.0 regression 26 pins
+it.  The s8 variants and every other width were audited clean (only these
+two clones double-encoded).
+
+## Root cause #5 — rbp mapped to X29 leaves X26 unsaved across suspend (cycles 20-26)
+
+With #1-#4 in AND the level DGOs regenerated, the flow reached the title
+intro spool and SIGILL'd calling #f (pc = s7) from ja-play-spooled-anim —
+its check-func arg (x26) was #f while the caller (title-obs +0x5710,
+proven by a GOAL-stack backtrace) verifiably loaded false-func's real
+value (slot audit: [s7+0x2e28] = 0x3ebc1f4 ✓).  The value died ACROSS
+`(suspend)`: the kernel-asm register map sent `rbp` (GOAL saved-reg s1)
+to X29 — the frame pointer, which the ARM64 allocator never allocates —
+so thread-suspend/resume saved {X19, X29, X23, X24, X25} while the
+allocator's saved set is {X19, X23, X24, X25, X26}.  **X26 was never
+saved**: any GOAL local in x26 was clobbered at its first suspend.
+Fix: `rbp -> X26` in parse_register (goalc Asm.cpp); A1.0 regression 27
+asserts the map covers the saved set exactly.
+
+## RESULT (cycle 26): 5-MINUTE VILLAGE1 SOAK PASS
+
+Boot -> title -> `touch /tmp/ottsel-bg-village1` -> Jak spawns ->
+"GAMEPLAY: enter village1" -> **300 s stable soak, zero crashes, zero
+collide-list overflows**, camera tracking at real village1 world
+coordinates (-657148, 157724, 806641) with live micro-motion; gk still
+running after the window.  Log: `m1-village1-soak-2026-08-17.log`.
+Visual + physical-keyboard confirmation still needs a human at the
+machine (the agent shell lacks Screen Recording permission); the input
+PATH is verified separately via the synthetic START injection
+(`touch /tmp/ottsel-press-start`).
+
+## Superseded investigation note (cycles 20-24)
+
+With trig/camera/collide/joint-index all fixed AND the level DGOs
+regenerated (`(mi)` — note: GROUP:kernel+GAME.CGO alone leaves TIT/VI1
+DGOs stale with old codegen!), the flow now reaches the TITLE INTRO
+SPOOL (title-obs.gc ~221, the intro-movie player whose command-list
+loads village1).  It crashes calling `#f` as arg3 (the check-func) in
+`ja-play-spooled-anim` (loader.o fn24, in-seg +0x66c0 blr; lr 0x431e6d8;
+pc = s7).  Callee entry: x19=arg0(spool-anim static, code region)
+x25=arg1=#f x23=arg2=#f (matches the title caller's `#f #f false-func`),
+x26=arg3=#f — the caller's load of `false-func`'s symbol value produced
+#f.  false-func is defined in gcommon (GAME.CGO); its slot offset per
+symlink logs is s7+0x2e28 everywhere.  Under investigation: whether the
+title-obs (TIT.DGO) call site reads the wrong slot, or false-func's
+value is truly #f at that moment.  A GOAL-stack backtrace dump was added
+to identify the exact calling frame.
+
 ## Instrumentation in the tree (remove before M1 close)
 
 - runtime.cpp: SIGILL hook + genuine-fault crash dump.

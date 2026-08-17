@@ -1,8 +1,34 @@
 # STATUS — Ottsel
 
-Date: 2026-08-16
+Date: 2026-08-17
 Repo: `ottsel`
 Mode: Phase 2 build loop — **strategy reset: fr3 + upstream renderers (see docs/14-roadmap-to-playable.md)**
+
+> **2026-08-17 (BOT30): JAK IS ALIVE AND STABLE IN VILLAGE1 on macOS
+> (native arm64 host gk).**  The "engine-connection crash" wall fell after
+> five root causes, all ARM64 codegen/linker/kernel-mapping bugs, each
+> pinned with lldb/probe ground truth and an A1.0 regression (24-27):
+> 1. `add_vf` emitted integer ADD .4S instead of FADD .4S.
+> 2. Scalar int<->float conversions read `Rn(dst)` instead of `Rn(src)`.
+> 3. The ADRP static-ref patchers (compile-time + runtime) wrote raw lo12
+>    into SCALED LDR imm12 fields — every rip float/vector constant read
+>    zeros (compiled sin/cos returned 0 -> NaN camera -> a NaN camera
+>    line-sphere probe flooded the 256-slot *collide-list* with 1734
+>    items, trampling type method tables -> the EE 0x3075274 dispatch
+>    crash BOT29 misread as engine-connection corruption).
+> 4. `load8u/load16u +s32` double-applied the field offset (joint indexes
+>    read from base+2*offset).
+> 5. The kernel-asm reg map sent `rbp` to X29 (FP) instead of X26, so
+>    thread-suspend never saved X26 — any GOAL local in x26 died at the
+>    first (suspend) (title-intro spool called #f).
+> Boot -> title -> `(bg 'village1)` trigger -> Jak spawns -> village1
+> active: zero collide overflows, camera tracking at real world coords,
+> 5-minute soak PASS.  Build discipline: after ANY goalc change run
+> `rm out/jak1/obj/*.o` + `(mi)` (546 targets) — GROUP:kernel+GAME.CGO
+> alone leaves TIT/VI1 DGO level code stale.  Evidence:
+> `docs/evidence/M1/m1-collide-list-overflow.md`.  Remaining for full M1:
+> on-screen visual + keyboard confirmation (screen-capture permission
+> blocked for the agent shell), then VIS/STR retail-flow wiring.
 
 > 2026-08-16: read `docs/14-roadmap-to-playable.md` first.  The renderer
 > strategy changed: the software-rasterizer/VU1-interpreter track is

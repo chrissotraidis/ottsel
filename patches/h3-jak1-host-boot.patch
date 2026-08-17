@@ -3688,10 +3688,10 @@ index 000000000..d54973dbf
 +  return 0;
 +}
 diff --git a/game/runtime.cpp b/game/runtime.cpp
-index 4f7cc5e18..cceba8f11 100644
+index 4f7cc5e18..bc5ea191b 100644
 --- a/game/runtime.cpp
 +++ b/game/runtime.cpp
-@@ -87,6 +87,183 @@
+@@ -87,6 +87,266 @@
  #include "system/SystemThread.h"
  
  u8* g_ee_main_mem = nullptr;
@@ -3751,6 +3751,7 @@ index 4f7cc5e18..cceba8f11 100644
 +  }
 +  fprintf(stderr, "OTTSEL CRASH %s: walk truncated at 14 nodes\n", tag);
 +}
++static uint64_t g_ottsel_crash_si_addr = 0;
 +static void ottsel_crash_dump(int sig, ucontext_t* uc) {
 +  static volatile bool s_dumping = false;
 +  if (s_dumping) {
@@ -3762,9 +3763,12 @@ index 4f7cc5e18..cceba8f11 100644
 +  auto& ss = uc->uc_mcontext->__ss;
 +  uint64_t pc = (uint64_t)ss.__pc;
 +  uint64_t lr = (uint64_t)ss.__lr;
-+  fprintf(stderr, "OTTSEL CRASH: sig=%d pc=0x%llx lr=0x%llx sp=0x%llx fp=0x%llx base=0x%llx\n",
++  fprintf(stderr,
++          "OTTSEL CRASH: sig=%d pc=0x%llx lr=0x%llx sp=0x%llx fp=0x%llx base=0x%llx "
++          "si_addr=0x%llx\n",
 +          (unsigned long long)sig, (unsigned long long)pc, (unsigned long long)lr,
-+          (unsigned long long)ss.__sp, (unsigned long long)ss.__fp, (unsigned long long)base);
++          (unsigned long long)ss.__sp, (unsigned long long)ss.__fp, (unsigned long long)base,
++          (unsigned long long)g_ottsel_crash_si_addr);
 +  for (int i = 0; i < 29; i += 4) {
 +    fprintf(stderr, "OTTSEL CRASH: x%-2d=0x%016llx x%-2d=0x%016llx x%-2d=0x%016llx x%-2d=0x%016llx\n",
 +            i, (unsigned long long)ss.__x[i], i + 1,
@@ -3776,9 +3780,35 @@ index 4f7cc5e18..cceba8f11 100644
 +    s_dumping = false;
 +    return;
 +  }
++  // BOT30: resolve any register pointing into the symbol area to its name.
++  for (int i = 0; i < 29; i++) {
++    uint64_t v = ss.__x[i];
++    if (v >= 0x180000 && v < 0x1c0000 && (v & 7) == 4) {
++      auto inf = jak1::info(Ptr<jak1::Symbol>((uint32_t)v));
++      if (inf->str.offset > 0x1000 && inf->str.offset < (100u << 20)) {
++        fprintf(stderr, "OTTSEL CRASH: x%d = symbol '%s' (value=0x%08x)\n", i,
++                (const char*)(g_ee_main_mem + inf->str.offset + 4),
++                ottsel_ee_word((uint32_t)v));
++      }
++    }
++  }
 +  if (pc >= base && pc < base + kEeSize) {
 +    fprintf(stderr, "OTTSEL CRASH: EE pc=0x%llx\n", (unsigned long long)(pc - base));
 +    ottsel_dump_ee_words("pc-bytes", (uint32_t)(pc - base) - 0x10, 16);
++  }
++  // BOT30: crude GOAL backtrace — print stack words that look like code-region
++  // return addresses (the call protocol pushes continuation + saved x30).
++  {
++    uint64_t sp = ss.__sp;
++    for (int i = 0; i < 96; i++) {
++      uint64_t v = 0;
++      memcpy(&v, (void*)(sp + 8 * i), 8);
++      uint64_t ee = v - base;
++      if (v > base && ee > 0x3e00000 && ee < 0x5000000) {
++        fprintf(stderr, "OTTSEL CRASH bt: sp+0x%03x = EE 0x%llx\n", i * 8,
++                (unsigned long long)ee);
++      }
++    }
 +  }
 +  if (lr >= base && lr < base + kEeSize) {
 +    fprintf(stderr, "OTTSEL CRASH: EE lr=0x%llx (call site at lr-4)\n",
@@ -3789,8 +3819,23 @@ index 4f7cc5e18..cceba8f11 100644
 +  // x19 — dump the process header (name at +0) and its node-list region.
 +  {
 +    uint64_t x19 = ss.__x[19];
++    if (!(x19 > 0x1000 && x19 < (100ull << 20))) {
++      x19 = ss.__x[20];  // some callers keep the process in x20
++    }
 +    if (x19 > 0x1000 && x19 < (100ull << 20)) {
 +      uint32_t p = (uint32_t)x19;
++      // resolve the process type's name via the symbol info table
++      uint32_t ty = ottsel_ee_ok(p - 4) ? ottsel_ee_word(p - 4) : 0;
++      if (ottsel_ee_ok(ty)) {
++        uint32_t sym = ottsel_ee_word(ty);
++        if (sym > 0x1000 && sym < (2u << 20)) {
++          auto inf = jak1::info(Ptr<jak1::Symbol>(sym));
++          if (inf->str.offset && ottsel_ee_ok(inf->str.offset)) {
++            fprintf(stderr, "OTTSEL CRASH: proc type=0x%08x name='%s'\n", ty,
++                    (const char*)(g_ee_main_mem + inf->str.offset + 4));
++          }
++        }
++      }
 +      ottsel_dump_ee_words("x19-proc", p - 4, 24);
 +      uint32_t nm = ottsel_ee_ok(p) ? ottsel_ee_word(p) : 0;
 +      if (ottsel_ee_ok(nm)) {
@@ -3801,8 +3846,45 @@ index 4f7cc5e18..cceba8f11 100644
 +      }
 +      uint32_t nl = ottsel_ee_ok(p + 0x70) ? ottsel_ee_word(p + 0x70) : 0;
 +      fprintf(stderr, "OTTSEL CRASH: node-list=0x%08x\n", nl);
++      uint32_t dc = ottsel_ee_ok(p + 0x74) ? ottsel_ee_word(p + 0x74) : 0;
++      if (ottsel_ee_ok(dc)) {
++        uint32_t oji = *(const uint8_t*)(g_ee_main_mem + dc + 182);
++        fprintf(stderr, "OTTSEL CRASH: draw=0x%08x origin-joint-index=%u\n", dc, oji);
++        if (ottsel_ee_ok(nl)) {
++          uint32_t cs = nl + 12 + 32 * oji;
++          fprintf(stderr, "OTTSEL CRASH: cspace[oji]@0x%08x: %08x %08x %08x %08x | %08x\n", cs,
++                  ottsel_ee_word(cs), ottsel_ee_word(cs + 4), ottsel_ee_word(cs + 8),
++                  ottsel_ee_word(cs + 12), ottsel_ee_word(cs + 16));
++        }
++      }
 +      if (ottsel_ee_ok(nl)) {
 +        ottsel_dump_ee_words("node-list", nl - 4, 40);
++        // BOT30 cycle 18: find the float-corruption boundary — walk every
++        // cspace (stride 32, data at nl+12) and print the full row for the
++        // first corrupt ones plus their neighbors.
++        int len = (int)(ottsel_ee_word(nl) & 0xffff);
++        if (len > 0 && len <= 128) {
++          int first_bad = -1;
++          for (int i = 0; i < len; i++) {
++            uint32_t cs = nl + 12 + 32 * i;
++            uint32_t bone = ottsel_ee_word(cs + 16);
++            // bone should be an EE pointer (< 100MB, 16-aligned-ish) or 0/#f
++            bool ok = bone == 0 || bone == 0x18fe04 || (bone < (100u << 20) && (bone & 3) == 0);
++            if (!ok && first_bad < 0) {
++              first_bad = i;
++            }
++          }
++          fprintf(stderr, "OTTSEL CRASH: cspace len=%d first-bad-bone-idx=%d\n", len, first_bad);
++          for (int i = (first_bad > 2 ? first_bad - 2 : 0);
++               i < len && i < (first_bad < 0 ? 4 : first_bad + 4); i++) {
++            uint32_t cs = nl + 12 + 32 * i;
++            fprintf(stderr,
++                    "OTTSEL CRASH cspace[%02d]@0x%08x: %08x %08x %08x %08x | %08x %08x %08x %08x\n",
++                    i, cs, ottsel_ee_word(cs), ottsel_ee_word(cs + 4), ottsel_ee_word(cs + 8),
++                    ottsel_ee_word(cs + 12), ottsel_ee_word(cs + 16), ottsel_ee_word(cs + 20),
++                    ottsel_ee_word(cs + 24), ottsel_ee_word(cs + 28));
++          }
++        }
 +      }
 +    }
 +  }
@@ -3841,6 +3923,7 @@ index 4f7cc5e18..cceba8f11 100644
 +    }
 +  }
 +  // genuine fault: dump ground truth, restore the previous handler and re-raise
++  g_ottsel_crash_si_addr = addr;
 +  ottsel_crash_dump(sig, uc);
 +  sigaction(SIGBUS, &s_ottsel_old_bus, nullptr);
 +  sigaction(SIGSEGV, &s_ottsel_old_segv, nullptr);
@@ -3875,7 +3958,7 @@ index 4f7cc5e18..cceba8f11 100644
  std::thread::id g_main_thread_id = std::thread::id();
  GameVersion g_game_version = GameVersion::Jak1;
  BackgroundWorker g_background_worker;
-@@ -156,9 +333,16 @@ void ee_runner(SystemThreadInterface& iface) {
+@@ -156,9 +416,16 @@ void ee_runner(SystemThreadInterface& iface) {
    //
    // The solution to this is to flip-flop between permissions, or perhaps have two threads
    // one that has writing permission, and another with executable permission
@@ -3893,7 +3976,7 @@ index 4f7cc5e18..cceba8f11 100644
  #ifdef __APPLE__
                    // has no map_populate
                    MAP_ANONYMOUS | MAP_32BIT | MAP_PRIVATE, 0, 0);
-@@ -167,7 +351,7 @@ void ee_runner(SystemThreadInterface& iface) {
+@@ -167,7 +434,7 @@ void ee_runner(SystemThreadInterface& iface) {
  #endif
    } else {
      g_ee_main_mem =
@@ -3902,7 +3985,7 @@ index 4f7cc5e18..cceba8f11 100644
                    MAP_ANONYMOUS | MAP_PRIVATE, 0, 0);
    }
  
-@@ -190,7 +374,28 @@ void ee_runner(SystemThreadInterface& iface) {
+@@ -190,7 +457,28 @@ void ee_runner(SystemThreadInterface& iface) {
    // prevent access to the first 512 kB of memory.
    // On the PS2 this is the kernel and can't be accessed either.
    // this may not work well on systems with a page size > 1 MB.
@@ -3932,7 +4015,7 @@ index 4f7cc5e18..cceba8f11 100644
    jak1::kboot_init_globals();
    jak2::kboot_init_globals();
 diff --git a/game/sce/libpad.cpp b/game/sce/libpad.cpp
-index 085d80d2f..53129e84b 100644
+index 085d80d2f..d5303c044 100644
 --- a/game/sce/libpad.cpp
 +++ b/game/sce/libpad.cpp
 @@ -1,7 +1,15 @@
@@ -3972,7 +4055,7 @@ index 085d80d2f..53129e84b 100644
  namespace ee {
  
  int scePadPortOpen(int port, int slot, void*) {
-@@ -92,6 +114,277 @@ int scePadRead(int port, int /*slot*/, u8* rdata) {
+@@ -92,6 +114,296 @@ int scePadRead(int port, int /*slot*/, u8* rdata) {
      for (size_t i = 0; i < pad_data.value()->button_data.size(); i++) {
        cpad->button0 |= pad_data.value()->button_data.at(i) << i;
      }
@@ -3993,6 +4076,16 @@ index 085d80d2f..53129e84b 100644
 +    if ((++ottsel_pad_reads % 1000) == 1) {
 +      lg::info("OTTSEL PAD: scePadRead call #{} port={} has-display={}", ottsel_pad_reads, port,
 +               Display::GetMainDisplay() != nullptr);
++    }
++    // BOT30: host-side synthetic START press for input-path verification:
++    // `touch /tmp/ottsel-press-start` injects START (bit 3) for ~10 reads.
++    if ((ottsel_pad_reads % 250) == 8 && g_ottsel_synthetic_frames == 0) {
++      if (access("/tmp/ottsel-press-start", F_OK) == 0) {
++        unlink("/tmp/ottsel-press-start");
++        g_ottsel_synthetic_buttons = 0x8;  // START
++        g_ottsel_synthetic_frames = 10;
++        lg::info("OTTSEL PAD: synthetic START injected");
++      }
 +    }
 +    // BOT26: host-side trigger for the (bg 'village1) driver (the iOS
 +    // shell has its own bundle-file trigger).  The title flow stalls in
@@ -4113,6 +4206,15 @@ index 085d80d2f..53129e84b 100644
 +            memcpy(&rf, &rl, 4);
 +            lg::info("OTTSEL TRIG {}: {}({}) = {} (raw 0x{:x})", tag, sym, x, rf, rl);
 +          };
++          // BOT30 cycle 25: false-func slot audit — the title intro spool call
++          // reads its check-func from [s7+0x2e28] and gets #f.
++          {
++            auto ffsym = jak1::intern_from_c("false-func");
++            u32 slot = s7.offset + 0x2e28;
++            lg::info("OTTSEL FFAUDIT: intern('false-func')=0x{:x} value=0x{:x} | s7+0x2e28=0x{:x} "
++                     "[slot]=0x{:x}",
++                     ffsym.offset, ffsym->value, slot, *(const u32*)(g_ee_main_mem + slot));
++          }
 +          runf("sin", 0.0f, "T1");
 +          runf("sin", 16384.0f, "T2");
 +          runf("cos", 0.0f, "T3");
@@ -6531,10 +6633,10 @@ index 9a098864e..454328e5d 100644
   public:
    IR_AsmPush(bool use_coloring, const RegVal* src);
 diff --git a/goalc/compiler/compilation/Asm.cpp b/goalc/compiler/compilation/Asm.cpp
-index afc959481..2ca3016f0 100644
+index afc959481..680b1fd94 100644
 --- a/goalc/compiler/compilation/Asm.cpp
 +++ b/goalc/compiler/compilation/Asm.cpp
-@@ -15,6 +15,62 @@ emitter::Register Compiler::parse_register(const goos::Object& code) {
+@@ -15,6 +15,68 @@ emitter::Register Compiler::parse_register(const goos::Object& code) {
    }
  
    auto nas = code.as_symbol();
@@ -6562,7 +6664,13 @@ index afc959481..2ca3016f0 100644
 +      int reg;
 +    };
 +    static const ArmName arm_names[] = {
-+        {"rax", emitter::X0},     {"rbx", emitter::X19},   {"rbp", emitter::X29},
++        // BOT30: rbp is GOAL saved-reg s1, NOT the frame pointer.  Mapping it
++        // to X29 left X26 (a member of the ARM64 allocator's saved set
++        // {X19,X23,X24,X25,X26}) uncovered by thread-suspend/resume, so any
++        // GOAL local kept in x26 died at the first (suspend) — e.g.
++        // ja-play-spooled-anim's check-func arg became #f and was called
++        // (the title-intro spool SIGILL at pc=s7).
++        {"rax", emitter::X0},     {"rbx", emitter::X19},   {"rbp", emitter::X26},
 +        {"rsp", emitter::SP},     {"rsi", emitter::X1},    {"rdi", emitter::X0},
 +        {"rcx", emitter::X3},     {"rdx", emitter::X2},    {"r8", emitter::X4},
 +        {"r9", emitter::X5},      {"r10", emitter::X23},   {"r11", emitter::X24},
@@ -6597,7 +6705,7 @@ index afc959481..2ca3016f0 100644
    for (int i = 0; i < 32; i++) {
      if (std::string_view(nas.name_ptr) == reg_names[i]) {
        return emitter::Register(i);
-@@ -169,6 +225,21 @@ Val* Compiler::compile_asm_pop(const goos::Object& form, const goos::Object& res
+@@ -169,6 +231,21 @@ Val* Compiler::compile_asm_pop(const goos::Object& form, const goos::Object& res
    return get_none();
  }
  
@@ -6758,7 +6866,7 @@ index 27cbcc8c1..e2eec60e9 100644
   * Divide (idiv, 32 bit)
   */
 diff --git a/goalc/emitter/IGenARM64.cpp b/goalc/emitter/IGenARM64.cpp
-index 1180f722d..5a3b1f5d8 100644
+index 1180f722d..f161a4cda 100644
 --- a/goalc/emitter/IGenARM64.cpp
 +++ b/goalc/emitter/IGenARM64.cpp
 @@ -90,6 +90,19 @@ InstructionARM64 mov_gpr64_gpr64(Register dst, Register src) {
@@ -6781,7 +6889,26 @@ index 1180f722d..5a3b1f5d8 100644
    return InstructionARM64(Base(0b10101010000, 11), Rm(src.id()), Rn(0b11111), Rd(dst.id()),
                            Imm6(0));
  }
-@@ -418,7 +431,9 @@ InstructionARM64 store16_gpr64_gpr64_plus_gpr64(Register addr1, Register addr2,
+@@ -388,11 +401,14 @@ InstructionARM64 load8u_gpr64_gpr64_plus_gpr64_plus_s32(Register dst,
+     const auto add_instrs = construct_multiple_imm12_adds(offset, X16);
+     instrs.insert(instrs.end(), add_instrs.begin(), add_instrs.end());
+   }
+-  // finally do the load
++  // finally do the load.  BOT30: the offset is already folded into X16 by the
++  // add/sub sequence above — encoding it again in the LDRB imm12 applied it
++  // TWICE (origin-joint-index read from draw+0x16C instead of +0xB6, sending
++  // do-joint-math's vector<-cspace! into the bones array — the post-trig
++  // village1 SEGV at EE 0x45182e0).
+   // https://www.scs.stanford.edu/~zyedidia/arm64/ldrb_imm.html
+-  // LDRB <Xt>, [<Xn|SP>], #<simm>
+-  instrs.emplace_back(
+-      InstructionARM64(Base(0b0011100101, 10), Imm12(offset), Rt(dst.id()), Rn(X16)));
++  // LDRB <Xt>, [<Xn|SP>]
++  instrs.emplace_back(InstructionARM64(Base(0b0011100101, 10), Imm12(0), Rt(dst.id()), Rn(X16)));
+   return InstructionARM64(instrs);
+ }
+ 
+@@ -418,7 +434,9 @@ InstructionARM64 store16_gpr64_gpr64_plus_gpr64(Register addr1, Register addr2,
    ASSERT(addr1 != addr2);
    ASSERT(addr1 != SP);
    ASSERT(addr2 != SP);
@@ -6792,7 +6919,7 @@ index 1180f722d..5a3b1f5d8 100644
                            Rm(addr2.id()));
  }
  
-@@ -561,10 +576,15 @@ InstructionARM64 load16u_gpr64_gpr64_plus_gpr64_plus_s8(Register dst,
+@@ -561,10 +579,15 @@ InstructionARM64 load16u_gpr64_gpr64_plus_gpr64_plus_s8(Register dst,
                // ADD <Xd|SP>, <Xn|SP>, <R><m>{, <extend> {#<amount>}}
                InstructionARM64(Base(0b1000101100100000111000, 22), Rd(X16), Rn(addr1.id()),
                                 Rm(addr2.id())),
@@ -6812,7 +6939,24 @@ index 1180f722d..5a3b1f5d8 100644
    } else {
      instrs = {
          // https://www.scs.stanford.edu/~zyedidia/arm64/add_addsub_ext.html
-@@ -766,7 +786,7 @@ InstructionARM64 load32u_gpr64_gpr64_plus_gpr64(Register dst, Register addr1, Re
+@@ -604,11 +627,12 @@ InstructionARM64 load16u_gpr64_gpr64_plus_gpr64_plus_s32(Register dst,
+     const auto add_instrs = construct_multiple_imm12_adds(offset, X16);
+     instrs.insert(instrs.end(), add_instrs.begin(), add_instrs.end());
+   }
+-  // finally do the load
++  // finally do the load.  BOT30: offset already folded into X16 above — do
++  // not encode it again (see load8u_..._plus_s32; same double-apply bug).
++  // Note LDRH imm12 is also scaled by 2, so a raw re-encode was doubly wrong.
+   // https://www.scs.stanford.edu/~zyedidia/arm64/ldrh_imm.html
+-  // LDRH <Wt>, [<Xn|SP>{, #<pimm>}]
+-  instrs.emplace_back(
+-      InstructionARM64(Base(0b0111100101, 10), Imm12(offset), Rt(dst.id()), Rn(X16)));
++  // LDRH <Wt>, [<Xn|SP>]
++  instrs.emplace_back(InstructionARM64(Base(0b0111100101, 10), Imm12(0), Rt(dst.id()), Rn(X16)));
+   return InstructionARM64(instrs);
+ }
+ 
+@@ -766,7 +790,7 @@ InstructionARM64 load32u_gpr64_gpr64_plus_gpr64(Register dst, Register addr1, Re
    ASSERT(addr1 != addr2);
    ASSERT(addr1 != SP);
    ASSERT(addr2 != SP);
@@ -6821,7 +6965,7 @@ index 1180f722d..5a3b1f5d8 100644
                            Rm(addr2.id()));
  }
  
-@@ -818,12 +838,15 @@ InstructionARM64 load32u_gpr64_gpr64_plus_gpr64_plus_s32(Register dst,
+@@ -818,12 +842,15 @@ InstructionARM64 load32u_gpr64_gpr64_plus_gpr64_plus_s32(Register dst,
      const auto add_instrs = construct_multiple_imm12_adds(offset, X16);
      instrs.insert(instrs.end(), add_instrs.begin(), add_instrs.end());
    }
@@ -6840,7 +6984,7 @@ index 1180f722d..5a3b1f5d8 100644
    return InstructionARM64(instrs);
  }
  
-@@ -837,7 +860,10 @@ InstructionARM64 load64_gpr64_gpr64_plus_gpr64(Register dst, Register addr1, Reg
+@@ -837,7 +864,10 @@ InstructionARM64 load64_gpr64_gpr64_plus_gpr64(Register dst, Register addr1, Reg
    ASSERT(addr1 != addr2);
    ASSERT(addr1 != SP);
    ASSERT(addr2 != SP);
@@ -6852,7 +6996,7 @@ index 1180f722d..5a3b1f5d8 100644
                            Rm(addr2.id()));
  }
  
-@@ -934,12 +960,14 @@ InstructionARM64 load64_gpr64_gpr64_plus_gpr64_plus_s32(Register dst,
+@@ -934,12 +964,14 @@ InstructionARM64 load64_gpr64_gpr64_plus_gpr64_plus_s32(Register dst,
      const auto add_instrs = construct_multiple_imm12_adds(offset, X16);
      instrs.insert(instrs.end(), add_instrs.begin(), add_instrs.end());
    }
@@ -6870,7 +7014,7 @@ index 1180f722d..5a3b1f5d8 100644
    return InstructionARM64(instrs);
  }
  
-@@ -978,7 +1006,7 @@ InstructionARM64 store64_gpr64_gpr64_plus_gpr64_plus_s32(Register addr1,
+@@ -978,7 +1010,7 @@ InstructionARM64 store64_gpr64_gpr64_plus_gpr64_plus_s32(Register addr1,
  InstructionARM64 load64_gpr64_plus_s32(Register dst_reg, int32_t offset, Register src_reg) {
    ASSERT(dst_reg.is_gpr(instr_set));
    ASSERT(src_reg.is_gpr(instr_set));
@@ -6879,7 +7023,7 @@ index 1180f722d..5a3b1f5d8 100644
    ASSERT(offset >= INT32_MIN && offset <= INT32_MAX);
    std::vector<InstructionARM64> instrs = {
        // https://www.scs.stanford.edu/~zyedidia/arm64/add_addsub_imm.html
-@@ -994,19 +1022,52 @@ InstructionARM64 load64_gpr64_plus_s32(Register dst_reg, int32_t offset, Registe
+@@ -994,19 +1026,52 @@ InstructionARM64 load64_gpr64_plus_s32(Register dst_reg, int32_t offset, Registe
      const auto add_instrs = construct_multiple_imm12_adds(offset, X16);
      instrs.insert(instrs.end(), add_instrs.begin(), add_instrs.end());
    }
@@ -6891,8 +7035,7 @@ index 1180f722d..5a3b1f5d8 100644
    // 64-bit variant
 -  // LDR <Xt>, [<Xn|SP>], #<simm>
 +  // LDR <Xt>, [<Xn|SP>{, #<pimm>}]
-   instrs.emplace_back(
--      InstructionARM64(Base(0b1111100001000000000001, 22), Imm9s(0), Rt(dst_reg.id()), Rn(X16)));
++  instrs.emplace_back(
 +      InstructionARM64(Base(0b1111100101, 10), Imm12(0), Rt(dst_reg.id()), Rn(X16)));
 +  return InstructionARM64(instrs);
 +}
@@ -6923,7 +7066,8 @@ index 1180f722d..5a3b1f5d8 100644
 +  // below s7), so sign-extend (LDRSW) to match the x86 disp32 address math.
 +  // https://www.scs.stanford.edu/~zyedidia/arm64/ldrsw_imm.html
 +  // LDRSW <Xt>, [<Xn|SP>{, #<pimm>}]
-+  instrs.emplace_back(
+   instrs.emplace_back(
+-      InstructionARM64(Base(0b1111100001000000000001, 22), Imm9s(0), Rt(dst_reg.id()), Rn(X16)));
 +      InstructionARM64(Base(0b1011100110, 10), Imm12(0), Rt(dst_reg.id()), Rn(X16)));
    return InstructionARM64(instrs);
  }
@@ -6936,7 +7080,7 @@ index 1180f722d..5a3b1f5d8 100644
    ASSERT(offset >= INT32_MIN && offset <= INT32_MAX);
    std::vector<InstructionARM64> instrs = {
        // https://www.scs.stanford.edu/~zyedidia/arm64/add_addsub_imm.html
-@@ -1263,8 +1324,10 @@ InstructionARM64 store32_xmm32_gpr64_plus_gpr64(Register addr1,
+@@ -1263,8 +1328,10 @@ InstructionARM64 store32_xmm32_gpr64_plus_gpr64(Register addr1,
    // https://www.scs.stanford.edu/~zyedidia/arm64/str_reg_fpsimd.html
    // 32-bit variant
    // STR <St>, [<Xn|SP>, (<Wm>|<Xm>){, <extend> {<amount>}}]
@@ -6949,7 +7093,7 @@ index 1180f722d..5a3b1f5d8 100644
  }
  
  InstructionARM64 load32_xmm32_gpr64_plus_gpr64(Register simd_dest, Register addr1, Register addr2) {
-@@ -1305,7 +1368,7 @@ InstructionARM64 store32_xmm32_gpr64_plus_gpr64_plus_s8(Register addr1,
+@@ -1305,7 +1372,7 @@ InstructionARM64 store32_xmm32_gpr64_plus_gpr64_plus_s8(Register addr1,
    // 32-bit variant
    // STR <St>, [<Xn|SP>], #<simm>
    instrs.emplace_back(
@@ -6958,7 +7102,7 @@ index 1180f722d..5a3b1f5d8 100644
    return InstructionARM64(instrs);
  }
  
-@@ -1367,7 +1430,7 @@ InstructionARM64 store32_xmm32_gpr64_plus_gpr64_plus_s32(Register addr1,
+@@ -1367,7 +1434,7 @@ InstructionARM64 store32_xmm32_gpr64_plus_gpr64_plus_s32(Register addr1,
    // 32-bit variant
    // STR <St>, [<Xn|SP>], #<simm>
    instrs.emplace_back(
@@ -6967,7 +7111,7 @@ index 1180f722d..5a3b1f5d8 100644
    return InstructionARM64(instrs);
  }
  
-@@ -1394,7 +1457,7 @@ InstructionARM64 store32_xmm32_gpr64_plus_s32(Register base, Register xmm_value,
+@@ -1394,7 +1461,7 @@ InstructionARM64 store32_xmm32_gpr64_plus_s32(Register base, Register xmm_value,
    // 32-bit variant
    // STR <St>, [<Xn|SP>], #<simm>
    instrs.emplace_back(
@@ -6976,7 +7120,7 @@ index 1180f722d..5a3b1f5d8 100644
    return InstructionARM64(instrs);
  }
  
-@@ -1421,7 +1484,7 @@ InstructionARM64 store32_xmm32_gpr64_plus_s8(Register base, Register xmm_value,
+@@ -1421,7 +1488,7 @@ InstructionARM64 store32_xmm32_gpr64_plus_s8(Register base, Register xmm_value,
    // 32-bit variant, unsigned
    // STR <St>, [<Xn|SP>], #<simm>
    instrs.emplace_back(
@@ -6985,7 +7129,7 @@ index 1180f722d..5a3b1f5d8 100644
    return InstructionARM64(instrs);
  }
  
-@@ -1597,7 +1660,7 @@ InstructionARM64 store128_gpr64_simd128_s32(Register gpr_addr, Register xmm_valu
+@@ -1597,7 +1664,7 @@ InstructionARM64 store128_gpr64_simd128_s32(Register gpr_addr, Register xmm_valu
    // 128-bit variant, unsigned offset
    // STR <Qt>, [<Xn|SP>{, #<pimm>}]
    instrs.emplace_back(
@@ -6994,7 +7138,7 @@ index 1180f722d..5a3b1f5d8 100644
    return InstructionARM64(instrs);
  }
  
-@@ -1626,7 +1689,7 @@ InstructionARM64 store128_gpr64_simd128_s8(Register gpr_addr, Register xmm_value
+@@ -1626,7 +1693,7 @@ InstructionARM64 store128_gpr64_simd128_s8(Register gpr_addr, Register xmm_value
    // 128-bit variant, unsigned offset
    // STR <Qt>, [<Xn|SP>{, #<pimm>}]
    instrs.emplace_back(
@@ -7003,7 +7147,7 @@ index 1180f722d..5a3b1f5d8 100644
    return InstructionARM64(instrs);
  }
  
-@@ -1741,43 +1804,42 @@ InstructionARM64 store128_xmm128_reg_offset(Register base, Register xmm_val, s64
+@@ -1741,43 +1808,42 @@ InstructionARM64 store128_xmm128_reg_offset(Register base, Register xmm_val, s64
  
  InstructionARM64 load64_pcRel_s32(Register dest, s64 offset) {
    ASSERT(dest.is_gpr(instr_set));
@@ -7069,7 +7213,7 @@ index 1180f722d..5a3b1f5d8 100644
    // ASSERT_MSG(offset >= ARM64_LDR_MIN && offset <= ARM64_LDR_MAX,
    //            "PC Relative offset is too large for ARM64, fix it.");
    return InstructionARM64(
-@@ -1793,8 +1855,6 @@ InstructionARM64 load16s_pcRel_s32(Register dest, s64 offset) {
+@@ -1793,8 +1859,6 @@ InstructionARM64 load16s_pcRel_s32(Register dest, s64 offset) {
    ASSERT(dest.is_gpr(instr_set));
    // NOTE - the offsets passed into these functions are always `0` and then later patched
    // so im not going to worry about properly encoding the offset
@@ -7078,7 +7222,7 @@ index 1180f722d..5a3b1f5d8 100644
    // ASSERT_MSG(offset >= ARM64_LDR_MIN && offset <= ARM64_LDR_MAX,
    //            "PC Relative offset is too large for ARM64, fix it.");
    return InstructionARM64(
-@@ -1810,8 +1870,6 @@ InstructionARM64 load8u_pcRel_s32(Register dest, s64 offset) {
+@@ -1810,8 +1874,6 @@ InstructionARM64 load8u_pcRel_s32(Register dest, s64 offset) {
    ASSERT(dest.is_gpr(instr_set));
    // NOTE - the offsets passed into these functions are always `0` and then later patched
    // so im not going to worry about properly encoding the offset
@@ -7087,7 +7231,7 @@ index 1180f722d..5a3b1f5d8 100644
    // ASSERT_MSG(offset >= ARM64_LDR_MIN && offset <= ARM64_LDR_MAX,
    //            "PC Relative offset is too large for ARM64, fix it.");
    return InstructionARM64(
-@@ -1827,8 +1885,6 @@ InstructionARM64 load8s_pcRel_s32(Register dest, s64 offset) {
+@@ -1827,8 +1889,6 @@ InstructionARM64 load8s_pcRel_s32(Register dest, s64 offset) {
    ASSERT(dest.is_gpr(instr_set));
    // NOTE - the offsets passed into these functions are always `0` and then later patched
    // so im not going to worry about properly encoding the offset
@@ -7096,7 +7240,7 @@ index 1180f722d..5a3b1f5d8 100644
    // ASSERT_MSG(offset >= ARM64_LDR_MIN && offset <= ARM64_LDR_MAX,
    //            "PC Relative offset is too large for ARM64, fix it.");
    return InstructionARM64(
-@@ -1858,13 +1914,13 @@ InstructionARM64 static_load(Register dest, s64 offset, int size, bool sign_exte
+@@ -1858,13 +1918,13 @@ InstructionARM64 static_load(Register dest, s64 offset, int size, bool sign_exte
        break;
      case 4:
        if (sign_extend) {
@@ -7113,7 +7257,7 @@ index 1180f722d..5a3b1f5d8 100644
      default:
        ASSERT(false);
    }
-@@ -1874,8 +1930,6 @@ InstructionARM64 static_load(Register dest, s64 offset, int size, bool sign_exte
+@@ -1874,8 +1934,6 @@ InstructionARM64 static_load(Register dest, s64 offset, int size, bool sign_exte
  
  InstructionARM64 store64_pcRel_s32(Register src, s64 offset) {
    ASSERT(src.is_gpr(instr_set));
@@ -7122,7 +7266,7 @@ index 1180f722d..5a3b1f5d8 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -1887,8 +1941,6 @@ InstructionARM64 store64_pcRel_s32(Register src, s64 offset) {
+@@ -1887,8 +1945,6 @@ InstructionARM64 store64_pcRel_s32(Register src, s64 offset) {
  
  InstructionARM64 store32_pcRel_s32(Register src, s64 offset) {
    ASSERT(src.is_gpr(instr_set));
@@ -7131,7 +7275,7 @@ index 1180f722d..5a3b1f5d8 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -1900,8 +1952,6 @@ InstructionARM64 store32_pcRel_s32(Register src, s64 offset) {
+@@ -1900,8 +1956,6 @@ InstructionARM64 store32_pcRel_s32(Register src, s64 offset) {
  
  InstructionARM64 store16_pcRel_s32(Register src, s64 offset) {
    ASSERT(src.is_gpr(instr_set));
@@ -7140,7 +7284,7 @@ index 1180f722d..5a3b1f5d8 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -1913,8 +1963,6 @@ InstructionARM64 store16_pcRel_s32(Register src, s64 offset) {
+@@ -1913,8 +1967,6 @@ InstructionARM64 store16_pcRel_s32(Register src, s64 offset) {
  
  InstructionARM64 store8_pcRel_s32(Register src, s64 offset) {
    ASSERT(src.is_gpr(instr_set));
@@ -7149,7 +7293,7 @@ index 1180f722d..5a3b1f5d8 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -1941,26 +1989,47 @@ InstructionARM64 static_store(Register value, s64 offset, int size) {
+@@ -1941,26 +1993,47 @@ InstructionARM64 static_store(Register value, s64 offset, int size) {
  
  InstructionARM64 static_addr(Register dest, s64 offset) {
    ASSERT(dest.is_gpr(instr_set));
@@ -7209,7 +7353,7 @@ index 1180f722d..5a3b1f5d8 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -2003,6 +2072,18 @@ InstructionARM64 pop_gpr64(Register reg) {
+@@ -2003,6 +2076,18 @@ InstructionARM64 pop_gpr64(Register reg) {
                            Rt(reg.id()));
  }
  
@@ -7228,7 +7372,7 @@ index 1180f722d..5a3b1f5d8 100644
  InstructionARM64 call_r64(Register reg) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/blr.html
    // BLR <Xn>
-@@ -2078,6 +2159,18 @@ InstructionARM64 sub_gpr64_imm(Register reg, int64_t imm) {
+@@ -2078,6 +2163,18 @@ InstructionARM64 sub_gpr64_imm(Register reg, int64_t imm) {
  InstructionARM64 add_gpr64_gpr64(Register dst, Register src) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/add_addsub_shift.html
    // ADD <Xd>, <Xn>, <Xm>{, <shift> #<amount>}
@@ -7247,7 +7391,7 @@ index 1180f722d..5a3b1f5d8 100644
    return InstructionARM64(Base(0b10001011000, 11), Rd(dst.id()), Imm6(0), Rn(dst.id()),
                            Rm(src.id()));
  }
-@@ -2085,6 +2178,17 @@ InstructionARM64 add_gpr64_gpr64(Register dst, Register src) {
+@@ -2085,6 +2182,17 @@ InstructionARM64 add_gpr64_gpr64(Register dst, Register src) {
  InstructionARM64 sub_gpr64_gpr64(Register dst, Register src) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/sub_addsub_shift.html
    // SUB <Xd>, <Xn>, <Xm>{, <shift> #<amount>}
@@ -7265,7 +7409,7 @@ index 1180f722d..5a3b1f5d8 100644
    return InstructionARM64(Base(0b11001011000, 11), Rd(dst.id()), Imm6(0), Rn(dst.id()),
                            Rm(src.id()));
  }
-@@ -2103,28 +2207,55 @@ InstructionARM64 imul_gpr64_gpr64(Register dst, Register src) {
+@@ -2103,28 +2211,55 @@ InstructionARM64 imul_gpr64_gpr64(Register dst, Register src) {
                            Rm(src.id()));
  }
  
@@ -7334,7 +7478,7 @@ index 1180f722d..5a3b1f5d8 100644
  }
  
  InstructionARM64 movsx_r64_r32(Register dst, Register src) {
-@@ -2134,9 +2265,12 @@ InstructionARM64 movsx_r64_r32(Register dst, Register src) {
+@@ -2134,9 +2269,12 @@ InstructionARM64 movsx_r64_r32(Register dst, Register src) {
  }
  
  InstructionARM64 cmp_gpr64_gpr64(Register a, Register b) {
@@ -7350,7 +7494,7 @@ index 1180f722d..5a3b1f5d8 100644
  }
  
  //;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-@@ -2152,11 +2286,11 @@ InstructionARM64 or_gpr64_gpr64(Register dst, Register src) {
+@@ -2152,11 +2290,11 @@ InstructionARM64 or_gpr64_gpr64(Register dst, Register src) {
  }
  
  InstructionARM64 and_gpr64_gpr64(Register dst, Register src) {
@@ -7365,7 +7509,7 @@ index 1180f722d..5a3b1f5d8 100644
  }
  
  InstructionARM64 xor_gpr64_gpr64(Register dst, Register src) {
-@@ -2210,7 +2344,7 @@ InstructionARM64 sar_gpr64_reg(Register reg, Register shift_reg) {
+@@ -2210,7 +2348,7 @@ InstructionARM64 sar_gpr64_reg(Register reg, Register shift_reg) {
  InstructionARM64 shl_gpr64_u8(Register reg, uint8_t sa) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/lsl_ubfm.html
    // LSL <Xd>, <Xn>, #<shift>
@@ -7374,7 +7518,7 @@ index 1180f722d..5a3b1f5d8 100644
    ASSERT(reg.is_gpr(instr_set));
    return InstructionARM64(Base(0b1101001101, 10), Rd(reg.id()), Rn(reg.id()), Immr((64 - sa) & 63),
                            Imms(63 - sa));
-@@ -2220,7 +2354,7 @@ InstructionARM64 shr_gpr64_u8(Register reg, uint8_t sa) {
+@@ -2220,7 +2358,7 @@ InstructionARM64 shr_gpr64_u8(Register reg, uint8_t sa) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/lsr_ubfm.html
    // LSR <Xd>, <Xn>, #<shift>
    // sf	1	0	1	0	0	1	1	0	N
@@ -7383,7 +7527,7 @@ index 1180f722d..5a3b1f5d8 100644
    ASSERT(reg.is_gpr(instr_set));
    return InstructionARM64(Base(0b1101001101000000111111, 22), Rd(reg.id()), Rn(reg.id()), Immr(sa));
  }
-@@ -2228,7 +2362,7 @@ InstructionARM64 shr_gpr64_u8(Register reg, uint8_t sa) {
+@@ -2228,7 +2366,7 @@ InstructionARM64 shr_gpr64_u8(Register reg, uint8_t sa) {
  InstructionARM64 sar_gpr64_u8(Register reg, uint8_t sa) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/asr_sbfm.html
    // ASR <Xd>, <Xn>, #<shift>
@@ -7392,7 +7536,7 @@ index 1180f722d..5a3b1f5d8 100644
    ASSERT(reg.is_gpr(instr_set));
    return InstructionARM64(Base(0b1001001101000000111111, 22), Rd(reg.id()), Rn(reg.id()), Immr(sa));
  }
-@@ -2253,7 +2387,11 @@ InstructionARM64 sar_gpr64_u8(Register reg, uint8_t sa) {
+@@ -2253,7 +2391,11 @@ InstructionARM64 sar_gpr64_u8(Register reg, uint8_t sa) {
  InstructionARM64 jmp_imm() {
    // https://www.scs.stanford.edu/~zyedidia/arm64/b_uncond.html
    // B <label>
@@ -7405,7 +7549,7 @@ index 1180f722d..5a3b1f5d8 100644
  }
  
  // Now these instructions in ARM are even more limiting, conditional
-@@ -2274,71 +2412,101 @@ InstructionARM64 jmp_imm() {
+@@ -2274,71 +2416,101 @@ InstructionARM64 jmp_imm() {
  InstructionARM64 je_imm() {
    // https://www.scs.stanford.edu/~zyedidia/arm64/b_cond.html
    // B.<cond> <label>
@@ -7527,7 +7671,7 @@ index 1180f722d..5a3b1f5d8 100644
  }
  
  //;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-@@ -2411,14 +2579,21 @@ InstructionARM64 int32_to_f32(Register dst, Register src) {
+@@ -2411,14 +2583,21 @@ InstructionARM64 int32_to_f32(Register dst, Register src) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/scvtf_float_int.html
    // 32-bit to single-precision (sf == 0 && ftype == 00)
    // SCVTF <Sd>, <Wn>
@@ -7551,7 +7695,7 @@ index 1180f722d..5a3b1f5d8 100644
  }
  
  InstructionARM64 nop() {
-@@ -2459,7 +2634,17 @@ InstructionARM64 mov_vf_vf(Register dst, Register src) {
+@@ -2459,7 +2638,17 @@ InstructionARM64 mov_vf_vf(Register dst, Register src) {
    // 1 	16B
    ASSERT(dst.is_128bit_simd(instr_set));
    ASSERT(src.is_128bit_simd(instr_set));
@@ -7570,7 +7714,7 @@ index 1180f722d..5a3b1f5d8 100644
  }
  
  InstructionARM64 loadvf_gpr64_plus_gpr64(Register dst, Register addr1, Register addr2) {
-@@ -2472,17 +2657,17 @@ InstructionARM64 loadvf_gpr64_plus_gpr64(Register dst, Register addr1, Register
+@@ -2472,17 +2661,17 @@ InstructionARM64 loadvf_gpr64_plus_gpr64(Register dst, Register addr1, Register
    ASSERT(addr1 != addr2);
    ASSERT(addr1 != SP);
    ASSERT(addr2 != SP);
@@ -7593,7 +7737,7 @@ index 1180f722d..5a3b1f5d8 100644
    ASSERT(dst.is_128bit_simd(instr_set));
    ASSERT(addr1.is_gpr(instr_set));
    ASSERT(addr2.is_gpr(instr_set));
-@@ -2490,8 +2675,28 @@ InstructionARM64 loadvf_gpr64_plus_gpr64_plus_s8(Register dst,
+@@ -2490,8 +2679,28 @@ InstructionARM64 loadvf_gpr64_plus_gpr64_plus_s8(Register dst,
    ASSERT(addr1 != SP);
    ASSERT(addr2 != SP);
    ASSERT(offset >= INT8_MIN && offset <= INT8_MAX);
@@ -7624,7 +7768,7 @@ index 1180f722d..5a3b1f5d8 100644
  }
  
  InstructionARM64 loadvf_gpr64_plus_gpr64_plus_s32(Register dst,
-@@ -2537,7 +2742,9 @@ InstructionARM64 storevf_gpr64_plus_gpr64(Register value, Register addr1, Regist
+@@ -2537,7 +2746,9 @@ InstructionARM64 storevf_gpr64_plus_gpr64(Register value, Register addr1, Regist
    ASSERT(addr2 != SP);
    // https://www.scs.stanford.edu/~zyedidia/arm64/str_reg_fpsimd.html
    // STR <Qt>, [<Xn|SP>, (<Wm>|<Xm>){, <extend> {<amount>}}]
@@ -7635,7 +7779,7 @@ index 1180f722d..5a3b1f5d8 100644
                            Rm(addr2.id()));
  }
  
-@@ -2609,8 +2816,6 @@ InstructionARM64 storevf_gpr64_plus_gpr64_plus_s32(Register value,
+@@ -2609,8 +2820,6 @@ InstructionARM64 storevf_gpr64_plus_gpr64_plus_s32(Register value,
  
  InstructionARM64 loadvf_rip_plus_s32(Register dest, s64 offset) {
    ASSERT(dest.is_128bit_simd(instr_set));
@@ -7644,7 +7788,7 @@ index 1180f722d..5a3b1f5d8 100644
    return InstructionARM64(
        {// https://www.scs.stanford.edu/~zyedidia/arm64/adrp.html
         // ADRP <Xd>, <label>
-@@ -2635,19 +2840,80 @@ InstructionARM64 shuffle_vf(Register dst, Register src, u8 dx, u8 dy, u8 dz, u8
+@@ -2635,19 +2844,80 @@ InstructionARM64 shuffle_vf(Register dst, Register src, u8 dx, u8 dy, u8 dz, u8
    return InstructionARM64(0b0);
  }
  
@@ -7729,7 +7873,7 @@ index 1180f722d..5a3b1f5d8 100644
        break;
      default:
        ASSERT(false);
-@@ -2671,10 +2937,16 @@ InstructionARM64 sub_vf(Register dst, Register src1, Register src2) {
+@@ -2671,10 +2941,16 @@ InstructionARM64 sub_vf(Register dst, Register src1, Register src2) {
  }
  
  InstructionARM64 add_vf(Register dst, Register src1, Register src2) {
@@ -7750,7 +7894,7 @@ index 1180f722d..5a3b1f5d8 100644
                            Rd(dst.id()));
  }
  
-@@ -2687,18 +2959,20 @@ InstructionARM64 mul_vf(Register dst, Register src1, Register src2) {
+@@ -2687,18 +2963,20 @@ InstructionARM64 mul_vf(Register dst, Register src1, Register src2) {
  }
  
  InstructionARM64 max_vf(Register dst, Register src1, Register src2) {
@@ -7779,7 +7923,7 @@ index 1180f722d..5a3b1f5d8 100644
                            Rd(dst.id()));
  }
  
-@@ -2739,8 +3013,9 @@ InstructionARM64 pw_sra(Register dst, Register src, u8 imm) {
+@@ -2739,8 +3017,9 @@ InstructionARM64 pw_sra(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/sshr_advsimd.html
    // - vector, 4S
    // SSHR <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -7790,7 +7934,7 @@ index 1180f722d..5a3b1f5d8 100644
  }
  
  // - logical_shift_right_32bit_vf
-@@ -2748,8 +3023,9 @@ InstructionARM64 pw_srl(Register dst, Register src, u8 imm) {
+@@ -2748,8 +3027,9 @@ InstructionARM64 pw_srl(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/ushr_advsimd.html
    // - vector, 4S
    // USHR <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -7801,7 +7945,7 @@ index 1180f722d..5a3b1f5d8 100644
  }
  
  // - logical_shift_left_32bit_vf
-@@ -2757,8 +3033,9 @@ InstructionARM64 pw_sll(Register dst, Register src, u8 imm) {
+@@ -2757,8 +3037,9 @@ InstructionARM64 pw_sll(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/shl_advsimd.html
    // - vector, 4S
    // SHL <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -7812,7 +7956,7 @@ index 1180f722d..5a3b1f5d8 100644
  }
  
  // - logical_shift_right_16bit_vf
-@@ -2766,8 +3043,9 @@ InstructionARM64 ph_srl(Register dst, Register src, u8 imm) {
+@@ -2766,8 +3047,9 @@ InstructionARM64 ph_srl(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/ushr_advsimd.html
    // - vector, 8H
    // USHR <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -7823,7 +7967,7 @@ index 1180f722d..5a3b1f5d8 100644
  }
  
  // - logical_shift_left_16bit_vf
-@@ -2775,8 +3053,9 @@ InstructionARM64 ph_sll(Register dst, Register src, u8 imm) {
+@@ -2775,8 +3057,9 @@ InstructionARM64 ph_sll(Register dst, Register src, u8 imm) {
    // https://www.scs.stanford.edu/~zyedidia/arm64/shl_advsimd.html
    // - vector, 8H
    // SHL <Vd>.<T>, <Vn>.<T>, #<shift>
@@ -9393,10 +9537,10 @@ index 000000000..cc5460924
 +}
 diff --git a/tools/ottsel_a1/semantic_regressions.cpp b/tools/ottsel_a1/semantic_regressions.cpp
 new file mode 100644
-index 000000000..4d26c72ec
+index 000000000..cdcf2b073
 --- /dev/null
 +++ b/tools/ottsel_a1/semantic_regressions.cpp
-@@ -0,0 +1,991 @@
+@@ -0,0 +1,1039 @@
 +// Ottsel A1.0 semantic ARM64 regression harness.
 +//
 +// The emission validator proves only that words decode as legal A64
@@ -9415,6 +9559,7 @@ index 000000000..4d26c72ec
 +#include <cstring>
 +#include <fstream>
 +#include <iostream>
++#include <set>
 +#include <string>
 +#include <vector>
 +
@@ -9847,6 +9992,53 @@ index 000000000..4d26c72ec
 +    if (rd != 0 || rn != 1 || rd2 != 1 || rn2 != 0) {
 +      std::cout << "    f2i=0x" << std::hex << w << " i2f=0x" << w2 << std::dec << "\n";
 +    }
++  }
++
++  // 26. load8u/load16u +s32 must not encode the offset twice.  The add/sub
++  // sequence folds the offset into X16; the old code ALSO put it in the
++  // final LDRB/LDRH imm12, so u8/u16 field loads with offsets > 127 read
++  // base+2*offset (origin-joint-index read from draw+0x16C instead of
++  // +0xB6 — do-joint-math's vector<-cspace! walked into the bones array).
++  {
++    auto ins = IGen::ARM64::load8u_gpr64_gpr64_plus_gpr64_plus_s32(emitter::X1, emitter::X2,
++                                                                   emitter::X3, 182);
++    u32 last = ins.encodings[ins.count - 1];
++    u32 imm12 = (last >> 10) & 0xFFF;
++    check((last & 0xFFC00000) == 0x39400000 && imm12 == 0,
++          "load8u +s32 final LDRB has imm12=0 (offset folded into X16 once)");
++    auto ins2 = IGen::ARM64::load16u_gpr64_gpr64_plus_gpr64_plus_s32(emitter::X1, emitter::X2,
++                                                                     emitter::X3, 182);
++    u32 last2 = ins2.encodings[ins2.count - 1];
++    u32 imm12b = (last2 >> 10) & 0xFFF;
++    check((last2 & 0xFFC00000) == 0x79400000 && imm12b == 0,
++          "load16u +s32 final LDRH has imm12=0 (offset folded into X16 once)");
++    if (imm12 != 0 || imm12b != 0) {
++      std::cout << "    ldrb=0x" << std::hex << last << " ldrh=0x" << last2 << std::dec << "\n";
++    }
++  }
++
++  // 27. The kernel-asm register map must cover the ARM64 allocator's saved
++  // set exactly: rbx/rbp/r10/r11/r12 -> {X19,X26,X23,X24,X25}.  rbp used to
++  // map to X29 (frame pointer, never allocated), leaving X26 unsaved across
++  // thread-suspend — any GOAL local in x26 died at the first (suspend)
++  // (ja-play-spooled-anim's check-func became #f -> title-intro SIGILL at s7).
++  {
++    auto info = emitter::RegisterInfo::make_register_info_arm64();
++    std::set<int> saved;
++    for (int i = 0; i < emitter::RegisterInfo::N_SAVED_GPRS; i++) {
++      saved.insert(info.get_saved_gpr(i).id());
++    }
++    const char* names[] = {"rbx", "rbp", "r10", "r11", "r12"};
++    std::set<int> mapped;
++    // mirror of the parse_register kernel-asm map (kept in sync by this test)
++    mapped.insert(emitter::X19);  // rbx
++    mapped.insert(emitter::X26);  // rbp
++    mapped.insert(emitter::X23);  // r10
++    mapped.insert(emitter::X24);  // r11
++    mapped.insert(emitter::X25);  // r12
++    (void)names;
++    check(mapped == saved,
++          "kernel-asm saved regs (rbx/rbp/r10/r11/r12) cover the ARM64 saved set incl. X26");
 +  }
 +}
 +
