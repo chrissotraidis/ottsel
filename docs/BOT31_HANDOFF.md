@@ -157,3 +157,22 @@ VIS/STR verified + auto-save blocker), 892df18 (probe tidy), 908de8f
   absolute path in the same command as any git operation, and never rely
   on inherited cwd.  (Both repos were restored; the fork push failed
   safely because its remote is upstream with no matching branch.)
+
+## Addendum 2 — NULL-spawn refinement (autonomous tick, 2026-08-17 ~06:20)
+
+The village1 daylight session ran 1h+ (Jak moved ~19k units from spawn —
+possibly user-driven) then died on the SAME NULL call (sig=11 pc=0 lr=0).
+New facts from the NULL-pc symbol dump:
+- `auto-save-init-by-other` = 0x4335fa4 (valid), `set-to-run` = 0x3ed7a34
+  (valid), `mc-run` valid.
+- `*kernel-dram-stack*` and `run-now-in-process` symbol values are 0 —
+  RED HERRINGS: both are macros/defconstants (gkernel.gc:113,
+  gstate.gc:72), not runtime symbols.
+- The crash is reachable from ambient gameplay (no menu needed) — some
+  process-spawn during play (othercam? ambient?) hits it after long
+  uptime.
+NEXT PROBE for this item: instrument `run-function-in-process` /
+`set-to-run` (gkernel.gc kernel asm — same rlet family as the fixed
+rbp/X26 bug) — disassemble the compiled fns from gkernel.o and audit the
+stack-switch + call sequence for another ARM64 mapping/protocol fault;
+also log the spawn args (proc, fn, stack) C-side right before the jump.
