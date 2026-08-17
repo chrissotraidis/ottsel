@@ -137,3 +137,23 @@ offsets in the .o) and compare against the x86 emitter as the reference.
 4dbb4a9 (fixes 1-3), 190a825 (fixes 4-5 + soak), e430896 (retail
 VIS/STR verified + auto-save blocker), 892df18 (probe tidy), 908de8f
 (fix 6, camera matrix sane).
+
+## Addendum (BOT30 late, same session)
+
+- **Input CONFIRMED at game level**: the JAKPOS probe shows Jak's root
+  trans moving ~500 units after a synthetic X injection — the game is
+  controllable via the pad path.  "Stuck" is keyboard mapping/focus only.
+- **Blue tint: likely the midnight palette, not broken math** — itimes
+  are well-formed packed halfword weights summing to 64 (e.g.
+  0x3A003A + 0x060006).  New driver: `echo 9.0 > /tmp/ottsel-set-tod`
+  calls (set-time-of-day 9.0); after the call the weights shift palette
+  slots.  Awaiting the user's visual verdict; if daylight looks right,
+  bake set-time-of-day into the bg driver and close the tint item.
+- New probes: OTTSEL JAKPOS (target root trans, libpad), OTTSEL ITIMES
+  (tod weights, TFragment), /tmp/ottsel-set-tod driver.
+- **cwd hazard (cost a cleanup this session)**: shell cwd persists across
+  commands; a doc append + commit intended for ottsel ran in the fork and
+  a soft-reset intended for the fork ran in ottsel.  ALWAYS `cd` with an
+  absolute path in the same command as any git operation, and never rely
+  on inherited cwd.  (Both repos were restored; the fork push failed
+  safely because its remote is upstream with no matching branch.)
