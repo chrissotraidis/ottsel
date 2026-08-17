@@ -29,14 +29,22 @@ Mode: Phase 2 build loop — **strategy reset: fr3 + upstream renderers (see doc
 > `docs/evidence/M1/m1-collide-list-overflow.md`.
 >
 > **Retail flow (same day): VIS + STR streaming WORK** — untriggered boot
-> loads VI1.VIS via the real overlord RAMDISK and streams LOLOOP.STR (the
-> title logo-loop plays from streamed data); synthetic input drives the
-> title (START/X via /tmp/ottsel-press-start | echo hex >
-> /tmp/ottsel-press-button).  Retail-only blocker: the auto-save process
-> spawn after new-game jumps to NULL (pc=0) — next session's target.
-> Remaining for full M1 gate: a human eyeball on the window + physical
-> keyboard (agent shell lacks Screen Recording permission; the pad input
-> path is verified via synthetic injection).
+> loads VI1.VIS via the real overlord RAMDISK and streams the attract STR
+> demos; synthetic input drives the title (START/X via
+> /tmp/ottsel-press-start | echo hex > /tmp/ottsel-press-button).
+> Retail-only blocker: the auto-save process spawn after new-game jumps
+> to NULL (pc=0).
+>
+> **CORRECTION + root cause #6 (same day):** the user's screenshot showed
+> a BLACK screen — all prior "playable/visible" language was CPU-telemetry
+> only.  Chasing the screenshot found bug #6: the pext (punpck) family was
+> ported as UZP (deinterleave) instead of ZIP (interleave), so
+> matrix-transpose! fed GL a garbage camera matrix.  Fixed (A1.0 test 28).
+> **User-verified after the fix: village1 renders — correct perspective,
+> real textures (huts/palms/sea).**  Two visible defects remain and are
+> the current wall: (1) everything tinted deep blue (time-of-day/color
+> path), (2) no input response ("stuck" at spawn camera).  Precise next
+> steps: docs/BOT31_HANDOFF.md.
 
 > 2026-08-16: read `docs/14-roadmap-to-playable.md` first.  The renderer
 > strategy changed: the software-rasterizer/VU1-interpreter track is
