@@ -230,9 +230,16 @@ void ottsel_vu1_set_readlog_hook(void (*hook)(const char*)) { g_readlog_hook = h
 
 void execute(Vu1State& st, int max_instructions) {
   int executed = 0;
+  st.executed_instructions = 0;
+  st.hit_instruction_limit = false;
+  st.xgkick_count = 0;
   bool jump_armed = false;  // a branch executed; the next instruction is the delay slot
   bool jump_exec = false;   // the delay slot executed; apply the jump now
   int jump_target = 0;
+  // An upper-instruction E bit terminates the VU program after its delay
+  // slot.  Without it, a completed microprogram loops through its code until
+  // the host safety budget expires.
+  bool end_after_delay_slot = false;
   if (g_trace) {
     printf("TRACE: top=0x%x\n", g_vu_top);
   }
@@ -248,6 +255,8 @@ void execute(Vu1State& st, int max_instructions) {
     uint32_t upper = (uint32_t)(raw >> 32);
     int this_pc = st.pc;
     st.pc++;
+    const bool stop_after_this = end_after_delay_slot;
+    const bool has_end_bit = ((upper >> 25) & 0b100000) != 0;
 
     Op uop = up_kind(upper);
     Op lop = lo_kind(lower);
@@ -642,10 +651,19 @@ void execute(Vu1State& st, int max_instructions) {
         }
         break;
       case Op::MFIR:
-        st.vf[lit].u[0] = (uint32_t)st.vi[lis] << 16;
+        // MFIR writes each component selected by the lower instruction's
+        // destination mask (x=bit 3 through w=bit 0).  TFRAG's setup pass
+        // builds its kick pointers with four single-component MFIRs.
+        for (int component = 0; component < 4; component++) {
+          if (lower & (1u << (21 + component))) {
+            st.vf[lit].u[3 - component] = (uint32_t)(int32_t)(int16_t)st.vi[lis];
+          }
+        }
         break;
       case Op::MTIR:
-        set_vi(st, lit, st.vf[lis].u[0] >> 16);
+        // MTIR reads the component encoded in FSF (bits 21-22), whose
+        // encoding is x=0, y=1, z=2, w=3.
+        set_vi(st, lit, st.vf[lis].u[(lower >> 21) & 0x3] & 0xffff);
         break;
       case Op::DIV: {
         float num = st.vf[lis].f[(lower >> 21) & 3];
@@ -666,6 +684,7 @@ void execute(Vu1State& st, int max_instructions) {
         set_vi(st, lit, g_vu_top);
         break;
       case Op::XGKICK: {
+        st.xgkick_count++;
         uint32_t addr = st.vi[lis] & 0xfff;
         for (int c = 0; c < 4; c++) {
           st.gif_out.push_back(st.data[addr * 4 + c]);
@@ -774,7 +793,15 @@ void execute(Vu1State& st, int max_instructions) {
       jump_armed = true;
       jump_target = branch_target;
     }
+    if (stop_after_this) {
+      break;
+    }
+    if (has_end_bit) {
+      end_after_delay_slot = true;
+    }
   }
+  st.executed_instructions = executed;
+  st.hit_instruction_limit = executed == max_instructions && st.pc >= 0 && st.pc < st.code_len;
 }
 
 }  // namespace ottsel_vu1

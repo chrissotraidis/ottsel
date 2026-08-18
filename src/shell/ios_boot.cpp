@@ -57,6 +57,7 @@ extern "C" int ottsel_run_a11_slice_proof();
 namespace {
 
 std::string g_bundle_dir;
+std::string g_writable_dir;
 int g_fault_log_fd = -1;
 
 // The gated fault handler may only use async-signal-safe operations.  Keep
@@ -182,7 +183,7 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
   raw_write_lit(" x28=");
   raw_write_hex(uc->uc_mcontext->__ss.__x[28]);
   raw_write_lit(" x30=");
-  raw_write_hex(uc->uc_mcontext->__ss.__x[30]);
+  raw_write_hex(lr);
   raw_write_lit("\n");
   // S2.1 (2026-08-10, dispatcher pc=0 probe): dump the frame region ABOVE
   // the fault-time sp.  For a down-growing stack the caller frames (saved
@@ -1287,15 +1288,23 @@ void install_gated_signal_handlers() {
 
 void ottsel_ios_set_bundle_dir(const std::string& dir) {
   g_bundle_dir = dir;
-  if (g_fault_log_fd >= 0) {
-    close(g_fault_log_fd);
-  }
-  g_fault_log_fd = open((g_bundle_dir + "ottsel-fault.log").c_str(),
-                        O_WRONLY | O_CREAT | O_TRUNC, 0644);
 }
 
 std::string ottsel_ios_bundle_dir() {
   return g_bundle_dir;
+}
+
+void ottsel_ios_set_writable_dir(const std::string& dir) {
+  g_writable_dir = dir;
+  if (g_fault_log_fd >= 0) {
+    close(g_fault_log_fd);
+  }
+  g_fault_log_fd = open((g_writable_dir + "ottsel-fault.log").c_str(),
+                        O_WRONLY | O_CREAT | O_TRUNC, 0644);
+}
+
+std::string ottsel_ios_writable_dir() {
+  return g_writable_dir;
 }
 
 void ottsel_ios_stop_dispatch() {

@@ -9,6 +9,12 @@
 void ottsel_ios_set_bundle_dir(const std::string& dir);
 std::string ottsel_ios_bundle_dir();
 
+// The app bundle is read-only on iOS.  Keep logs and diagnostic captures in
+// the per-app writable container while resources continue to resolve from the
+// bundle directory above.
+void ottsel_ios_set_writable_dir(const std::string& dir);
+std::string ottsel_ios_writable_dir();
+
 // Runs the runtime boot (EE memory map, kernel link, dispatcher loop).
 // Returns when MasterExit stops the dispatcher. Never returns on fatal boot
 // failure (the gated-error path logs and aborts instead of crash-looping).

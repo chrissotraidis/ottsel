@@ -34,6 +34,12 @@ struct Vu1State {
   int code_len = 0;
   uint32_t status = 0;
   int pc = 0;
+  // Execution result for bounded host-side diagnostics.  These fields make a
+  // zero GIF result distinguish an intentional program exit from a loop that
+  // exhausted the caller's instruction budget.
+  int executed_instructions = 0;
+  bool hit_instruction_limit = false;
+  int xgkick_count = 0;
   std::vector<uint32_t> gif_out;
   bool in_delay = false;
   int next_pc = 0;

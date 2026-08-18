@@ -16,6 +16,13 @@ extern "C" {
 
 typedef struct OttselMetal OttselMetal;
 
+typedef struct OttselMetalTieDraw {
+  unsigned int index_offset;
+  unsigned int index_count;
+  int texture_index;
+  unsigned int mode;
+} OttselMetalTieDraw;
+
 // Create a Metal device/queue/pipeline on the SDL window's CAMetalLayer.
 // Returns nullptr on failure (caller keeps the software fallback).
 OttselMetal* ottsel_metal_create(void* sdl_window);
@@ -40,6 +47,43 @@ const void* ottsel_metal_gfx_register(void* metal);
 // S2.2: if the game backend decoded a frame, return it (RGBA8, top-left
 // origin) and 1; otherwise return 0.
 int ottsel_metal_gfx_game_frame(const unsigned char** rgba, int* w, int* h);
+
+// Bounded S2.3 scene proof: upload one pre-expanded normal-TIE mesh and the
+// matching PC-port camera. The shell owns its Metal buffers after each call.
+// Texture, time-of-day, fog, blending, and visibility remain separate gates.
+void ottsel_metal_set_tie_mesh(OttselMetal* m,
+                               const void* vertices,
+                               unsigned int vertex_count,
+                               const unsigned int* triangle_indices,
+                               unsigned int index_count,
+                               const OttselMetalTieDraw* draws,
+                               unsigned int draw_count);
+void ottsel_metal_set_tie_texture(OttselMetal* m,
+                                  unsigned int texture_index,
+                                  const unsigned int* rgba,
+                                  unsigned int width,
+                                  unsigned int height);
+void ottsel_metal_set_tie_colors(OttselMetal* m,
+                                 const unsigned char* rgba,
+                                 unsigned int color_count);
+void ottsel_metal_set_tie_camera(OttselMetal* m,
+                                 const float pc_camera[16],
+                                 const float camera_trans[4],
+                                 const float fog_params[4],
+                                 const float fog_color[4]);
+
+// Opaque TFRAG uses the same FR3 vertex layout and material records as TIE,
+// but occupies an independent mesh and color table so it can render first.
+void ottsel_metal_set_tfrag_mesh(OttselMetal* m,
+                                 const void* vertices,
+                                 unsigned int vertex_count,
+                                 const unsigned int* triangle_indices,
+                                 unsigned int index_count,
+                                 const OttselMetalTieDraw* draws,
+                                 unsigned int draw_count);
+void ottsel_metal_set_tfrag_colors(OttselMetal* m,
+                                   const unsigned char* rgba,
+                                   unsigned int color_count);
 
 #ifdef __cplusplus
 }

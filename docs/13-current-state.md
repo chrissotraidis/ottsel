@@ -1,3 +1,295 @@
+## 2026-08-18 update — cross-platform loop resumed; iPad input seam verified
+
+The product is now tracked as one macOS/iPadOS/iOS loop. macOS remains the
+working rendering/gameplay reference, but it no longer blocks the mobile
+input/platform work. The one-runtime rule remains strict: macOS `gk` was
+stopped before the iPad Pro 11-inch (M4) Simulator was booted.
+
+The new mobile platform bridge feeds the same completed DualShock snapshot
+that desktop `PadData` reaches through `scePadRead`: canonical buttons, sticks,
+and pressure. A live Simulator keyboard Space press produced Cross `0x4000`
+and pressure `255`, then an all-neutral release; see
+`docs/evidence/I1/i1-platform-input-shell-2026-08-18.md`. The bundle also now
+declares `UIApplicationSupportsIndirectInputEvents`, which the Simulator had
+required for mouse input. This establishes the iPadOS/iOS external
+keyboard/controller seam and lifecycle-neutralization implementation, not
+mobile game playability.
+
+The first iPad keyboard attempt exposed the same short-tap race previously
+fixed on macOS: SDL delivered Return down/up before the independent GOAL poll
+could sample it. The shared platform-input bridge now latches digital keyboard
+downs for eight `scePadRead` samples. A fresh Simulator Return tap emitted the
+canonical Start transition and the game logged `TITLE: start edge in
+title-wait`; Space likewise emitted Cross `0x4000` with pressure `255` and
+then neutral release. This is mobile input acceptance at the title boundary,
+not proof of visible menu/gameplay because the UI bucket renderer remains
+incomplete.
+
+The iPad now has a narrow real scene-rendering pass: the shared FR3 loader,
+PC-port camera packet, and normal-TIE Metal renderer visibly produce textured,
+time-of-day-colored Village1 geometry. It has a one-time visible-tree snapshot
+and fog-color transport, but does not yet compose opaque TFRAG/background or
+the remaining TIE material semantics, so it is not a playable visual pass.
+The mobile product path remains the desktop streaming/bucket-renderer
+architecture; the old VU/software-rasterizer shell remains diagnostic-only. Mac continues to require a physical
+keyboard/controller/mouse acceptance replay in Training, while output-only
+audible audio remains a product gate on each platform. `-nosound` is allowed
+only for a bounded visual/input test and never implies microphone access is
+required or acceptable.
+
+### 2026-08-18 iPad composition retest — fog arrives; scene remains incomplete
+
+A fresh signed one-Simulator run advanced from title to `village1` and
+received four live `FOGCOL` updates from the game's DMA stream. Its normal-TIE
+renderer selected three trees and submitted 119 textured batches (511,138
+vertices / 252,888 triangles). A follow-up run added one visibility-culled,
+opaque-TFRAG tree (77 batches / 53,304 triangles), producing the Village1
+hill, tower, and foreground terrain. The captured display nevertheless
+remains mostly black above that geometry. This verifies fog-color delivery
+and the first opaque background pass but still fails the composition gate:
+iPad lacks Direct/Sprite sky/effects, transparent/dirt/ice TFRAG, and
+remaining TIE material semantics. The next bounded implementation maps the
+Direct/Sprite bucket contract before enabling it. See
+`docs/15-macos-to-mobile-goal-loop.md`.
+
+### 2026-08-18 iPad TIE geometry/transform gate
+
+A single iPad Pro 11-inch (M4) Simulator run loaded the compressed desktop
+`village1.fr3` data and uploaded the first normal TIE tree to Metal: 319,546
+vertices and 253,196 expanded triangles. The first presentation was black;
+the bounded CPU projection probe then showed 1,876/4,097 sampled vertices
+inside the desktop OpenGL clip volume but zero inside Metal's `[0,w]` depth
+volume. The shared desktop shader targets OpenGL `[-w,w]` depth, so the Metal
+vertex shader now applies only `z = (z + w) / 2`. Computer Use then captured
+the expected visible flat-green Village1 geometry. This passes the first
+FR3/world-to-clip/Metal submission gate. It does not pass textures,
+time-of-day colors, fog, culling, depth/blend modes, title rendering, input
+gameplay, iPhone parity, or device acceptance. See
+`docs/evidence/I1/i1-tie-geometry-transform-2026-08-18.md`.
+
+### 2026-08-18 iPad textured normal-TIE milestone
+
+The first normal-TIE tree now renders as 30 separate material batches using
+the level's 18 referenced FR3 textures, with a 5,376-entry time-of-day palette
+calculated from each live PC-port packet. A fresh Computer Use run visibly
+showed textured Village1 terrain rather than the earlier flat-green geometry.
+The palette trace is bounded to its first three updates and every 120th later
+update. This passes texture and color delivery for that one uncullled tree; it
+does not establish correct tree selection, depth/fog/blending, other TIE
+categories, TFRAG, Merc, title rendering, or playability. See
+`docs/evidence/I1/i1-tie-texture-color-2026-08-18.md`.
+
+The macOS reference remains verified by
+`docs/evidence/M1/m1-retail-single-runtime-retest-2026-08-18.md`: the real
+title/menu/New Game and A/B/C/D1/D2 flow reaches rendered Training; movement,
+Cross, Circle, and a five-minute soak passed. ARM64 sky blending and the PC
+particle capacity have focused regressions and live replays. The newest
+cross-platform iteration rules are in `docs/15-macos-to-mobile-goal-loop.md`.
+
+### 2026-08-18 iPad renderer reorientation — active scene, absent PC bucket renderer
+
+A fresh, single iPad Pro 11-inch (M4) Simulator run built from the current
+signed local bundle remained visibly black except for the shell indicator.
+This was nevertheless a real game scene: `village1-vis` loaded, both level
+slots reported `active`, and `BGWORK` reported one TFRAG plus three TIE trees.
+The existing mobile VU diagnostic ran TFRAG microcode and occasionally decoded
+small GIF output, but that output does not represent the active TIE scene.
+
+The decisive source comparison is that normal TIE emission is intentionally
+disabled in the PC-port GOAL source: `tie-methods.gc` comments out
+`draw-inline-array-instance-tie` and `draw-inline-array-prototype-tie-asm`
+because the macOS C++ renderer handles normal TIE directly. The iOS shell has
+no corresponding PC bucket renderer, so the next product change is a
+platform-neutral bucket-renderer seam based on the macOS renderer's inputs and
+per-bucket semantics. Do not promote the diagnostic VU/software raster or a
+texture upload as a composed-frame pass. See
+`docs/15-macos-to-mobile-goal-loop.md` for the replacement loop.
+
+### 2026-08-18 iPad renderer retest — live dispatcher, missing transfer boundary
+
+After a signed rebuild, one iPad Pro 11-inch (M4) Simulator launch reached
+the live game dispatcher and continued streaming (`village1` and `title`
+active), but the visible surface remained black. This is not a Simulator
+launch failure: a real nonzero TFRAG dispatcher entry (`MSCAL 0x6`) was
+observed with the corrected VU register state. It then capped at 50,000
+instructions with zero XGKICK/GIF output, and the per-window aggregate was
+5,886 capped VU runs out of 5,976.
+
+The producer is therefore no longer the first blocker. The restored
+`draw-inline-array-tfrag` does perform its scratchpad transfer, but the iOS
+bridge was reading the wrong field (`tfragment+32`) as a DMA-chain pointer.
+The real mips2c call copies 64 qwords from `a1` to fake scratchpad `0x1d0010`.
+A fresh one-shot trace sees that exact copied block and shows TFRAG metadata
+and pointers, not VIF/DMA data. A second bounded trace follows the existing
+mips2c builder to its output buffers: those buffers contain valid-looking VIF
+DMA headers and `MSCAL 0x6`, but the shell reaches that call without the paired
+frag-header upload at VU address zero. The next renderer change is therefore
+output-buffer ordering/VIF-state lifetime, with a live nonzero GIF proof. It
+is not a reason to promote the diagnostic rasterizer as the iPad renderer. The
+run was terminated before any desktop runtime work resumed. A pasted
+`OttselShell` dyld report from a direct desktop launch is separately explained
+by the Simulator environment and is not an Ottsel game crash.
+
+### 2026-08-18 macOS keyboard edge repair
+
+The macOS keyboard mapping had a real short-tap compatibility failure: SDL
+received down/up, but because it was drained after the frame's keyboard poll,
+the next poll could see only release and never populate `scePadRead`. Bound
+down edges now latch through a bounded eight-poll window. A focused regression
+and a fresh live title replay prove Space reaches Cross `0x4000` with pressure
+`255`, and Return reaches START `0x8`; title-wait consumed the rising edge and
+opened the visible normal title menu. See
+`docs/evidence/M1/m1-keyboard-edge-2026-08-18.md`. Physical controller and
+mouse acceptance are still open P0 requirements, as is output-only audio.
+
+### 2026-08-18 output-only audio boundary retested
+
+One bounded explicit-audio app launch and one direct-`gk` contrast both select
+`MacBook Air Speakers`, complete Cubeb initialization/latency enumeration, and
+then block in `AudioComponentInstanceNew → AudioDeviceCreateIOProcID → CoreAudio
+mach_msg`. No input device or input stream parameters are passed, and no
+microphone prompt was accepted or required. This disproves the local shell
+wrapper as the immediate cause but does not make audio a host-only exemption:
+the product still needs a working output session. Preserve `-nosound` only as
+test containment and use the captured boundary to evaluate a different backend
+or non-blocking recovery path. See
+`docs/evidence/M1/m1-output-audio-stream-create-2026-08-18.md`.
+
+## 2026-08-17 update — iPad Simulator boot boundary under investigation
+
+A fresh, ad-hoc-signed `OttselShell.app` installs and launches on the iPad
+Pro 11-inch (M4) Simulator. The former `art-group-load-check` SIGBUS was a
+real C/GOAL ABI breach: the following GOAL type access received raw zero
+instead of canonical `#f` (`s7`) and dereferenced `EE-4`. Live disassembly
+showed the immediately preceding phase-A no-emit native export stub, while
+`*file-temp-string*` was valid and nonzero.
+
+An attempted `jak1::loado` zero conversion was falsified and reverted: the
+same post-title SIGBUS recurred and its zero-only line never fired. The
+resolved native mapping explains why: the observed slot `0x04f00cf4` is the
+stack-argument `_format` export, not `loado`; `make-file-name` calls it while
+building the art-group filename, and `format` deliberately returns zero when
+its destination is a string. The next probe is therefore the ARM64-generated
+`make-file-name` return path, which must discard that zero and return
+`*file-temp-string*` before the actual `loado` call.
+
+Visual inspection still shows a small diagnostic raster, not a Jak title.
+The iPad trace reaches eight `display-sync`/VSync/DMA submissions, then faults
+at the same art-group check before a later VSync checkpoint. Reaching title is
+useful boot evidence, not a surviving loader, renderer, or iPad playability
+pass.
+
+The screen currently shows the shell diagnostic surface, not a Jak title:
+the raw-texture preview was removed because a decoded texture page is asset
+data, not a composed frame. The retained VU1/software renderer is debug
+tooling only. The iPad product gate remains one upstream bucket renderer plus
+one `.fr3` level through a supported iOS backend, with a captured recognizable
+frame; IOP/streaming, full local user-supplied data, and touch/controller
+input follow that renderer boundary.
+
+## 2026-08-17 update — macOS title-to-Village1 integration pass
+
+The macOS-first gate has now passed for the native arm64 `gk` path using
+the real title/menu/save flow and the real streamed intro, not `(bg ...)`.
+On a fresh `-boot -fakeiso -nosound` run, the game reached `target-title-wait`,
+opened the normal New Game/save UI, then completed:
+
+`sage-intro-sequence-a -> sidekick-human-intro-sequence-b ->
+sidekick-human-intro-sequence-c -> sage-intro-sequence-d1 ->
+sage-intro-sequence-d2 -> GAMEPLAY: enter village1 -> training`.
+
+The former B freeze was a source-level no-progress binary search in
+`curve-evaluate!`: with adjacent knot bounds `[6,7]`, its lower-bound
+update reused midpoint `6` forever.  Both curve searches now advance the
+lower bound past the midpoint.  The focused `ottsel-a1-sem` regression and
+the full 546-target ARM64 GOAL rebuild pass.  The same live replay reached
+rendered Village1 and a bounded synthetic left-stick hold changed Jak's
+position, proving the game input path controls gameplay.
+
+This is a **core macOS playability pass**, not final platform closure.
+Audio remains intentionally contained by `-nosound`: the host CoreAudio
+output-unit issue is still separate and must be fixed/verified without
+accepting any microphone permission.  Next macOS work is a short stability
+soak with normal movement/actions and visual cleanup of remaining lighting/
+framing artifacts.  Only after those checks should the same evidence loop
+move to iPadOS, then iPhone: renderer backend, full bundled user-supplied
+
+### 2026-08-18 host-audio containment
+
+The macOS Jak 1 executable now adds `-nosound` unless
+`OTTSEL_ENABLE_HOST_AUDIO=1` is explicitly set; the local window launcher
+also supplies `-nosound` as a second guard. This is a containment measure,
+not a claim that microphone access is needed: the `Player` stream passes null
+input device and input parameters to Cubeb, while output-only CoreAudio
+startup under the app bundle remains unverified. A standalone statically
+linked binary did start output-only CoreAudio and reach the title sequence,
+but the same binary hung before stream creation when launched through the
+bundle. A fresh bundled launch with no wrapper `-nosound` argument proved the
+new runtime policy injected it, reached the visible Naughty Dog intro, and
+showed no microphone prompt. Do not approve a microphone prompt as part of
+this product path.
+
+An output-only default-device control also blocked at Cubeb stream creation
+before graphics initialization, just like the explicit physical-speaker path.
+The issue is therefore not selection of the HAL output device and not any
+input/capture request. The current fallback remains silent until macOS
+CoreAudio can create an output stream under the bundled runtime.
+
+A static-SDL foreground-exec control also blocked at exactly the same point,
+so neither dynamic SDL linkage nor the wrapper's background-child behavior is
+sufficient to explain the launched-app failure. The successful standalone
+audio process is retained only as a narrow control, not product evidence.
+
+### 2026-08-18 TFRAG platform boundary
+
+Mac Training now has live far-terrain provenance: three traced frames carried
+populated TFRAG lists through scratchpad transfer and rendered 12,764 plus
+1,732 terrain triangles per frame. The legacy iOS-only scratchpad stash was
+writing into macOS TFRAG wait-statistics fields, so it is now guarded by
+`OTTSEL_IOS`; the focused regression and a fresh canonical Training replay
+both pass with no macOS stash record. The remaining host-audio gate is
+separate from renderer/input playability.
+data, IOP/audio, touch/controller input, lifecycle, and device performance.
+
+Fresh standalone evidence pins the audio boundary precisely: an output-only
+Cubeb stream reaches `AudioComponentInstanceNew`, then waits in
+`AudioDeviceCreateIOProcID`/HAL IPC before a stream exists.  It reproduces
+with both Cubeb's default output and the explicitly selected `MacBook Air
+Speakers`; it is not microphone capture, a GOAL/IOP deadlock, or a default
+device-selection bug.  The bundle has no microphone usage key or entitlement.
+The Player now retains explicitly enumerated Cubeb devices through synchronous
+stream creation (instead of retaining a dangling device ID) and emits bounded
+component-stage diagnostics for the next viable-host test.
+
+## 2026-08-17 update — native macOS title and first gameplay are verified
+
+This supersedes the older host-specific diagnosis below where it conflicts.
+The macOS fake-ISO installation contains and loads the retail title assets:
+`NDINTRO.STR`, `LOINTRO.STR`, and `VI1.VIS`.  A fresh native arm64 launch
+reached `target-title-wait`; one subsequent START edge opened the normal
+title menu.  Selecting New Game reached the normal save-slot flow, entered
+village1, then Misty, and a synthetic left-stick pulse changed Jak's logged
+position while the scene continued rendering.  This is real title/menu/game
+flow, not the diagnostic `(bg 'village1)` bypass.
+
+Two ARM64 duplicate-lane swizzle defects (`.ppach` halfwords and VF
+32-bit swizzles) were fixed with focused semantic regressions.  The title is
+now visibly composed rather than the earlier warped red/black geometry.
+
+The default host CoreAudio path remains externally blocked during
+`AudioComponentInstanceNew`; this reproduces in the native `sndplay`
+control, so it is not an IOP coroutine or game input failure.  The normal
+macOS launcher uses the game's native `-nosound` option as a temporary
+containment: it reaches a live title screen without opening a Cubeb stream
+or requiring microphone input.  Audible output must be revalidated on a
+host where CoreAudio can create an output unit.
+
+This historical checkpoint is superseded where it says iPadOS work has not
+started or that `SAISB.STR` is missing.  The current macOS retail-flow pass
+and the iPad loader-boundary repair are recorded at the top of this document.
+See `docs/evidence/M1/m1-title-logo-forensics-2026-08-17.md` for the
+contemporaneous title investigation.
+
 ## 2026-08-16 update (BOT23) — Jak 1 boots to the title on macOS (native arm64)
 
 M1 partial pass.  The host gk now boots to the displayed title screen in

@@ -1,7 +1,11 @@
 # Docs index
 
-Current reading order: `15-progress-audit.md`, `13-current-state.md`,
-`STATUS.md`, `10-code-packaging-and-signing.md`, then `BOT6_PROMPT.md`.
+Current reading order: `BOT32_PROMPT.md`,
+`docs/evidence/M1/m1-title-logo-forensics-2026-08-17.md`, `STATUS.md`,
+`BOT31_HANDOFF.md`, `14-roadmap-to-playable.md`, then
+`docs/evidence/M1/m1-collide-list-overflow.md`.
+`BOT32_PROMPT.md` is the current gameplay-first continuation loop; the older
+BOT prompts retain the evidence trail for their completed or superseded gates.
 The table retains the Phase 1 and completed-builder record.
 
 | Doc | Purpose | Status |
@@ -30,5 +34,7 @@ The table retains the Phase 1 and completed-builder record.
 | [BOT5_HANDOFF.md](BOT5_HANDOFF.md) | Next-bot goal-based handoff prompt (S1 PASS → S2) | done |
 | [BOT5_PROMPT.md](BOT5_PROMPT.md) | Paste-able goal loop for the S2 build agent | done (2026-08-09) |
 | [BOT6_PROMPT.md](BOT6_PROMPT.md) | Paste-able signed-AOT realignment loop | **current continuation prompt** |
+| [BOT32_PROMPT.md](BOT32_PROMPT.md) | Paste-able visible-playability and iPad promotion loop | **current continuation prompt (2026-08-17)** |
+| [evidence/M1/m1-title-logo-forensics-2026-08-17.md](evidence/M1/m1-title-logo-forensics-2026-08-17.md) | User-visible title corruption and bounded renderer-trace evidence | current investigation (M1 open) |
 
 Also see repo brief copy at [`jak1-researchloop.md`](jak1-researchloop.md).

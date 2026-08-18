@@ -8,6 +8,8 @@
 
 #include <unistd.h>
 
+#include <algorithm>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -16,12 +18,15 @@
 #include <vector>
 
 #include "common/log/log.h"
+#include "game/sce/ottsel_platform_input.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
 #include "font5x7.h"
 #include "ios_boot.h"
 #include "metal_shell.h"
+
+int ottsel_metal_gfx_has_live_scene();
 
 namespace {
 
@@ -46,6 +51,170 @@ std::vector<std::string> g_lines;
 size_t g_file_pos = 0;
 bool g_quit = false;
 int g_frame = 0;
+
+// The mobile shell does not create the desktop Display/InputManager.  It
+// nevertheless delivers the same completed DualShock snapshot to GOAL, via
+// the platform bridge sampled by scePadRead.
+struct ShellPadInput {
+  ottsel::platform_input::PadState state;
+  bool key_w = false;
+  bool key_a = false;
+  bool key_s = false;
+  bool key_d = false;
+  SDL_FingerID left_stick_finger = 0;
+  SDL_FingerID action_finger = 0;
+  float stick_origin_x = 0;
+  float stick_origin_y = 0;
+
+  void publish() const { ottsel::platform_input::set_pad_state(0, state); }
+
+  void trace(const char* source) const {
+    const char* enabled = std::getenv("OTTSEL_TRACE_MOBILE_INPUT");
+    // Keep the first host events visible without requiring an environment
+    // variable that cannot be set after a Simulator launch. This separates
+    // keyboard-delivery failures from PadState/GOAL-consumer failures while
+    // retaining opt-in full tracing for controller/touch investigation.
+    static u32 first_events = 0;
+    const bool full_trace = enabled && enabled[0] == '1';
+    if (!full_trace && first_events >= 12) {
+      return;
+    }
+    ++first_events;
+    lg::info("OTTSEL MOBILE INPUT: source={} event={} buttons=0x{:x} left=({}, {}) right=({}, {}) "
+             "cross-pressure={}",
+             source, first_events, state.buttons, state.leftx, state.lefty, state.rightx,
+             state.righty, state.pressure.at(6));
+  }
+
+  void update_keyboard_stick() {
+    state.leftx = key_a == key_d ? 127 : (key_a ? 0 : 255);
+    state.lefty = key_w == key_s ? 127 : (key_w ? 0 : 255);
+  }
+
+  void keyboard(SDL_Keycode key, bool pressed) {
+    using namespace ottsel::platform_input;
+    Button digital_button = static_cast<Button>(0);
+    switch (key) {
+      case SDLK_W: key_w = pressed; break;
+      case SDLK_A: key_a = pressed; break;
+      case SDLK_S: key_s = pressed; break;
+      case SDLK_D: key_d = pressed; break;
+      case SDLK_RETURN: digital_button = Start; break;
+      case SDLK_SPACE: digital_button = Cross; break;
+      case SDLK_E: digital_button = Circle; break;
+      case SDLK_F: digital_button = Square; break;
+      case SDLK_R: digital_button = Triangle; break;
+      case SDLK_Q: digital_button = L1; break;
+      case SDLK_O: digital_button = R1; break;
+      case SDLK_1: digital_button = L2; break;
+      case SDLK_P: digital_button = R2; break;
+      case SDLK_UP: digital_button = DpadUp; break;
+      case SDLK_RIGHT: digital_button = DpadRight; break;
+      case SDLK_DOWN: digital_button = DpadDown; break;
+      case SDLK_LEFT: digital_button = DpadLeft; break;
+      default: return;
+    }
+    if (digital_button) {
+      set_button(&state, digital_button, pressed);
+      // Match the desktop keyboard event latch: eight 60 Hz pad reads
+      // preserve a tap long enough for the independent GOAL thread, while
+      // ordinary held keys continue to use the live state above.
+      if (pressed) {
+        latch_button(0, digital_button, 8);
+      }
+    }
+    update_keyboard_stick();
+    publish();
+    trace("keyboard");
+  }
+
+  void gamepad_button(Uint8 button, bool pressed) {
+    using namespace ottsel::platform_input;
+    Button mapped = static_cast<Button>(0);
+    switch (button) {
+      case SDL_GAMEPAD_BUTTON_SOUTH: mapped = Cross; break;
+      case SDL_GAMEPAD_BUTTON_EAST: mapped = Circle; break;
+      case SDL_GAMEPAD_BUTTON_WEST: mapped = Square; break;
+      case SDL_GAMEPAD_BUTTON_NORTH: mapped = Triangle; break;
+      case SDL_GAMEPAD_BUTTON_LEFT_SHOULDER: mapped = L1; break;
+      case SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER: mapped = R1; break;
+      case SDL_GAMEPAD_BUTTON_BACK: mapped = Select; break;
+      case SDL_GAMEPAD_BUTTON_START: mapped = Start; break;
+      case SDL_GAMEPAD_BUTTON_DPAD_UP: mapped = DpadUp; break;
+      case SDL_GAMEPAD_BUTTON_DPAD_RIGHT: mapped = DpadRight; break;
+      case SDL_GAMEPAD_BUTTON_DPAD_DOWN: mapped = DpadDown; break;
+      case SDL_GAMEPAD_BUTTON_DPAD_LEFT: mapped = DpadLeft; break;
+      default: return;
+    }
+    set_button(&state, mapped, pressed);
+    publish();
+    trace("gamepad-button");
+  }
+
+  void gamepad_axis(Uint8 axis, Sint16 value) {
+    const auto normalize = [](Sint16 input) {
+      return static_cast<u8>(std::clamp(127 + int(input) * 128 / 32767, 0, 255));
+    };
+    switch (axis) {
+      case SDL_GAMEPAD_AXIS_LEFTX: state.leftx = normalize(value); break;
+      case SDL_GAMEPAD_AXIS_LEFTY: state.lefty = normalize(value); break;
+      case SDL_GAMEPAD_AXIS_RIGHTX: state.rightx = normalize(value); break;
+      case SDL_GAMEPAD_AXIS_RIGHTY: state.righty = normalize(value); break;
+      case SDL_GAMEPAD_AXIS_LEFT_TRIGGER:
+        ottsel::platform_input::set_button(&state, ottsel::platform_input::L2, value > 1638);
+        break;
+      case SDL_GAMEPAD_AXIS_RIGHT_TRIGGER:
+        ottsel::platform_input::set_button(&state, ottsel::platform_input::R2, value > 1638);
+        break;
+      default: return;
+    }
+    publish();
+    trace("gamepad-axis");
+  }
+
+  void touch(const SDL_Event& event) {
+    using namespace ottsel::platform_input;
+    const auto& finger = event.tfinger;
+    if (event.type == SDL_EVENT_FINGER_DOWN) {
+      if (finger.x < 0.5f && left_stick_finger == 0) {
+        left_stick_finger = finger.fingerID;
+        stick_origin_x = finger.x;
+        stick_origin_y = finger.y;
+      } else if (action_finger == 0) {
+        // Match the desktop Space/controller-South Cross action. A visible,
+        // configurable touch overlay is the next mobile UI layer.
+        action_finger = finger.fingerID;
+        set_button(&state, Cross, true);
+      }
+    } else if (event.type == SDL_EVENT_FINGER_MOTION && finger.fingerID == left_stick_finger) {
+      state.leftx = static_cast<u8>(std::clamp(127 + int((finger.x - stick_origin_x) * 510), 0, 255));
+      state.lefty = static_cast<u8>(std::clamp(127 + int((finger.y - stick_origin_y) * 510), 0, 255));
+    } else if ((event.type == SDL_EVENT_FINGER_UP || event.type == SDL_EVENT_FINGER_CANCELED) &&
+               finger.fingerID == left_stick_finger) {
+      left_stick_finger = 0;
+      state.leftx = 127;
+      state.lefty = 127;
+    } else if ((event.type == SDL_EVENT_FINGER_UP || event.type == SDL_EVENT_FINGER_CANCELED) &&
+               finger.fingerID == action_finger) {
+      action_finger = 0;
+      set_button(&state, Cross, false);
+    } else {
+      return;
+    }
+    publish();
+    if (event.type != SDL_EVENT_FINGER_MOTION) {
+      trace("touch");
+    }
+  }
+
+  void neutralize() {
+    *this = {};
+    publish();
+    trace("lifecycle");
+  }
+};
+
+ShellPadInput g_input;
 
 void put_pixel(int x, int y, unsigned char r, unsigned char g, unsigned char b) {
   if (x < 0 || y < 0 || x >= g_surf_w || y >= g_surf_h) {
@@ -188,7 +357,8 @@ void dump_surface_ppm() {
 bool on_event_watch(void*, SDL_Event* ev) {
   switch (ev->type) {
     case SDL_EVENT_DID_ENTER_BACKGROUND:
-      // keep the runtime running while backgrounded (Simulator keeps CPU)
+      // Never leave movement or an action held when the app is suspended.
+      g_input.neutralize();
       break;
     case SDL_EVENT_DID_ENTER_FOREGROUND:
       break;
@@ -204,7 +374,7 @@ int main(int argc, char** argv) {
   (void)argc;
   (void)argv;
 
-  if (!SDL_Init(SDL_INIT_VIDEO)) {
+  if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
     fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
     return 1;
   }
@@ -240,11 +410,19 @@ int main(int argc, char** argv) {
 
   std::string bundle = SDL_GetBasePath();
   ottsel_ios_set_bundle_dir(bundle);
-  g_log_path = bundle + "ottsel-runtime.log";
+  char* prefs = SDL_GetPrefPath("local.ottsel", "OttselShell");
+  if (!prefs) {
+    fprintf(stderr, "SDL_GetPrefPath failed: %s\n", SDL_GetError());
+    return 1;
+  }
+  std::string writable = prefs;
+  SDL_free(prefs);
+  ottsel_ios_set_writable_dir(writable);
+  g_log_path = writable + "ottsel-runtime.log";
 
   // All runtime log output (lg:: + kernel Msg/printstd) goes to this file;
-  // the surface renders its tail.
-  lg::set_file("ottsel-runtime.log", false, false, bundle);
+  // the surface renders its tail.  The iOS app bundle is read-only.
+  lg::set_file("ottsel-runtime.log", false, false, writable);
 
   std::thread boot(ottsel_ios_run_boot);
 
@@ -254,15 +432,26 @@ int main(int argc, char** argv) {
       if (ev.type == SDL_EVENT_QUIT) {
         g_quit = true;
       }
-      // BOT22: any tap/click/key presses START on the synthetic pad for a
-      // few reads (the game's title screen advances on START/circle/X).
-      if (ev.type == SDL_EVENT_FINGER_DOWN || ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
-          ev.type == SDL_EVENT_KEY_DOWN) {
-        extern unsigned int g_ottsel_synthetic_buttons;
-        extern int g_ottsel_synthetic_frames;
-        g_ottsel_synthetic_buttons = 0x0008;  // START (PadData::ButtonIndex::START = bit 3)
-        g_ottsel_synthetic_frames = 30;
-        fprintf(stderr, "ottsel BOT22: synthetic START press (event 0x%x)\n", ev.type);
+      switch (ev.type) {
+        case SDL_EVENT_KEY_DOWN:
+        case SDL_EVENT_KEY_UP:
+          g_input.keyboard(ev.key.key, ev.type == SDL_EVENT_KEY_DOWN);
+          break;
+        case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+        case SDL_EVENT_GAMEPAD_BUTTON_UP:
+          g_input.gamepad_button(ev.gbutton.button, ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN);
+          break;
+        case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+          g_input.gamepad_axis(ev.gaxis.axis, ev.gaxis.value);
+          break;
+        case SDL_EVENT_FINGER_DOWN:
+        case SDL_EVENT_FINGER_MOTION:
+        case SDL_EVENT_FINGER_UP:
+        case SDL_EVENT_FINGER_CANCELED:
+          g_input.touch(ev);
+          break;
+        default:
+          break;
       }
     }
     // BOT22: file-based input trigger for headless driving — creating
@@ -290,8 +479,20 @@ int main(int argc, char** argv) {
       }
     }
     if (g_surf || g_metal) {
-      read_log_tail();
-      render_surface();
+      if (!g_metal || !ottsel_metal_gfx_has_live_scene()) {
+        read_log_tail();
+        render_surface();
+      } else {
+        // Keep a neutral base behind the live TFRAG/TIE draws without
+        // drawing the shell's diagnostic text into the game frame.
+        std::fill(g_rgba.begin(), g_rgba.end(), 0);
+        for (size_t i = 0; i < g_rgba.size(); i += 4) {
+          g_rgba[i + 0] = 8;
+          g_rgba[i + 1] = 10;
+          g_rgba[i + 2] = 18;
+          g_rgba[i + 3] = 255;
+        }
+      }
     }
     if (g_metal) {
       // The CAMetalLayer's drawable size is only meaningful after the SDL

@@ -9,9 +9,20 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 
+#include <algorithm>
+#include <cstdlib>
+#include <array>
+#include <cmath>
 #include <cstring>
+#include <memory>
+#include <unordered_map>
 #include <vector>
+#include <unistd.h>
 
+#include "common/custom_data/Tfrag3Data.h"
+#include "common/util/FileUtil.h"
+#include "common/util/Serializer.h"
+#include "common/util/compress.h"
 #include "game/graphics/gfx.h"
 #include "common/texture/texture_conversion.h"
 #include "common/dma/dma_chain_read.h"
@@ -25,11 +36,13 @@ extern int g_ottsel_synthetic_frames;
 #include "generic_microcode.h"
 
 #include "vu1.h"
+#include "vif_unpack.h"
 
 #include "common/log/log.h"
 
-// The app's bundle directory (src/shell/ios_boot.cpp), for evidence dumps.
+// The app's bundle and writable directories (src/shell/ios_boot.cpp).
 extern std::string ottsel_ios_bundle_dir();
+extern std::string ottsel_ios_writable_dir();
 
 // The in-game texture-page structures (mirrored from
 // game/graphics/texture/TexturePool.h; defined here to keep the iOS shell
@@ -94,10 +107,784 @@ struct CommonPCPortFunctionWrappers {
 extern CommonPCPortFunctionWrappers g_pc_port_funcs;
 
 namespace {
-// The shell's Metal presenter + the current drawable size.
+// The shell's Metal presenter + the last composed debug frame.  Texture
+// uploads populate fake VRAM for the rasterizer; an individual uploaded page
+// is not a game frame and must never be handed to the presenter as one.
 OttselMetal* g_metal = nullptr;
 std::vector<unsigned char> g_frame;  // RGBA8 frame buffer for the presenter
 int g_fw = 0, g_fh = 0;
+// A Direct/GIF composition is a point-in-time product of a DMA window, not a
+// persistent replacement for the live PC-port background renderer.  Keep one
+// pending publication for the main loop to consume, then return to its live
+// surface on the next present.
+bool g_frame_pending = false;
+
+// A deliberately short, file-triggered accounting window for the real GS
+// Direct path.  It answers one product question without producing a
+// frame-by-frame log: does title/menu traffic arrive as DIRECT/GIF packets,
+// turn into primitives, and reach the CPU compositor?
+struct MobileDirectTrace {
+  bool active = false;
+  bool decoding_direct = false;
+  u32 start_chain = 0;
+  u32 direct_transfers = 0;
+  u64 direct_bytes = 0;
+  u32 gif_tags = 0;
+  u32 packed_tags = 0;
+  u32 reglist_tags = 0;
+  u32 image_tags = 0;
+  u32 sprites = 0;
+  u32 triangles = 0;
+  u32 strips = 0;
+  // Sprite3 uses these VU entry points.  Count them separately from the
+  // tfrag entries so a title/menu window can identify the missing renderer
+  // branch without relying on a guess from packet volume.
+  u32 mscal_init = 0;
+  u32 mscal_2d_world = 0;
+  u32 mscal_2d_hud = 0;
+  u32 mscal_3d = 0;
+  u32 mscal_other = 0;
+  std::array<u16, 16> other_mscal_entries{};
+  u32 other_mscal_entry_count = 0;
+  u32 unhandled_packed_registers = 0;
+  u32 font_packet_samples = 0;
+  int draw_start = 0;
+};
+MobileDirectTrace g_mobile_direct_trace;
+bool g_mobile_generic_probe_pending = false;
+
+// CPU-side level data shared with the desktop PC renderer.  iOS keeps this
+// parsed form independent of the experimental VU/GIF decoder; Metal bucket
+// renderers will consume these same tfrag3 trees directly.
+std::unordered_map<std::string, std::unique_ptr<tfrag3::Level>> g_mobile_levels;
+
+// Byte-for-byte mirror of the PC-port packet emitted by the game before a
+// TFRAG/TIE bucket. Keep it local to avoid pulling OpenGL renderer headers
+// into the Metal shell.
+struct OttselPcPortData {
+  float planes[4][4];
+  s32 itimes[4][4];
+  float camera[4][4];
+  float hvdf_off[4];
+  float fog[4];
+  float trans[4];
+  float rot[4][4];
+  float perspective[4][4];
+  char level_name[32];
+};
+static_assert(sizeof(OttselPcPortData) == 16 * 25, "PC-port packet layout");
+
+OttselPcPortData g_mobile_camera{};
+std::string g_mobile_camera_level;
+std::string g_mobile_tie_level;
+u32 g_mobile_tie_geo = 0;
+u32 g_mobile_tie_tree = 0;
+std::array<s32, 16> g_mobile_tie_itimes{};
+bool g_mobile_tie_itimes_valid = false;
+
+struct MobileTieColorRange {
+  u32 geo = 0;
+  u32 tree = 0;
+  u32 color_offset = 0;
+};
+std::vector<MobileTieColorRange> g_mobile_tie_color_ranges;
+struct MobileTfragColorRange {
+  u32 geo = 0;
+  u32 tree = 0;
+  u32 color_offset = 0;
+};
+std::string g_mobile_tfrag_level;
+std::vector<MobileTfragColorRange> g_mobile_tfrag_color_ranges;
+std::array<s32, 16> g_mobile_tfrag_itimes{};
+bool g_mobile_tfrag_itimes_valid = false;
+bool g_mobile_tfrag_visibility_ready = false;
+std::array<float, 16> g_mobile_tie_cull_planes{};
+bool g_mobile_tie_visibility_ready = false;
+std::array<float, 4> g_mobile_fog_color = {29.f / 255.f, 80.f / 255.f, 200.f / 255.f,
+                                            1.f};
+std::array<u8, 3> g_mobile_fog_rgb = {29, 80, 200};
+
+void update_mobile_fog_color(u64 value) {
+  const std::array<u8, 3> next = {(u8)(value & 0xff), (u8)((value >> 8) & 0xff),
+                                  (u8)((value >> 16) & 0xff)};
+  if (next == g_mobile_fog_rgb) {
+    return;
+  }
+  g_mobile_fog_rgb = next;
+  for (int i = 0; i < 3; ++i) {
+    g_mobile_fog_color[i] = next[i] / 255.f;
+  }
+  static u32 fog_changes = 0;
+  ++fog_changes;
+  if (fog_changes <= 4) {
+    lg::info("OTTSEL FOGCOL: update={} rgb=({},{},{})", fog_changes, next[0], next[1],
+             next[2]);
+  }
+}
+
+void build_visible_mobile_tie_mesh(const std::string& level_name,
+                                   const OttselPcPortData& packet);
+
+void set_mobile_tie_colors(const OttselPcPortData& packet) {
+  if (!g_metal || g_mobile_tie_level.empty()) {
+    return;
+  }
+  std::array<s32, 16> itimes{};
+  memcpy(itimes.data(), packet.itimes, sizeof(packet.itimes));
+  if (g_mobile_tie_itimes_valid && itimes == g_mobile_tie_itimes) {
+    return;
+  }
+  const auto level_it = g_mobile_levels.find(g_mobile_tie_level);
+  if (level_it == g_mobile_levels.end()) {
+    return;
+  }
+  if (g_mobile_tie_color_ranges.empty()) {
+    return;
+  }
+
+  std::array<std::array<u16, 4>, 8> weights{};
+  for (int component = 0; component < 8; ++component) {
+    const int quad_idx = component / 2;
+    const int word_off = component % 2 * 2;
+    for (int channel = 0; channel < 4; ++channel) {
+      const u32 word = (u32)packet.itimes[quad_idx][word_off + channel / 2];
+      weights[component][channel] = (word >> (channel % 2 ? 16 : 0)) & 0xff;
+    }
+  }
+  u32 total_color_count = 0;
+  for (const auto& range : g_mobile_tie_color_ranges) {
+    const auto& colors = level_it->second->tie_trees[range.geo][range.tree].colors;
+    total_color_count = std::max(total_color_count, range.color_offset + colors.color_count);
+  }
+  if (!total_color_count) {
+    return;
+  }
+  std::vector<u8> result((size_t)total_color_count * 4);
+  std::array<u8, 4> min = {255, 255, 255, 255};
+  std::array<u8, 4> max = {};
+  for (const auto& range : g_mobile_tie_color_ranges) {
+    const auto& colors = level_it->second->tie_trees[range.geo][range.tree].colors;
+    for (u32 color = 0; color < colors.color_count; ++color) {
+      for (int channel = 0; channel < 4; ++channel) {
+        u32 value = 0;
+        for (int palette = 0; palette < 8; ++palette) {
+          value += weights[palette][channel] * colors.read(color, palette, channel);
+        }
+        const u8 out = (u8)std::min(channel == 3 ? 128u : 255u, value >> 6);
+        result[(range.color_offset + color) * 4 + channel] = out;
+        min[channel] = std::min(min[channel], out);
+        max[channel] = std::max(max[channel], out);
+      }
+    }
+  }
+  ottsel_metal_set_tie_colors(g_metal, result.data(), total_color_count);
+  g_mobile_tie_itimes = itimes;
+  g_mobile_tie_itimes_valid = true;
+  static u32 tod_updates = 0;
+  ++tod_updates;
+  if (tod_updates <= 3 || tod_updates % 120 == 0) {
+    lg::info("OTTSEL TIE: TOD update={} colors={} rgba-min=({},{},{},{}) "
+             "rgba-max=({},{},{},{})",
+             tod_updates, total_color_count, min[0], min[1], min[2], min[3], max[0], max[1],
+             max[2], max[3]);
+  }
+}
+
+void set_mobile_tfrag_colors(const OttselPcPortData& packet) {
+  if (!g_metal || g_mobile_tfrag_level.empty() || g_mobile_tfrag_color_ranges.empty()) {
+    return;
+  }
+  std::array<s32, 16> itimes{};
+  memcpy(itimes.data(), packet.itimes, sizeof(packet.itimes));
+  if (g_mobile_tfrag_itimes_valid && itimes == g_mobile_tfrag_itimes) {
+    return;
+  }
+  const auto level_it = g_mobile_levels.find(g_mobile_tfrag_level);
+  if (level_it == g_mobile_levels.end()) {
+    return;
+  }
+
+  std::array<std::array<u16, 4>, 8> weights{};
+  for (int component = 0; component < 8; ++component) {
+    const int quad_idx = component / 2;
+    const int word_off = component % 2 * 2;
+    for (int channel = 0; channel < 4; ++channel) {
+      const u32 word = (u32)packet.itimes[quad_idx][word_off + channel / 2];
+      weights[component][channel] = (word >> (channel % 2 ? 16 : 0)) & 0xff;
+    }
+  }
+  u32 total_color_count = 0;
+  for (const auto& range : g_mobile_tfrag_color_ranges) {
+    const auto& colors = level_it->second->tfrag_trees[range.geo][range.tree].colors;
+    total_color_count = std::max(total_color_count, range.color_offset + colors.color_count);
+  }
+  if (!total_color_count) {
+    return;
+  }
+  std::vector<u8> result((size_t)total_color_count * 4);
+  for (const auto& range : g_mobile_tfrag_color_ranges) {
+    const auto& colors = level_it->second->tfrag_trees[range.geo][range.tree].colors;
+    for (u32 color = 0; color < colors.color_count; ++color) {
+      for (int channel = 0; channel < 4; ++channel) {
+        u32 value = 0;
+        for (int palette = 0; palette < 8; ++palette) {
+          value += weights[palette][channel] * colors.read(color, palette, channel);
+        }
+        result[(range.color_offset + color) * 4 + channel] =
+            (u8)std::min(channel == 3 ? 128u : 255u, value >> 6);
+      }
+    }
+  }
+  ottsel_metal_set_tfrag_colors(g_metal, result.data(), total_color_count);
+  g_mobile_tfrag_itimes = itimes;
+  g_mobile_tfrag_itimes_valid = true;
+  static u32 tod_updates = 0;
+  if (++tod_updates <= 3 || tod_updates % 120 == 0) {
+    lg::info("OTTSEL TFRAG: TOD update={} colors={}", tod_updates, total_color_count);
+  }
+}
+
+void set_mobile_tie_camera(const OttselPcPortData& packet) {
+  // Desktop's make_new_cam_mat in scalar form. The Metal shader performs the
+  // same component-wise world-to-clip calculation as tfrag3.vert.
+  const float fog_constant = packet.fog[0];
+  const float game_pzw = packet.perspective[2][3];
+  const float pc_scale[3] = {
+      fog_constant * packet.perspective[0][0] / 256.f,
+      -fog_constant * packet.perspective[1][1] / 128.f,
+      fog_constant * packet.perspective[2][2] / 8388608.f +
+          (packet.hvdf_off[2] / 8388608.f - 1.f) * game_pzw,
+  };
+  float pc_camera[16] = {};
+  for (int row = 0; row < 3; ++row) {
+    for (int col = 0; col < 3; ++col) {
+      pc_camera[row * 4 + col] = packet.rot[row][col] * pc_scale[col];
+    }
+    pc_camera[row * 4 + 3] = packet.rot[row][2] * game_pzw;
+  }
+  pc_camera[3 * 4 + 2] = fog_constant * packet.perspective[3][2] / 8388608.f;
+  const float fog_params[4] = {packet.hvdf_off[3], packet.fog[1], packet.fog[2], 1.f / 255.f};
+  ottsel_metal_set_tie_camera(g_metal, pc_camera, packet.trans, fog_params,
+                               g_mobile_fog_color.data());
+
+  // A single CPU projection summary is the falsifiable companion to the
+  // Metal draw. If no vertices are inside clip space here, debug camera math
+  // or mesh selection; if they are, debug the encoder/pipeline instead.
+  static std::string clip_logged_for;
+  if (clip_logged_for == g_mobile_tie_level) {
+    return;
+  }
+  const auto level_it = g_mobile_levels.find(g_mobile_tie_level);
+  if (level_it == g_mobile_levels.end()) {
+    return;
+  }
+  const auto& vertices = level_it->second->tie_trees[g_mobile_tie_geo][g_mobile_tie_tree]
+                             .unpacked.vertices;
+  u64 finite = 0;
+  u64 metal_visible = 0;
+  u64 gl_visible = 0;
+  const size_t stride = std::max<size_t>(1, vertices.size() / 4096);
+  for (size_t i = 0; i < vertices.size(); i += stride) {
+    const auto& v = vertices[i];
+    const float x = v.x - packet.trans[0];
+    const float y = v.y - packet.trans[1];
+    const float z = v.z - packet.trans[2];
+    float clip[4] = {-pc_camera[12], -pc_camera[13], -pc_camera[14], 0.f};
+    for (int c = 0; c < 4; ++c) {
+      clip[c] -= pc_camera[c] * x + pc_camera[4 + c] * y + pc_camera[8 + c] * z;
+    }
+    if (!std::isfinite(clip[0]) || !std::isfinite(clip[1]) || !std::isfinite(clip[2]) ||
+        !std::isfinite(clip[3]) || std::abs(clip[3]) < 1e-6f) {
+      continue;
+    }
+    ++finite;
+    if (std::abs(clip[0]) <= std::abs(clip[3]) && std::abs(clip[1]) <= std::abs(clip[3]) &&
+        std::abs(clip[2]) <= std::abs(clip[3])) {
+      ++gl_visible;
+      // tie_vs converts desktop OpenGL clip depth [-w,w] to Metal's [0,w]
+      // before output. Apply that same conversion to this diagnostic; testing
+      // the pre-remap value made every valid negative-z sample look culled.
+      const float metal_z = (clip[2] + clip[3]) * 0.5f;
+      if (metal_z >= 0.f && metal_z <= clip[3]) {
+        ++metal_visible;
+      }
+    }
+  }
+  clip_logged_for = g_mobile_tie_level;
+  lg::info("OTTSEL TIE: clip sample level='{}' finite={}/{} gl-clip-visible={} "
+           "metal-clip-visible={}",
+           g_mobile_tie_level, finite, (vertices.size() + stride - 1) / stride, gl_visible,
+           metal_visible);
+}
+
+void build_mobile_tie_mesh(const std::string& level_name) {
+  if (!g_metal || g_mobile_tie_level == level_name) {
+    return;
+  }
+  const auto it = g_mobile_levels.find(level_name);
+  if (it == g_mobile_levels.end()) {
+    return;
+  }
+  const auto& level = *it->second;
+  for (u32 geo = 0; geo < level.tie_trees.size(); ++geo) {
+    for (u32 tree_idx = 0; tree_idx < level.tie_trees[geo].size(); ++tree_idx) {
+      const auto& tree = level.tie_trees[geo][tree_idx];
+      const u32 first = tree.category_draw_indices[(u32)tfrag3::TieCategory::NORMAL];
+      const u32 last = tree.category_draw_indices[(u32)tfrag3::TieCategory::TRANS];
+      if (first == last || tree.unpacked.vertices.empty()) {
+        continue;
+      }
+      std::vector<u32> triangles;
+      std::vector<OttselMetalTieDraw> batches;
+      std::vector<bool> used_textures(level.textures.size());
+      const auto append_strip = [&triangles](const u32* indices, size_t count) {
+        for (size_t i = 2; i < count; ++i) {
+          if (indices[i - 2] == UINT32_MAX || indices[i - 1] == UINT32_MAX ||
+              indices[i] == UINT32_MAX) {
+            continue;
+          }
+          triangles.insert(triangles.end(), {indices[i - 2], indices[i - 1], indices[i]});
+        }
+      };
+      for (u32 draw_idx = first; draw_idx < last; ++draw_idx) {
+        const auto& draw = tree.static_draws[draw_idx];
+        const u32 offset = (u32)triangles.size();
+        for (const auto& run : draw.runs) {
+          std::vector<u32> run_indices(run.length);
+          for (u32 i = 0; i < run.length; ++i) {
+            run_indices[i] = run.vertex0 + i;
+          }
+          append_strip(run_indices.data(), run_indices.size());
+        }
+        append_strip(draw.plain_indices.data(), draw.plain_indices.size());
+        const u32 count = (u32)triangles.size() - offset;
+        if (count) {
+          batches.push_back({offset, count, draw.tree_tex_id, draw.mode.as_int()});
+          if (draw.tree_tex_id >= 0 && (size_t)draw.tree_tex_id < used_textures.size()) {
+            used_textures[draw.tree_tex_id] = true;
+          }
+        }
+      }
+      if (triangles.empty() || batches.empty()) {
+        continue;
+      }
+      u32 uploaded_textures = 0;
+      for (u32 texture_idx = 0; texture_idx < level.textures.size(); ++texture_idx) {
+        if (!used_textures[texture_idx]) {
+          continue;
+        }
+        const auto& texture = level.textures[texture_idx];
+        if (texture.data.size() != (size_t)texture.w * texture.h) {
+          lg::warn("OTTSEL TIE: invalid texture {} '{}' {}x{} words={}", texture_idx,
+                   texture.debug_name, texture.w, texture.h, texture.data.size());
+          continue;
+        }
+        ottsel_metal_set_tie_texture(g_metal, texture_idx, texture.data.data(), texture.w,
+                                     texture.h);
+        ++uploaded_textures;
+      }
+      std::vector<u8> default_colors((size_t)tree.colors.color_count * 4, 128);
+      if (!default_colors.empty()) {
+        ottsel_metal_set_tie_colors(g_metal, default_colors.data(), tree.colors.color_count);
+      }
+      ottsel_metal_set_tie_mesh(g_metal, tree.unpacked.vertices.data(),
+                                 (u32)tree.unpacked.vertices.size(), triangles.data(),
+                                 (u32)triangles.size(), batches.data(), (u32)batches.size());
+      g_mobile_tie_level = level_name;
+      g_mobile_tie_geo = geo;
+      g_mobile_tie_tree = tree_idx;
+      g_mobile_tie_color_ranges = {{geo, tree_idx, 0}};
+      g_mobile_tie_itimes_valid = false;
+      lg::info("OTTSEL TIE: normal batches level='{}' geo={} tree={} draws={} vertices={} "
+               "triangles={} textures={}",
+               level_name, geo, tree_idx, last - first, tree.unpacked.vertices.size(),
+               triangles.size() / 3, uploaded_textures);
+      return;
+    }
+  }
+  lg::warn("OTTSEL TIE: no normal mesh for '{}'", level_name);
+}
+
+bool tie_sphere_in_view(const float sphere[4], const OttselPcPortData& packet) {
+  for (int component = 0; component < 4; ++component) {
+    const float distance = packet.planes[0][component] * sphere[0] +
+                           packet.planes[1][component] * sphere[1] +
+                           packet.planes[2][component] * sphere[2] -
+                           packet.planes[3][component];
+    if (distance <= -sphere[3]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void build_visible_mobile_tie_mesh(const std::string& level_name,
+                                   const OttselPcPortData& packet) {
+  if (!g_metal || g_mobile_tie_visibility_ready || level_name != g_mobile_tie_level) {
+    return;
+  }
+  const auto level_it = g_mobile_levels.find(level_name);
+  if (level_it == g_mobile_levels.end()) {
+    return;
+  }
+  const auto& level = *level_it->second;
+  std::vector<tfrag3::PreloadedVertex> vertices;
+  std::vector<u32> triangles;
+  std::vector<OttselMetalTieDraw> batches;
+  std::vector<MobileTieColorRange> color_ranges;
+  std::vector<bool> used_textures(level.textures.size());
+  u32 color_offset = 0;
+  u32 total_nodes = 0;
+  u32 visible_nodes = 0;
+  u32 total_groups = 0;
+  u32 visible_groups = 0;
+  std::unordered_map<u32, u32> mode_counts;
+  const auto append_strip = [&triangles](const std::vector<u32>& indices, u32 vertex_base) {
+    for (size_t i = 2; i < indices.size(); ++i) {
+      if (indices[i - 2] == UINT32_MAX || indices[i - 1] == UINT32_MAX ||
+          indices[i] == UINT32_MAX) {
+        continue;
+      }
+      triangles.insert(triangles.end(),
+                       {vertex_base + indices[i - 2], vertex_base + indices[i - 1],
+                        vertex_base + indices[i]});
+    }
+  };
+
+  // Match the desktop's default `lod_tie` value: LOD 0, then every loaded
+  // tree at that LOD. Each draw contributes only groups whose referenced BVH
+  // sphere passes the same four PC-port camera planes.
+  constexpr u32 geo = 0;
+  for (u32 tree_idx = 0; tree_idx < level.tie_trees[geo].size(); ++tree_idx) {
+    const auto& tree = level.tie_trees[geo][tree_idx];
+    const u32 first = tree.category_draw_indices[(u32)tfrag3::TieCategory::NORMAL];
+    const u32 last = tree.category_draw_indices[(u32)tfrag3::TieCategory::TRANS];
+    if (first == last || tree.unpacked.vertices.empty() ||
+        color_offset + tree.colors.color_count > UINT16_MAX + 1u) {
+      continue;
+    }
+    std::vector<u8> visible(tree.bvh.vis_nodes.size());
+    for (u32 node_idx = 0; node_idx < tree.bvh.vis_nodes.size(); ++node_idx) {
+      const auto& node = tree.bvh.vis_nodes[node_idx];
+      visible[node_idx] = tie_sphere_in_view(node.bsphere.data(), packet);
+      total_nodes++;
+      visible_nodes += visible[node_idx];
+    }
+    const u32 vertex_base = (u32)vertices.size();
+    const u32 triangle_start = (u32)triangles.size();
+    for (u32 draw_idx = first; draw_idx < last; ++draw_idx) {
+      const auto& draw = tree.static_draws[draw_idx];
+      std::vector<u32> selected_indices;
+      u32 index_offset = draw.unpacked.idx_of_first_idx_in_full_buffer;
+      for (const auto& group : draw.vis_groups) {
+        total_groups++;
+        const bool is_visible = group.vis_idx_in_pc_bvh == UINT16_MAX ||
+                                (group.vis_idx_in_pc_bvh < visible.size() &&
+                                 visible[group.vis_idx_in_pc_bvh]);
+        if (is_visible) {
+          visible_groups++;
+          selected_indices.insert(selected_indices.end(),
+                                  tree.unpacked.indices.begin() + index_offset,
+                                  tree.unpacked.indices.begin() + index_offset + group.num_inds);
+        } else {
+          selected_indices.push_back(UINT32_MAX);
+        }
+        index_offset += group.num_inds;
+      }
+      const u32 batch_start = (u32)triangles.size();
+      append_strip(selected_indices, vertex_base);
+      const u32 batch_count = (u32)triangles.size() - batch_start;
+      if (batch_count) {
+        batches.push_back({batch_start, batch_count, draw.tree_tex_id, draw.mode.as_int()});
+        mode_counts[draw.mode.as_int()]++;
+        if (draw.tree_tex_id >= 0 && (size_t)draw.tree_tex_id < used_textures.size()) {
+          used_textures[draw.tree_tex_id] = true;
+        }
+      }
+    }
+    if ((u32)triangles.size() == triangle_start) {
+      continue;
+    }
+    vertices.reserve(vertices.size() + tree.unpacked.vertices.size());
+    for (auto vertex : tree.unpacked.vertices) {
+      vertex.color_index += color_offset;
+      vertices.push_back(vertex);
+    }
+    color_ranges.push_back({geo, tree_idx, color_offset});
+    color_offset += tree.colors.color_count;
+  }
+  if (vertices.empty() || triangles.empty() || batches.empty()) {
+    lg::warn("OTTSEL TIE: visibility snapshot produced no normal geometry for '{}'", level_name);
+    return;
+  }
+  u32 uploaded_textures = 0;
+  for (u32 texture_idx = 0; texture_idx < level.textures.size(); ++texture_idx) {
+    if (!used_textures[texture_idx]) {
+      continue;
+    }
+    const auto& texture = level.textures[texture_idx];
+    if (texture.data.size() != (size_t)texture.w * texture.h) {
+      continue;
+    }
+    ottsel_metal_set_tie_texture(g_metal, texture_idx, texture.data.data(), texture.w, texture.h);
+    ++uploaded_textures;
+  }
+  std::vector<u8> default_colors((size_t)color_offset * 4, 128);
+  ottsel_metal_set_tie_colors(g_metal, default_colors.data(), color_offset);
+  ottsel_metal_set_tie_mesh(g_metal, vertices.data(), (u32)vertices.size(), triangles.data(),
+                             (u32)triangles.size(), batches.data(), (u32)batches.size());
+  g_mobile_tie_color_ranges = std::move(color_ranges);
+  g_mobile_tie_itimes_valid = false;
+  g_mobile_tie_visibility_ready = true;
+  memcpy(g_mobile_tie_cull_planes.data(), packet.planes, sizeof(packet.planes));
+  lg::info("OTTSEL TIE: visibility snapshot lod={} trees={} nodes={}/{} groups={}/{} "
+           "batches={} vertices={} triangles={} textures={}",
+           geo, g_mobile_tie_color_ranges.size(), visible_nodes, total_nodes, visible_groups,
+           total_groups, batches.size(), vertices.size(), triangles.size() / 3, uploaded_textures);
+  std::vector<std::pair<u32, u32>> sorted_modes(mode_counts.begin(), mode_counts.end());
+  std::sort(sorted_modes.begin(), sorted_modes.end(),
+            [](const auto& a, const auto& b) { return a.second > b.second; });
+  std::string mode_summary;
+  for (size_t i = 0; i < sorted_modes.size() && i < 8; ++i) {
+    mode_summary += fmt::format("{:#x}:{} ", sorted_modes[i].first, sorted_modes[i].second);
+  }
+  lg::info("OTTSEL TIE: visible DrawMode histogram [{}]", mode_summary);
+}
+
+void build_visible_mobile_tfrag_mesh(const std::string& level_name,
+                                     const OttselPcPortData& packet) {
+  if (!g_metal || g_mobile_tfrag_visibility_ready) {
+    return;
+  }
+  const auto level_it = g_mobile_levels.find(level_name);
+  if (level_it == g_mobile_levels.end()) {
+    return;
+  }
+  const auto& level = *level_it->second;
+  std::vector<tfrag3::PreloadedVertex> vertices;
+  std::vector<u32> triangles;
+  std::vector<OttselMetalTieDraw> batches;
+  std::vector<MobileTfragColorRange> color_ranges;
+  std::vector<bool> used_textures(level.textures.size());
+  u32 color_offset = 0;
+  u32 total_nodes = 0;
+  u32 visible_nodes = 0;
+  u32 total_groups = 0;
+  u32 visible_groups = 0;
+  const auto append_strip = [&triangles](const std::vector<u32>& indices, u32 vertex_base) {
+    for (size_t i = 2; i < indices.size(); ++i) {
+      if (indices[i - 2] == UINT32_MAX || indices[i - 1] == UINT32_MAX ||
+          indices[i] == UINT32_MAX) {
+        continue;
+      }
+      triangles.insert(triangles.end(),
+                       {vertex_base + indices[i - 2], vertex_base + indices[i - 1],
+                        vertex_base + indices[i]});
+    }
+  };
+
+  // This matches the desktop opaque TFRAG renderer's normal tree selection
+  // at LOD 0. It intentionally excludes trans/dirt/ice; those are distinct
+  // later buckets with different ordering and blend behavior.
+  constexpr u32 geo = 0;
+  for (u32 tree_idx = 0; tree_idx < level.tfrag_trees[geo].size(); ++tree_idx) {
+    const auto& tree = level.tfrag_trees[geo][tree_idx];
+    if (tree.kind != tfrag3::TFragmentTreeKind::NORMAL || tree.unpacked.vertices.empty() ||
+        color_offset + tree.colors.color_count > UINT16_MAX + 1u) {
+      continue;
+    }
+    std::vector<u8> visible(tree.bvh.vis_nodes.size());
+    for (u32 node_idx = 0; node_idx < tree.bvh.vis_nodes.size(); ++node_idx) {
+      const auto& node = tree.bvh.vis_nodes[node_idx];
+      visible[node_idx] = tie_sphere_in_view(node.bsphere.data(), packet);
+      ++total_nodes;
+      visible_nodes += visible[node_idx];
+    }
+    const u32 vertex_base = (u32)vertices.size();
+    const u32 triangle_start = (u32)triangles.size();
+    for (const auto& draw : tree.draws) {
+      std::vector<u32> selected_indices;
+      u32 index_offset = draw.unpacked.idx_of_first_idx_in_full_buffer;
+      for (const auto& group : draw.vis_groups) {
+        ++total_groups;
+        const bool is_visible = group.vis_idx_in_pc_bvh == UINT16_MAX ||
+                                (group.vis_idx_in_pc_bvh < visible.size() &&
+                                 visible[group.vis_idx_in_pc_bvh]);
+        if (is_visible) {
+          ++visible_groups;
+          selected_indices.insert(selected_indices.end(),
+                                  tree.unpacked.indices.begin() + index_offset,
+                                  tree.unpacked.indices.begin() + index_offset + group.num_inds);
+        } else if (tree.use_strips) {
+          selected_indices.push_back(UINT32_MAX);
+        }
+        index_offset += group.num_inds;
+      }
+      const u32 batch_start = (u32)triangles.size();
+      if (tree.use_strips) {
+        append_strip(selected_indices, vertex_base);
+      } else {
+        for (const auto index : selected_indices) {
+          if (index != UINT32_MAX) {
+            triangles.push_back(vertex_base + index);
+          }
+        }
+      }
+      const u32 batch_count = (u32)triangles.size() - batch_start;
+      if (batch_count) {
+        batches.push_back({batch_start, batch_count, draw.tree_tex_id, draw.mode.as_int()});
+        if (draw.tree_tex_id >= 0 && (size_t)draw.tree_tex_id < used_textures.size()) {
+          used_textures[draw.tree_tex_id] = true;
+        }
+      }
+    }
+    if ((u32)triangles.size() == triangle_start) {
+      continue;
+    }
+    vertices.reserve(vertices.size() + tree.unpacked.vertices.size());
+    for (auto vertex : tree.unpacked.vertices) {
+      vertex.color_index += color_offset;
+      vertices.push_back(vertex);
+    }
+    color_ranges.push_back({geo, tree_idx, color_offset});
+    color_offset += tree.colors.color_count;
+  }
+  if (vertices.empty() || triangles.empty() || batches.empty()) {
+    lg::warn("OTTSEL TFRAG: visible opaque mesh produced no geometry for '{}'", level_name);
+    return;
+  }
+  for (u32 texture_idx = 0; texture_idx < level.textures.size(); ++texture_idx) {
+    if (!used_textures[texture_idx]) {
+      continue;
+    }
+    const auto& texture = level.textures[texture_idx];
+    if (texture.data.size() == (size_t)texture.w * texture.h) {
+      ottsel_metal_set_tie_texture(g_metal, texture_idx, texture.data.data(), texture.w,
+                                   texture.h);
+    }
+  }
+  std::vector<u8> default_colors((size_t)color_offset * 4, 128);
+  ottsel_metal_set_tfrag_colors(g_metal, default_colors.data(), color_offset);
+  ottsel_metal_set_tfrag_mesh(g_metal, vertices.data(), (u32)vertices.size(), triangles.data(),
+                               (u32)triangles.size(), batches.data(), (u32)batches.size());
+  g_mobile_tfrag_level = level_name;
+  g_mobile_tfrag_color_ranges = std::move(color_ranges);
+  g_mobile_tfrag_itimes_valid = false;
+  g_mobile_tfrag_visibility_ready = true;
+  lg::info("OTTSEL TFRAG: opaque visibility snapshot lod={} trees={} nodes={}/{} groups={}/{} "
+           "batches={} vertices={} triangles={}",
+           geo, g_mobile_tfrag_color_ranges.size(), visible_nodes, total_nodes, visible_groups,
+           total_groups, batches.size(), vertices.size(), triangles.size() / 3);
+}
+
+void load_mobile_level(const std::string& level_name) {
+  if (level_name.empty() || g_mobile_levels.contains(level_name)) {
+    return;
+  }
+  const auto path = ottsel_ios_bundle_dir() + "iso_data/fr3/" + level_name + ".fr3";
+  if (!fs::exists(path)) {
+    lg::warn("OTTSEL FR3: missing level '{}' at {}", level_name, path);
+    return;
+  }
+
+  auto compressed = file_util::read_binary_file(path);
+  auto decoded = compression::decompress_zstd(compressed.data(), compressed.size());
+  auto level = std::make_unique<tfrag3::Level>();
+  Serializer serializer(decoded.data(), decoded.size());
+  level->serialize(serializer);
+
+  u64 trees = 0;
+  u64 draws = 0;
+  u64 vertices = 0;
+  for (auto& geo_trees : level->tie_trees) {
+    for (auto& tree : geo_trees) {
+      tree.unpack();
+      ++trees;
+      draws += tree.static_draws.size();
+      vertices += tree.unpacked.vertices.size();
+    }
+  }
+  std::array<u64, (size_t)tfrag3::TFragmentTreeKind::INVALID> tfrag_trees{};
+  std::array<u64, (size_t)tfrag3::TFragmentTreeKind::INVALID> tfrag_draws{};
+  std::array<u64, (size_t)tfrag3::TFragmentTreeKind::INVALID> tfrag_vertices{};
+  for (auto& geo_trees : level->tfrag_trees) {
+    for (auto& tree : geo_trees) {
+      tree.unpack();
+      const auto kind = (size_t)tree.kind;
+      if (kind >= tfrag_trees.size()) {
+        continue;
+      }
+      ++tfrag_trees[kind];
+      tfrag_draws[kind] += tree.draws.size();
+      tfrag_vertices[kind] += tree.unpacked.vertices.size();
+    }
+  }
+  lg::info("OTTSEL FR3: loaded '{}' bytes={} tie-trees={} tie-draws={} tie-verts={} "
+           "tfrag-normal=({},{},{}) tfrag-trans=({},{},{}) tfrag-dirt=({},{},{}) "
+           "tfrag-ice=({},{},{})",
+           level_name, decoded.size(), trees, draws, vertices,
+           tfrag_trees[(size_t)tfrag3::TFragmentTreeKind::NORMAL],
+           tfrag_draws[(size_t)tfrag3::TFragmentTreeKind::NORMAL],
+           tfrag_vertices[(size_t)tfrag3::TFragmentTreeKind::NORMAL],
+           tfrag_trees[(size_t)tfrag3::TFragmentTreeKind::TRANS],
+           tfrag_draws[(size_t)tfrag3::TFragmentTreeKind::TRANS],
+           tfrag_vertices[(size_t)tfrag3::TFragmentTreeKind::TRANS],
+           tfrag_trees[(size_t)tfrag3::TFragmentTreeKind::DIRT],
+           tfrag_draws[(size_t)tfrag3::TFragmentTreeKind::DIRT],
+           tfrag_vertices[(size_t)tfrag3::TFragmentTreeKind::DIRT],
+           tfrag_trees[(size_t)tfrag3::TFragmentTreeKind::ICE],
+           tfrag_draws[(size_t)tfrag3::TFragmentTreeKind::ICE],
+           tfrag_vertices[(size_t)tfrag3::TFragmentTreeKind::ICE]);
+  g_mobile_levels.emplace(level_name, std::move(level));
+  build_mobile_tie_mesh(level_name);
+}
+
+void request_mobile_levels(const std::vector<std::string>& levels, const char* source) {
+  static std::vector<std::string> last_requested;
+  if (levels != last_requested) {
+    std::string joined;
+    for (const auto& level : levels) {
+      joined += level + " ";
+    }
+    lg::info("OTTSEL FR3: {} levels [{}]", source, joined);
+    last_requested = levels;
+  }
+  for (const auto& level : levels) {
+    load_mobile_level(level);
+  }
+}
+
+void capture_mobile_camera(const void* packet, size_t size) {
+  if (!packet || size != sizeof(OttselPcPortData)) {
+    return;
+  }
+  OttselPcPortData candidate{};
+  memcpy(&candidate, packet, sizeof(candidate));
+  candidate.level_name[sizeof(candidate.level_name) - 1] = '\0';
+  const std::string level(candidate.level_name);
+  if (level.empty() || !g_mobile_levels.contains(level)) {
+    return;
+  }
+  const bool finite = std::isfinite(candidate.camera[0][0]) &&
+                      std::isfinite(candidate.camera[1][1]) &&
+                      std::isfinite(candidate.camera[2][2]) &&
+                      std::isfinite(candidate.trans[0]) && std::isfinite(candidate.trans[1]) &&
+                      std::isfinite(candidate.trans[2]);
+  g_mobile_camera = candidate;
+  if (finite && level == g_mobile_tie_level) {
+    build_visible_mobile_tfrag_mesh(level, candidate);
+    build_visible_mobile_tie_mesh(level, candidate);
+    set_mobile_tie_camera(candidate);
+    set_mobile_tfrag_colors(candidate);
+    set_mobile_tie_colors(candidate);
+  }
+  if (level != g_mobile_camera_level) {
+    g_mobile_camera_level = level;
+    lg::info("OTTSEL FR3: camera '{}' finite={} trans=({:.3f},{:.3f},{:.3f}) fog={:.3f}",
+             level, finite, candidate.trans[0], candidate.trans[1], candidate.trans[2],
+             candidate.fog[0]);
+  }
+}
 
 // Fake GS VRAM (4 MB).  The game stores every texture pre-scrambled so it can
 // be uploaded to VRAM as a plain PSMCT32 transfer 128 pixels wide
@@ -401,6 +1188,16 @@ struct OttselRaster {
     // The TEX0 width in 64-texel units for download_texture_rgba8888.
     u32 tw64 = w / 64;
     download_texture_rgba8888(tex.rgba.data(), tbp, tw64, w, h, psm, cpsm, cbp);
+    static u32 texture_samples_logged = 0;
+    if (psm == 0x13 && texture_samples_logged < 16) {
+      ++texture_samples_logged;
+      const u8* first = tex.rgba.data();
+      const size_t middle = ((size_t)(h / 2) * w + (w / 2)) * 4;
+      const u8* mid = tex.rgba.data() + middle;
+      lg::info("OTTSEL TEX: tbp=0x{:x} {}x{} psm=0x{:x} cbp=0x{:x} first={:02x}{:02x}{:02x}{:02x} mid={:02x}{:02x}{:02x}{:02x}",
+               tbp, w, h, psm, cbp, first[0], first[1], first[2], first[3], mid[0], mid[1],
+               mid[2], mid[3]);
+    }
   }
 
   void blend_px(int x, int y, u8 r, u8 g, u8 b, u8 a) {
@@ -518,6 +1315,27 @@ struct OttselRaster {
     }
     draw_count++;
   }
+
+  void sprite(const OttselVertex& a,
+              const OttselVertex& b,
+              bool tme,
+              bool fst,
+              bool abe,
+              u8 ta0) {
+    OttselVertex top_right = b;
+    OttselVertex bottom_left = a;
+    top_right.y = a.y;
+    bottom_left.y = b.y;
+    if (fst) {
+      top_right.uv_v = a.uv_v;
+      bottom_left.uv_u = a.uv_u;
+    } else {
+      top_right.t = a.t;
+      bottom_left.s = a.s;
+    }
+    tri(a, top_right, b, tme, fst, abe, ta0);
+    tri(a, b, bottom_left, tme, fst, abe, ta0);
+  }
 };
 
 // The draw decoder: tracks GS registers and emits completed prims.
@@ -564,7 +1382,18 @@ struct OttselGifDecoder {
   void emit_completed() {
     GsPrim gp(st.prim);
     GsTex0 gt(st.tex0);
-    if (rst && vert_count >= 3) {
+    if (g_mobile_direct_trace.active && g_mobile_direct_trace.decoding_direct) {
+      if (gp.kind() == GsPrim::Kind::SPRITE) {
+        g_mobile_direct_trace.sprites++;
+      } else if (gp.kind() == GsPrim::Kind::TRI) {
+        g_mobile_direct_trace.triangles++;
+      }
+    }
+    if (rst && gp.kind() == GsPrim::Kind::SPRITE && vert_count >= 2) {
+      GsTexa gta(st.texa);
+      rst->load_tex(gt.tbp0(), gt.tw(), gt.th(), (u32)gt.psm(), gt.cbp(), gt.cpsm());
+      rst->sprite(verts[0], verts[1], gp.tme(), gp.fst(), gp.abe(), gta.ta0());
+    } else if (rst && vert_count >= 3) {
       GsTexa gta(st.texa);
       rst->load_tex(gt.tbp0(), gt.tw(), gt.th(), (u32)gt.psm(), gt.cbp(), gt.cpsm());
       rst->tri(verts[0], verts[1], verts[2], gp.tme(), gp.fst(), gp.abe(), gta.ta0());
@@ -590,6 +1419,9 @@ struct OttselGifDecoder {
   void log_triangle_strip() {
     GsPrim gp(st.prim);
     GsTex0 gt(st.tex0);
+    if (g_mobile_direct_trace.active && g_mobile_direct_trace.decoding_direct) {
+      g_mobile_direct_trace.strips++;
+    }
     if (rst && vert_count >= 3) {
       GsTexa gta(st.texa);
       rst->load_tex(gt.tbp0(), gt.tw(), gt.th(), (u32)gt.psm(), gt.cbp(), gt.cpsm());
@@ -702,6 +1534,9 @@ struct OttselGifDecoder {
       case GsRegisterAddress::TEXA:
         st.texa = value;
         break;
+      case GsRegisterAddress::FOGCOL:
+        update_mobile_fog_color(value);
+        break;
       default:
         break;
     }
@@ -714,6 +1549,22 @@ void decode_gif_packets(const u8* g, u32 size, OttselGifDecoder& dec) {
   while (offset + 16 <= size) {
     GifTag tag(g + offset);
     offset += 16;
+    if (g_mobile_direct_trace.active && g_mobile_direct_trace.decoding_direct) {
+      g_mobile_direct_trace.gif_tags++;
+      switch (tag.flg()) {
+        case GifTag::Format::PACKED:
+          g_mobile_direct_trace.packed_tags++;
+          break;
+        case GifTag::Format::REGLIST:
+          g_mobile_direct_trace.reglist_tags++;
+          break;
+        case GifTag::Format::IMAGE:
+          g_mobile_direct_trace.image_tags++;
+          break;
+        default:
+          break;
+      }
+    }
     u32 nreg = tag.nreg();
     GifTag::RegisterDescriptor reg_desc[16];
     for (u32 i = 0; i < nreg; i++) {
@@ -764,7 +1615,9 @@ void decode_gif_packets(const u8* g, u32 size, OttselGifDecoder& dec) {
             } break;
             case GifTag::RegisterDescriptor::XYZF2:
             case GifTag::RegisterDescriptor::XYZ2: {
-              // PACKED XYZF2: x(4) y(4) then z/f in the upper 8 bytes.
+              // Match the desktop DirectRenderer's PACKED wire format: X
+              // and Y occupy their own words and Z/F/ADC occupy the upper
+              // qword.  This is distinct from the REGLIST representation.
               u32 x = 0, y = 0;
               memcpy(&x, rec, 4);
               memcpy(&y, rec + 4, 4);
@@ -781,15 +1634,21 @@ void decode_gif_packets(const u8* g, u32 size, OttselGifDecoder& dec) {
               memcpy(&v, rec, 8);
               dec.on_prim_start(v);
             } break;
-            case GifTag::RegisterDescriptor::TEX0_1:
-            case GifTag::RegisterDescriptor::TEX0_2: {
-              u64 v = 0;
-              memcpy(&v, rec, 8);
-              dec.st.tex0 = v;
-            } break;
-            default:
+           case GifTag::RegisterDescriptor::TEX0_1:
+           case GifTag::RegisterDescriptor::TEX0_2: {
+             u64 v = 0;
+             memcpy(&v, rec, 8);
+             dec.st.tex0 = v;
+           } break;
+           default:
+              if (g_mobile_direct_trace.active &&
+                  g_mobile_direct_trace.unhandled_packed_registers < 16) {
+                lg::info("OTTSEL MOBILE DIRECT: unhandled packed GIF register={} chain={}",
+                         (u32)reg_desc[r], dec.chain_no);
+                ++g_mobile_direct_trace.unhandled_packed_registers;
+              }
               break;
-          }
+         }
           offset += 16;
         }
       }
@@ -872,7 +1731,24 @@ void decode_transfer(const DmaTransfer& t, OttselGifDecoder& dec) {
     gif_qwc = direct_or_nop(t.vifcode1());
   }
   if (gif_qwc) {
-    decode_gif_packets(t.data, std::min(gif_qwc * 16, t.size_bytes), dec);
+    const u32 bytes = std::min(gif_qwc * 16, t.size_bytes);
+    if (g_mobile_direct_trace.active && gif_qwc == 14 &&
+        g_mobile_direct_trace.font_packet_samples < 8 && bytes >= 32) {
+      const GifTag font_tag(t.data);
+      lg::info("OTTSEL MOBILE DIRECT: qwc14 sample={} nloop={} nreg={} pre={} prim=0x{:x} "
+               "tag={:016x}/{:016x}",
+               ++g_mobile_direct_trace.font_packet_samples, font_tag.nloop(), font_tag.nreg(),
+               (int)font_tag.pre(), font_tag.prim(), *(const u64*)t.data,
+               *(const u64*)(t.data + 8));
+    }
+    if (g_mobile_direct_trace.active) {
+      g_mobile_direct_trace.direct_transfers++;
+      g_mobile_direct_trace.direct_bytes += bytes;
+    }
+    const bool old_direct_context = g_mobile_direct_trace.decoding_direct;
+    g_mobile_direct_trace.decoding_direct = true;
+    decode_gif_packets(t.data, bytes, dec);
+    g_mobile_direct_trace.decoding_direct = old_direct_context;
     return;
   }
   // No DIRECT in the tag's vif fields: walk vif words inside the data.
@@ -886,7 +1762,14 @@ void decode_transfer(const DmaTransfer& t, OttselGifDecoder& dec) {
         off += 4;
       } else {
         u32 sz = std::min(gif_qwc * 16, t.size_bytes - off);
+        if (g_mobile_direct_trace.active) {
+          g_mobile_direct_trace.direct_transfers++;
+          g_mobile_direct_trace.direct_bytes += sz;
+        }
+        const bool old_direct_context = g_mobile_direct_trace.decoding_direct;
+        g_mobile_direct_trace.decoding_direct = true;
         decode_gif_packets(t.data + off, sz, dec);
+        g_mobile_direct_trace.decoding_direct = old_direct_context;
         off += gif_qwc * 16;
         gif_qwc = 0;
       }
@@ -898,11 +1781,244 @@ void decode_transfer(const DmaTransfer& t, OttselGifDecoder& dec) {
     }
   }
 }
+
+// Jak 1's PC path deliberately omits Sprite3 VU microcode; the desktop
+// renderer consumes these same input records on the CPU.
+struct MobileSpriteVec4 {
+  float x, y, z, w;
+};
+
+struct MobileSpriteFrameJak1 {
+  MobileSpriteVec4 xy[8];
+  MobileSpriteVec4 st[4];
+  MobileSpriteVec4 xyz[4];
+  MobileSpriteVec4 hmge_scale;
+  float pfog0, deg_to_rad, min_scale, inv_area;
+  GifTag adgif_giftag;
+  GifTag sprite_2d_giftag;
+  GifTag sprite_2d_giftag2;
+  MobileSpriteVec4 sincos[5];
+  MobileSpriteVec4 basis_x;
+  MobileSpriteVec4 basis_y;
+  GifTag sprite_3d_giftag;
+  AdGifData screen_shader;
+  GifTag clipped_giftag;
+  MobileSpriteVec4 inv_hmge_scale;
+  MobileSpriteVec4 stq_offset;
+  MobileSpriteVec4 stq_scale;
+  MobileSpriteVec4 rgba_plain;
+  GifTag warp_giftag;
+  float fog_min, fog_max, max_scale, bonus;
+};
+static_assert(sizeof(MobileSpriteFrameJak1) == 0x290, "Jak 1 Sprite3 frame layout");
+
+struct MobileSpriteMatrix {
+  MobileSpriteVec4 camera[4];
+  MobileSpriteVec4 hvdf;
+};
+static_assert(sizeof(MobileSpriteMatrix) == 5 * 16, "Sprite3 matrix layout");
+
+struct MobileSpriteVec2d {
+  MobileSpriteVec4 xyz_sx;
+  MobileSpriteVec4 flag_rot_sy;
+  MobileSpriteVec4 rgba;
+};
+static_assert(sizeof(MobileSpriteVec2d) == 48, "Sprite3 vector layout");
+
+static MobileSpriteVec4 sprite_add(const MobileSpriteVec4& a, const MobileSpriteVec4& b) {
+  return {a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w};
+}
+
+static MobileSpriteVec4 sprite_scale(const MobileSpriteVec4& a, float s) {
+  return {a.x * s, a.y * s, a.z * s, a.w * s};
+}
+
+static MobileSpriteVec4 sprite_matrix_transform(const MobileSpriteVec4 matrix[4],
+                                                 const MobileSpriteVec4& p) {
+  return sprite_add(matrix[3],
+                    sprite_add(sprite_scale(matrix[0], p.x),
+                               sprite_add(sprite_scale(matrix[1], p.y),
+                                          sprite_scale(matrix[2], p.z))));
+}
+
+static u8 sprite_color(float value) {
+  return (u8)std::clamp((int)value, 0, 255);
+}
+
+static OttselVertex sprite_raster_vertex(const MobileSpriteVec4& transformed,
+                                         const MobileSpriteVec4& st,
+                                         const MobileSpriteVec4& color,
+                                         OttselRaster& raster) {
+  const float ndc_x = ((transformed.x - 2048.f) / 256.f) * transformed.w;
+  const float ndc_y = ((transformed.y - 2048.f) / -128.f) * transformed.w;
+  const float pixel_x = (ndc_x + 1.f) * 0.5f * raster.fb_w;
+  const float pixel_y = (1.f - ndc_y) * 0.5f * raster.fb_h;
+  const float gx = std::clamp(pixel_x / raster.fb_w - raster.x_off, 0.f, 1.f);
+  const float gy = std::clamp(1.f - pixel_y / raster.fb_h - raster.y_off, 0.f, 1.f);
+  OttselVertex out;
+  out.x = (u32)(gx * UINT32_MAX);
+  out.y = (u32)(gy * UINT32_MAX);
+  out.s = st.x;
+  out.t = st.y;
+  out.q = 1.f;
+  out.has_st = true;
+  out.r = sprite_color(color.x);
+  out.g = sprite_color(color.y);
+  out.b = sprite_color(color.z);
+  out.a = sprite_color(color.w);
+  return out;
+}
+
+static u32 render_mobile_sprite_group0(const MobileSpriteFrameJak1& frame,
+                                       const MobileSpriteMatrix& matrix,
+                                       const MobileSpriteVec2d* vectors,
+                                       const AdGifData* adgifs,
+                                       u32 count,
+                                       OttselRaster& raster) {
+  u32 drawn = 0;
+  for (u32 index = 0; index < count; ++index) {
+    const auto& vector = vectors[index];
+    const float denominator = sprite_matrix_transform(matrix.camera, vector.xyz_sx).w;
+    if (!std::isfinite(denominator) || denominator == 0.f) {
+      continue;
+    }
+    const float q = frame.pfog0 / denominator;
+    if (!std::isfinite(q)) {
+      continue;
+    }
+
+    MobileSpriteVec4 base = sprite_matrix_transform(matrix.camera, vector.xyz_sx);
+    base.x *= q;
+    base.y *= q;
+    base.z *= q;
+    base = sprite_add(base, matrix.hvdf);
+    base.w = std::max(base.w, frame.fog_min);
+
+    const float sx = std::clamp(vector.xyz_sx.w * q, frame.min_scale, frame.max_scale);
+    const float sy = std::clamp(vector.flag_rot_sy.w * q, frame.min_scale, frame.max_scale);
+    const float radians = vector.flag_rot_sy.z * frame.deg_to_rad;
+    const float sine = std::sin(radians);
+    const float cosine = std::cos(radians);
+    const MobileSpriteVec4 x_basis = sprite_scale(
+        sprite_add(sprite_scale(frame.basis_x, cosine), sprite_scale(frame.basis_y, -sine)), sx);
+    const MobileSpriteVec4 y_basis = sprite_scale(
+        sprite_add(sprite_scale(frame.basis_x, sine), sprite_scale(frame.basis_y, cosine)), sy);
+    const u32 flags = *(const u32*)&vector.flag_rot_sy.x;
+
+    OttselVertex vertices[4];
+    for (u32 vertex = 0; vertex < 4; ++vertex) {
+      const MobileSpriteVec4& offset = frame.xy[vertex + (flags & 15u)];
+      const MobileSpriteVec4 transformed =
+          sprite_add(base, sprite_add(sprite_scale(x_basis, offset.x),
+                                      sprite_scale(y_basis, offset.y)));
+      vertices[vertex] = sprite_raster_vertex(transformed, frame.st[vertex], vector.rgba, raster);
+    }
+
+    const GsTex0 tex0(adgifs[index].tex0_data);
+    raster.load_tex(tex0.tbp0(), tex0.tw(), tex0.th(), (u32)tex0.psm(), tex0.cbp(), tex0.cpsm());
+    raster.tri(vertices[0], vertices[1], vertices[3], true, false, true, 128);
+    raster.tri(vertices[0], vertices[3], vertices[2], true, false, true, 128);
+    ++drawn;
+  }
+  return drawn;
+}
+
+static bool is_sprite_header(const DmaTransfer& transfer) {
+  const VifCode code(transfer.vif1());
+  return transfer.size_bytes == 16 && code.kind == VifCode::Kind::UNPACK_V4_32 &&
+         (code.immediate & 0x3ff) == 0;
+}
+
+static u32 render_mobile_sprite_bucket(const void* data,
+                                       u32 start_offset,
+                                       u32 next_bucket,
+                                       OttselRaster& raster) {
+  DmaFollower dma(data, start_offset);
+  MobileSpriteFrameJak1 frame{};
+  MobileSpriteMatrix matrix{};
+  bool have_frame = false;
+  bool have_matrix = false;
+  u32 drawn = 0;
+  for (u32 transfer_index = 0; transfer_index < 256 && !dma.ended() &&
+                                dma.current_tag_offset() != next_bucket; ++transfer_index) {
+    DmaTransfer transfer = dma.read_and_advance();
+    const VifCode vif1(transfer.vif1());
+    if (transfer.size_bytes == sizeof(frame) && vif1.kind == VifCode::Kind::UNPACK_V4_32 &&
+        (vif1.immediate & 0x3ff) == 0x3d4) {
+      memcpy(&frame, transfer.data, sizeof(frame));
+      have_frame = true;
+      continue;
+    }
+    if (transfer.size_bytes == sizeof(matrix) && vif1.kind == VifCode::Kind::UNPACK_V4_32 &&
+        (vif1.immediate & 0x3ff) == 0x384) {
+      memcpy(&matrix, transfer.data, sizeof(matrix));
+      have_matrix = true;
+      continue;
+    }
+    if (!have_frame || !have_matrix || !is_sprite_header(transfer)) {
+      continue;
+    }
+
+    const u32 sprite_count = *(const u32*)transfer.data;
+    if (sprite_count == 0 || sprite_count > 48 || dma.ended() ||
+        dma.current_tag_offset() == next_bucket) {
+      continue;
+    }
+    DmaTransfer vectors = dma.read_and_advance();
+    if (vectors.size_bytes != sprite_count * sizeof(MobileSpriteVec2d) || dma.ended() ||
+        dma.current_tag_offset() == next_bucket) {
+      continue;
+    }
+    DmaTransfer adgifs = dma.read_and_advance();
+    if (adgifs.size_bytes != sprite_count * sizeof(AdGifData) || dma.ended() ||
+        dma.current_tag_offset() == next_bucket) {
+      continue;
+    }
+    DmaTransfer run = dma.read_and_advance();
+    const VifCode run_vif(run.vif1());
+    if (run.size_bytes == 0 && run_vif.kind == VifCode::Kind::MSCAL && run_vif.immediate == 3) {
+      drawn += render_mobile_sprite_group0(frame, matrix,
+                                           (const MobileSpriteVec2d*)vectors.data,
+                                           (const AdGifData*)adgifs.data, sprite_count, raster);
+    }
+  }
+  return drawn;
+}
+
+// Bucket 67 also contains title/progress text as standalone VIF DIRECT GIF
+// packets.  The PC renderer consumes these after its Sprite3 blocks; they do
+// not have a Sprite3 VU program to run on PC_PORT.  Decode only that bucket
+// with isolated GS state so a debug/text packet cannot inherit unrelated
+// state from the generic DMA walk.
 }  // namespace
 
 void gfx_send_chain(const void* data, u32 offset) {
   if (!data) {
     return;
+  }
+  static bool bucket_trace_consumed = false;
+  if (!bucket_trace_consumed) {
+    const std::string bucket_trace_path = ottsel_ios_writable_dir() + "ottsel-trace-mobile-buckets";
+    if (access(bucket_trace_path.c_str(), F_OK) == 0) {
+      unlink(bucket_trace_path.c_str());
+      bucket_trace_consumed = true;
+      for (u32 index = 65; index < 70; ++index) {
+        DmaTag tag(*(const u64*)((const u8*)data + offset + index * 16));
+        lg::info("OTTSEL BUCKET: index={} chain=0x{:x} qwc={} kind={} addr=0x{:x}", index,
+                 offset, tag.qwc, (u32)tag.kind, tag.addr);
+        if (index == 67 && tag.addr) {
+          DmaFollower debug_dma(data, tag.addr);
+          for (u32 transfer_index = 0; transfer_index < 64 && !debug_dma.ended(); ++transfer_index) {
+            DmaTransfer transfer = debug_dma.read_and_advance();
+            u32 w0 = transfer.size_bytes >= 4 ? *(const u32*)transfer.data : 0;
+            u32 w1 = transfer.size_bytes >= 8 ? *(const u32*)(transfer.data + 4) : 0;
+            lg::info("OTTSEL BUCKET67: transfer={} size={} vif0=0x{:08x} vif1=0x{:08x} "
+                     "data={:08x}/{:08x}",
+                     transfer_index, transfer.size_bytes, transfer.vif0(), transfer.vif1(), w0, w1);
+          }
+        }
+      }
+    }
   }
   static OttselGifDecoder g_dec;
   static OttselRaster g_raster;
@@ -913,15 +2029,34 @@ void gfx_send_chain(const void* data, u32 offset) {
   static u32 g_chain_no = 0;
   g_chain_no++;
   g_dec.chain_no = g_chain_no;
+  const std::string direct_trace_path = ottsel_ios_writable_dir() + "ottsel-trace-mobile-direct";
+  if (!g_mobile_direct_trace.active && access(direct_trace_path.c_str(), F_OK) == 0) {
+    unlink(direct_trace_path.c_str());
+    g_mobile_direct_trace = {};
+    g_mobile_direct_trace.active = true;
+    g_mobile_direct_trace.start_chain = g_chain_no;
+    g_mobile_direct_trace.draw_start = g_raster.draw_count;
+    lg::info("OTTSEL MOBILE DIRECT: trace accepted at chain={} draw-start={}", g_chain_no,
+             g_mobile_direct_trace.draw_start);
+  }
+  const std::string generic_probe_path = ottsel_ios_writable_dir() + "ottsel-probe-generic-vu";
+  if (!g_mobile_generic_probe_pending && access(generic_probe_path.c_str(), F_OK) == 0) {
+    unlink(generic_probe_path.c_str());
+    g_mobile_generic_probe_pending = true;
+    lg::info("OTTSEL GENERIC VU: probe accepted; awaiting MSCAL 46");
+  }
   // Clear the composed frame once per ~90 chains (a coarse frame boundary)
   // and present it periodically so the rasterizer output is visible.
   if (g_chain_no % 90 == 1) {
     g_raster.clear(0);
   }
   if (g_chain_no % 90 == 0 && g_metal && g_raster.draw_count > 0) {
-    ottsel_metal_present(g_metal, g_raster.fb.data(), g_raster.fb_w, g_raster.fb_h);
-    lg::info("OTTSEL RASTER: presented composed {}x{} (draws={})", g_raster.fb_w, g_raster.fb_h,
-             g_raster.draw_count);
+    g_frame = g_raster.fb;
+    g_fw = g_raster.fb_w;
+    g_fh = g_raster.fb_h;
+    g_frame_pending = true;
+    lg::info("OTTSEL RASTER: published composed {}x{} (draws={})", g_raster.fb_w,
+             g_raster.fb_h, g_raster.draw_count);
   }
   if (g_chain_no % 45 == 0) {
     static u32 ottsel_dc_logged = 0;
@@ -935,21 +2070,43 @@ void gfx_send_chain(const void* data, u32 offset) {
   // refill a small PRIM log budget each boundary.
   static u32 g_vu1_runs_period = 0;
   static u32 g_vu1_nonzero_period = 0;
+  static u32 g_vu1_capped_period = 0;
+  static u32 g_vu1_xgkicks_period = 0;
+  static int g_vu1_last_pc = 0;
   static u64 g_vu1_gifwords_period = 0;
   if (g_chain_no % 90 == 0) {
-    lg::info("OTTSEL VU1STAT: chain={} vu1-runs={} nonzero-gif={} gif-words={} draws={}",
-             g_chain_no, g_vu1_runs_period, g_vu1_nonzero_period, g_vu1_gifwords_period,
-             g_raster.draw_count);
+    lg::info("OTTSEL VU1STAT: chain={} vu1-runs={} capped={} xgkicks={} last-pc={} nonzero-gif={} "
+             "gif-words={} draws={}",
+             g_chain_no, g_vu1_runs_period, g_vu1_capped_period, g_vu1_xgkicks_period,
+             g_vu1_last_pc, g_vu1_nonzero_period, g_vu1_gifwords_period, g_raster.draw_count);
     g_vu1_runs_period = 0;
     g_vu1_nonzero_period = 0;
+    g_vu1_capped_period = 0;
+    g_vu1_xgkicks_period = 0;
     g_vu1_gifwords_period = 0;
     g_dec.prims_logged = g_dec.prims_logged > 8 ? g_dec.prims_logged - 8 : 0u;
   }
-  // S2.2 BOT20: keep the last decoded texture on screen (the game uploads
-  // tpages continuously; the composed-raster path is not drawing yet).  This
-  // gives a persistent visible frame instead of the clear color.
-  if (g_chain_no % 90 == 45 && g_metal && g_fw > 0 && g_fh > 0 && !g_frame.empty()) {
-    ottsel_metal_present(g_metal, g_frame.data(), g_fw, g_fh);
+  if (g_mobile_direct_trace.active && g_chain_no - g_mobile_direct_trace.start_chain >= 180) {
+    lg::info("OTTSEL MOBILE DIRECT: summary chains=180 transfers={} bytes={} gif-tags={} "
+             "packed={} reglist={} image={} sprites={} triangles={} strips={} "
+             "sprite-mscal(init={} world={} hud={} 3d={} other={}) raster-draws={}→{}",
+             g_mobile_direct_trace.direct_transfers, g_mobile_direct_trace.direct_bytes,
+             g_mobile_direct_trace.gif_tags, g_mobile_direct_trace.packed_tags,
+             g_mobile_direct_trace.reglist_tags, g_mobile_direct_trace.image_tags,
+             g_mobile_direct_trace.sprites, g_mobile_direct_trace.triangles,
+             g_mobile_direct_trace.strips, g_mobile_direct_trace.mscal_init,
+             g_mobile_direct_trace.mscal_2d_world, g_mobile_direct_trace.mscal_2d_hud,
+             g_mobile_direct_trace.mscal_3d, g_mobile_direct_trace.mscal_other,
+             g_mobile_direct_trace.draw_start, g_raster.draw_count);
+    if (g_mobile_direct_trace.other_mscal_entry_count) {
+      std::string entries;
+      for (u32 i = 0; i < g_mobile_direct_trace.other_mscal_entry_count; ++i) {
+        entries += i ? "," : "";
+        entries += std::to_string(g_mobile_direct_trace.other_mscal_entries[i]);
+      }
+      lg::info("OTTSEL MOBILE DIRECT: first non-sprite MSCAL entries={}", entries);
+    }
+    g_mobile_direct_trace.active = false;
   }
   static int ottsel_dma_logged = 0;
   bool log_dma = ottsel_dma_logged < 3;
@@ -967,7 +2124,7 @@ void gfx_send_chain(const void* data, u32 offset) {
   static FILE* g_tfrag_dump = nullptr;
   static u32 g_tfrag_dump_recs = 0;
   if (!g_tfrag_dump) {
-    std::string path = ottsel_ios_bundle_dir() + "tfrag-vu-data.bin";
+    std::string path = ottsel_ios_writable_dir() + "tfrag-vu-data.bin";
     g_tfrag_dump = fopen(path.c_str(), "wb");
     if (g_tfrag_dump) {
       u32 hdr[2] = {0};
@@ -982,7 +2139,7 @@ void gfx_send_chain(const void* data, u32 offset) {
   static FILE* g_vif_replay = nullptr;
   static u32 g_vif_replay_recs = 0;
   if (!g_vif_replay) {
-    std::string rpath = ottsel_ios_bundle_dir() + "tfrag-vif-replay.bin";
+    std::string rpath = ottsel_ios_writable_dir() + "tfrag-vif-replay.bin";
     g_vif_replay = fopen(rpath.c_str(), "wb");
   }
   const u8* base = (const u8*)data;
@@ -1004,6 +2161,9 @@ void gfx_send_chain(const void* data, u32 offset) {
   static u32 g_vu_tops = 0;  // VIF TOPS register
   static u32 g_vu_vu_stcycl = 0x404;  // STCYCL cl<<8|wl
   static u32 g_vu_vu1_perdraw_consts = 0;  // BOT21g: 0x381-const uploads logged
+  static bool g_ottsel_spr_pending = false;
+  static u32 g_ottsel_spr_source = 0;
+  static u32 g_ottsel_spr_qwc = 0;
   if (!g_vu_init) {
     g_vu_init = true;
     g_vu.code_len = ottsel_vu1::kTfragCodeWords;
@@ -1018,12 +2178,9 @@ void gfx_send_chain(const void* data, u32 offset) {
       g_vu_generic.code[i] = ottsel_vu1::kGenericMicrocode[i];
     }
   }
-  // S2.2 BOT21c: the game's mips2c ln stashes the first tfragment's
-  // dma-chain (the per-draw VIF stream incl. the frag-list header at VU
-  // 0x0) into tfrag-work+0xb8/+0xbc.  The port has no SPR->VIF1 DMA, so
-  // process that stored VIF stream here (once per frame) as the SPR->VIF1
-  // emulation: UNPACKs -> VU mem, then run the microcode on the stream's
-  // MSCAL/MSCALF so the frag-list is populated before the frame-init draw.
+  // The mips2c producer records the fake-scratchpad address and qword count
+  // of its real SPR TO copy in tfrag-work+0xb8/+0xbc. This is not an EE DMA
+  // chain; inspect the copied source independently before decoding it.
   {
     static bool ottsel_spr_done = false;
     if (!ottsel_spr_done && g_ee_main_mem) {
@@ -1033,76 +2190,13 @@ void gfx_send_chain(const void* data, u32 offset) {
         memcpy(&tw, g_ee_main_mem + twi.offset, 4);
         if (tw) {
           const u8* twp = g_ee_main_mem + tw;
-          u32 chain = *(u32*)(twp + 0xb8);
+          u32 source = *(u32*)(twp + 0xb8);
           u32 qwcv = *(u32*)(twp + 0xbc);
-          if (chain >= 0x080000 && chain < 0x08000000 && qwcv > 0 && qwcv <= 256) {
+          if (source >= 0x080000 && source < 0x08000000 && qwcv > 0 && qwcv <= 256) {
             ottsel_spr_done = true;
-            lg::info("OTTSEL SPR: process tfrag dma chain=0x{:x} qwc={}", chain, qwcv);
-            const u32* w = (const u32*)(g_ee_main_mem + chain);
-            u32 nwords = qwcv * 4;
-            u32 i = 0;
-            int unpacks = 0, mscals = 0;
-            // BOT21d: the far path's frag-list points at VU 26+ (the
-            // geometry).  The stored dma data's geometry region (qword 20+,
-            // byte 0x140) maps to VU 26+; upload it so the strips have
-            // vertices.
-            if (qwcv >= 128) {
-              memcpy(&g_vu.data[26 * 4], &w[20 * 4], (qwcv - 20) * 16);
-            }
-            while (i + 1 < nwords) {
-              u32 vw = w[i];
-              VifCode v(vw);
-              switch (v.kind) {
-                case VifCode::Kind::UNPACK_V4_32:
-                case VifCode::Kind::UNPACK_V4_16:
-                case VifCode::Kind::UNPACK_V4_8:
-                case VifCode::Kind::UNPACK_V3_32:
-                case VifCode::Kind::UNPACK_V2_16: {
-                  u32 dest = (v.immediate & 0x3ff) & 0xfff;
-                  u32 qwords = v.num;
-                  if (dest < 4096 && i + 1 + qwords * 4 <= nwords) {
-                    memcpy(&g_vu.data[dest * 4], &w[i + 1], qwords * 16);
-                    unpacks++;
-                    if (unpacks <= 8) {
-                      lg::info("OTTSEL SPR UNPACK: addr=0x{:x} num={} d0={:08x} d1={:08x} "
-                               "d2={:08x} d3={:08x}",
-                               dest, qwords, w[i + 1], w[i + 2], w[i + 3], w[i + 4]);
-                    }
-                  }
-                  i += 1 + qwords * 4;
-                  break;
-                }
-                case VifCode::Kind::MSCAL:
-                case VifCode::Kind::MSCALF: {
-                  ottsel_vu1::set_top(0);
-                  g_vu.pc = 8;
-                  g_vu.gif_out.clear();
-                  ottsel_vu1::execute(g_vu, 200000);
-                  mscals++;
-                  lg::info("OTTSEL SPR MSCAL: pc={} gif_out={} frag0={:08x} frag1={:08x} "
-                           "frag2={:08x}",
-                           g_vu.pc, g_vu.gif_out.size(), g_vu.data[0 * 4], g_vu.data[1 * 4],
-                           g_vu.data[2 * 4]);
-                  if (!g_vu.gif_out.empty()) {
-                    decode_gif_packets((const u8*)g_vu.gif_out.data(),
-                                       (u32)g_vu.gif_out.size() * 4, g_dec);
-                  }
-                  i += 1;
-                  break;
-                }
-                case VifCode::Kind::DIRECT:
-                case VifCode::Kind::DIRECTHL: {
-                  i += 1 + (v.immediate & 0xffff) * 4;
-                  break;
-                }
-                default:
-                  i += 1;
-                  break;
-              }
-            }
-            lg::info("OTTSEL SPR done: unpacks={} mscals={} gif_out_total={}", unpacks, mscals,
-                     (int)g_vu.gif_out.size());
-            g_ottsel_spr_ran = true;
+            g_ottsel_spr_source = source;
+            g_ottsel_spr_qwc = qwcv;
+            g_ottsel_spr_pending = true;
           }
         }
       }
@@ -1122,10 +2216,56 @@ void gfx_send_chain(const void* data, u32 offset) {
         break;
       case VifCode::Kind::MSCAL:
       case VifCode::Kind::MSCALF: {
+        if (g_mobile_direct_trace.active) {
+          switch (v.immediate) {
+            case 0:
+              g_mobile_direct_trace.mscal_init++;
+              break;
+            case 3:
+              g_mobile_direct_trace.mscal_2d_world++;
+              break;
+            case 109:
+              g_mobile_direct_trace.mscal_2d_hud++;
+              break;
+            case 211:
+              g_mobile_direct_trace.mscal_3d++;
+              break;
+            default:
+              g_mobile_direct_trace.mscal_other++;
+              if (g_mobile_direct_trace.other_mscal_entry_count <
+                  g_mobile_direct_trace.other_mscal_entries.size()) {
+                g_mobile_direct_trace
+                    .other_mscal_entries[g_mobile_direct_trace.other_mscal_entry_count++] =
+                    v.immediate;
+              }
+              break;
+          }
+        }
         // The microcode's XTOP reads the VIF TOP register; run it with the
         // current frag-list base.
         static u32 ottsel_vu1_runs = 0;
         ottsel_vu1::set_top(g_vu_top);
+        // This is a diagnostic-only discriminator for the next mobile bucket:
+        // it runs one live MSCAL 46 packet through the retail generic VU
+        // program without feeding its output to the renderer.  The normal
+        // PC-port TFRAG/TIE path below remains unchanged.
+        if (g_mobile_generic_probe_pending && v.immediate == 46) {
+          g_mobile_generic_probe_pending = false;
+          memcpy(g_vu_generic.data, g_vu.data, sizeof(g_vu.data));
+          memset(g_vu_generic.vf, 0, sizeof(g_vu_generic.vf));
+          memset(g_vu_generic.vi, 0, sizeof(g_vu_generic.vi));
+          memset(g_vu_generic.acc, 0, sizeof(g_vu_generic.acc));
+          g_vu_generic.q = 0;
+          g_vu_generic.p = 0;
+          g_vu_generic.i_reg = 0;
+          g_vu_generic.status = 0;
+          g_vu_generic.pc = 46;
+          g_vu_generic.gif_out.clear();
+          ottsel_vu1::execute(g_vu_generic, 50000);
+          lg::info("OTTSEL GENERIC VU: MSCAL 46 executed={} capped={} pc={} xgkicks={} gif={}",
+                   g_vu_generic.executed_instructions, g_vu_generic.hit_instruction_limit,
+                   g_vu_generic.pc, g_vu_generic.xgkick_count, g_vu_generic.gif_out.size());
+        }
         // BOT21g: the game's tfrag draw (tfrag-end-buffer + ln's saved
         // last-call) issues MSCALF 0, and the per-draw chains in the live
         // replay carry MSCALF imm=0 -- so the tfrag microcode entry is
@@ -1134,8 +2274,26 @@ void gfx_send_chain(const void* data, u32 offset) {
         // the absolute 0x290).  BOT21d's pc=8 (L3, `xtop vi14`) is the
         // far stored-stream variant the SPR scaffold calls manually below
         // (g_vu.pc = 8) and does NOT apply to the per-draw MSCALF 0s.
-        g_vu.pc = (v.immediate * 2) & 0x7ff;
+        // MSCAL's immediate is already a VU microinstruction address.  The
+        // VIF stream's 6/8/10/... draw entries target the dispatcher slots
+        // directly; multiplying by two jumps into unrelated instructions.
+        g_vu.pc = v.immediate & 0x7ff;
         g_vu.gif_out.clear();
+        // The zero entry is TFRAG's setup pass.  Capture the first real
+        // dispatcher call separately so a missing SPR->VIF1 handoff can be
+        // distinguished from an interpreter failure without tracing every
+        // frame.
+        static bool ottsel_logged_nonzero_tfrag_entry = false;
+        const bool first_nonzero_tfrag_entry =
+            v.immediate && !ottsel_logged_nonzero_tfrag_entry;
+        if (first_nonzero_tfrag_entry) {
+          ottsel_logged_nonzero_tfrag_entry = true;
+          lg::info("OTTSEL VU1DRAW: imm=0x{:x} top=0x{:x} mem0={:08x}/{:08x}/{:08x}/{:08x} "
+                   "kick={:08x}/{:08x}/{:08x}/{:08x}",
+                   v.immediate, g_vu_top, g_vu.data[0], g_vu.data[1], g_vu.data[2],
+                   g_vu.data[3], g_vu.data[0x2a0 * 4], g_vu.data[0x2a0 * 4 + 1],
+                   g_vu.data[0x2a0 * 4 + 2], g_vu.data[0x2a0 * 4 + 3]);
+        }
         // BOT21d: trace the first tfrag draw after the SPR upload so the
         // far path's data reads can be verified against the frag-list.
         static bool ottsel_traced = false;
@@ -1154,6 +2312,13 @@ void gfx_send_chain(const void* data, u32 offset) {
         // before the XGKICK).  Use the original cap for tfrag runs.
         ottsel_vu1::execute(g_vu, g_ottsel_spr_ran ? 400000 : 50000);
         ottsel_vu1::ottsel_vu1_set_readlog(0);
+        if (first_nonzero_tfrag_entry) {
+          lg::info("OTTSEL VU1DRAW: result executed={} capped={} pc={} xgkicks={} gif={} "
+                   "vi1=0x{:x} vi6=0x{:x} vf3={:08x}/{:08x}/{:08x}/{:08x}",
+                   g_vu.executed_instructions, g_vu.hit_instruction_limit, g_vu.pc,
+                   g_vu.xgkick_count, g_vu.gif_out.size(), g_vu.vi[1], g_vu.vi[6],
+                   g_vu.vf[3].u[0], g_vu.vf[3].u[1], g_vu.vf[3].u[2], g_vu.vf[3].u[3]);
+        }
         if (ottsel_vu1_runs < 20) {
           ottsel_vu1_runs++;
           lg::info("OTTSEL VU1: run#{} mscal imm=0x{:x} top=0x{:x} pc={} gif_out={} "
@@ -1162,6 +2327,9 @@ void gfx_send_chain(const void* data, u32 offset) {
                    g_vu.data[0 * 4], g_vu.data[1 * 4], g_vu.data[2 * 4]);
         }
         g_vu1_runs_period++;
+        g_vu1_capped_period += g_vu.hit_instruction_limit ? 1 : 0;
+        g_vu1_xgkicks_period += g_vu.xgkick_count;
+        g_vu1_last_pc = g_vu.pc;
         if (!g_vu.gif_out.empty()) {
           g_vu1_nonzero_period++;
           g_vu1_gifwords_period += g_vu.gif_out.size();
@@ -1184,6 +2352,21 @@ void gfx_send_chain(const void* data, u32 offset) {
         // 0x160/0x384/0x290/0x381/0x5 are TOP-relative.
         u32 base = (vifword & 0x8000) ? g_vu_tops : g_vu_top;
         u32 dest = (base + (v.immediate & 0x3ff)) & 0xfff;
+        if (v.kind == VifCode::Kind::UNPACK_V4_8) {
+          const u32 count = v.num ? v.num : 256;
+          const VifCodeUnpack unpack(v);
+          const VifCodeStcycl cycle{VifCode(g_vu_vu_stcycl)};
+          if (!ottsel_vu1::unpack_v4_8(g_vu.data, sizeof(g_vu.data) / sizeof(g_vu.data[0]) / 4, payload,
+                                        payload_size, dest, count, unpack.is_unsigned, cycle.cl,
+                                        cycle.wl)) {
+            static u32 failed_v4_8 = 0;
+            if (failed_v4_8++ < 4) {
+              lg::warn("OTTSEL VIF: malformed V4-8 num={} bytes={} dest=0x{:x} cycle=0x{:04x}",
+                       count, payload_size, dest, g_vu_vu_stcycl);
+            }
+          }
+          break;
+        }
         u32 qwords = std::min(payload_size / 16, 4096u - dest);
         if (qwords && dest < 4096) {
           memcpy(&g_vu.data[dest * 4], payload, qwords * 16);
@@ -1207,6 +2390,24 @@ void gfx_send_chain(const void* data, u32 offset) {
         break;
     }
   };
+  if (g_ottsel_spr_pending) {
+    g_ottsel_spr_pending = false;
+    lg::info("OTTSEL SPR: observed scratchpad source=0x{:x} qwc={}; decode disabled",
+             g_ottsel_spr_source, g_ottsel_spr_qwc);
+    // One-shot, read-only producer trace. Record the actual copied qwords;
+    // never feed them into ottsel_handle_vif until their transfer semantics
+    // are decoded independently.
+    static bool spr_dma_trace_consumed = false;
+    if (!spr_dma_trace_consumed && std::getenv("OTTSEL_TRACE_SPR_DMA") && g_ee_main_mem) {
+      spr_dma_trace_consumed = true;
+      const u32 count = std::min(g_ottsel_spr_qwc, 16u);
+      for (u32 index = 0; index < count; ++index) {
+        const u32* words = (const u32*)(g_ee_main_mem + g_ottsel_spr_source + index * 16);
+        lg::info("OTTSEL SPR SOURCE[{}]: {:08x} {:08x} {:08x} {:08x}", index, words[0],
+                 words[1], words[2], words[3]);
+      }
+    }
+  }
   int count = 0;
   while (!dma.ended() && count < 512) {
     DmaTransfer t = dma.read_and_advance();
@@ -1216,6 +2417,24 @@ void gfx_send_chain(const void* data, u32 offset) {
         u32 rec[4] = {t.vif0(), t.vif1(), 0, 0};
         fwrite(rec, 16, 1, g_vif_replay);
         g_vif_replay_recs++;
+      }
+      // DMA control tags carry no payload, but their VIF commands still
+      // update BASE/OFFSET/STCYCL before the following payload/MSCAL tag.
+      // Skipping them left the mobile VU decoder on stale addressing and
+      // detached the generated frag header from its dispatcher call.
+      ottsel_handle_vif(t.vif0(), t.data, 0);
+      ottsel_handle_vif(t.vif1(), t.data, 0);
+      VifCode v0(t.vif0());
+      VifCode v1(t.vif1());
+      static u32 ottsel_vifctl = 0;
+      if (ottsel_vifctl < 24 &&
+          (v0.kind == VifCode::Kind::BASE || v0.kind == VifCode::Kind::OFFSET ||
+           v0.kind == VifCode::Kind::STCYCL || v1.kind == VifCode::Kind::BASE ||
+           v1.kind == VifCode::Kind::OFFSET || v1.kind == VifCode::Kind::STCYCL)) {
+        ++ottsel_vifctl;
+        lg::info("OTTSEL VIFCTL[{}/24]: chain={} t{} v0=0x{:x}(k{}) v1=0x{:x}(k{})",
+                 ottsel_vifctl, g_chain_no, count, t.vif0(), (u32)v0.kind, t.vif1(),
+                 (u32)v1.kind);
       }
       continue;
     }
@@ -1236,6 +2455,10 @@ void gfx_send_chain(const void* data, u32 offset) {
     ottsel_handle_vif(t.vif1(), t.data, t.size_bytes);
     VifCode v1(t.vif1());
     VifCode v0(t.vif0());
+    if ((v0.kind == VifCode::Kind::PC_PORT || v1.kind == VifCode::Kind::PC_PORT) &&
+        t.size_bytes == sizeof(OttselPcPortData)) {
+      capture_mobile_camera(t.data, t.size_bytes);
+    }
     // Full-transfer capture of the first tfrag-bearing chain (all vif kinds,
     // including qwc=0 base/offset and any frag-list unpacks).
     static u32 ottsel_full_chain = 0;
@@ -1243,16 +2466,6 @@ void gfx_send_chain(const void* data, u32 offset) {
       lg::info("OTTSEL FULL: chain={} t{} size={} v0=0x{:x}(k{}) v1=0x{:x}(k{}) off=0x{:x}",
                g_chain_no, count, t.size_bytes, t.vif0(), (u32)v0.kind, t.vif1(), (u32)v1.kind,
                off);
-    }
-    // qwc=0 transfers carry the VIF base/offset commands - log the first few.
-    static u32 ottsel_vifctl = 0;
-    if (ottsel_vifctl < 12 && t.size_bytes == 0 &&
-        (v0.kind == VifCode::Kind::BASE || v0.kind == VifCode::Kind::OFFSET ||
-         v1.kind == VifCode::Kind::BASE || v1.kind == VifCode::Kind::OFFSET ||
-         v0.kind == VifCode::Kind::STCYCL || v1.kind == VifCode::Kind::STCYCL)) {
-      ottsel_vifctl++;
-      lg::info("OTTSEL VIFCTL: chain={} t{} qwc0 v0=0x{:x}(k{}) v1=0x{:x}(k{}) off=0x{:x}",
-               g_chain_no, count, t.vif0(), (u32)v0.kind, t.vif1(), (u32)v1.kind, off);
     }
     // S2.2 BOT19: capture EVERY UNPACK from the start of the frame.  The
     // once-per-frame 0x290 tfrag-data init upload writes the frag-list block
@@ -1641,20 +2854,20 @@ void gfx_send_chain(const void* data, u32 offset) {
       u32 rec[4] = {0xffffffff, v1.num, v1.immediate, 0};
       fwrite(rec, 16, 1, g_tfrag_dump);
     }
-    // Full VIF sequence dump for the first few chains (the tfrag bucket).
-    static u32 ottsel_vifseq_chains = 0;
-    if (ottsel_vifseq_chains < 4 &&
+    // Bounded VIF sample for the first few relevant transfers.  A prior
+    // chain counter only advanced when transfer #1 matched, turning this
+    // supposedly narrow trace into megabytes of frame-by-frame noise.
+    static u32 ottsel_vifseq_records = 0;
+    if (ottsel_vifseq_records < 96 &&
         (v1.kind == VifCode::Kind::UNPACK_V4_32 || v1.kind == VifCode::Kind::STCYCL ||
          v1.kind == VifCode::Kind::MSCAL || v1.kind == VifCode::Kind::MSCALF ||
          v1.kind == VifCode::Kind::MPG || v1.kind == VifCode::Kind::FLUSHA ||
          v1.kind == VifCode::Kind::FLUSHE || v0.kind == VifCode::Kind::STCYCL ||
          v0.kind == VifCode::Kind::MSCAL || v0.kind == VifCode::Kind::MSCALF ||
          v1.kind == VifCode::Kind::DIRECT)) {
-      if (count == 1) {
-        ottsel_vifseq_chains++;
-        lg::info("OTTSEL VIFSEQ: === chain {} ===", g_chain_no);
-      }
-      lg::info("OTTSEL VIFSEQ: t{} size={} v0=0x{:x}(k{}) v1=0x{:x}(k{} n{}) off=0x{:x}", count,
+      ++ottsel_vifseq_records;
+      lg::info("OTTSEL VIFSEQ[{}/96]: chain={} t{} size={} v0=0x{:x}(k{}) v1=0x{:x}(k{} n{}) off=0x{:x}",
+               ottsel_vifseq_records, g_chain_no, count,
                t.size_bytes, t.vif0(), (u32)v0.kind, t.vif1(), (u32)v1.kind, v1.num, off);
     }
     if (v1.kind == VifCode::Kind::UNPACK_V4_32 || v1.kind == VifCode::Kind::UNPACK_V4_16 ||
@@ -1709,6 +2922,28 @@ void gfx_send_chain(const void* data, u32 offset) {
                t.vif0(), t.vif1());
     }
     decode_transfer(t, g_dec);
+  }
+  // Bucket 67 is the Jak 1 debug/Sprite3 stream used by title and progress
+  // text.  Its PC-port representation has no VU program to execute, so
+  // consume the group-0 blocks directly after the normal chain walk.
+  const DmaTag debug_bucket(*(const u64*)((const u8*)data + offset + 67 * 16));
+  const DmaTag next_bucket(*(const u64*)((const u8*)data + offset + 68 * 16));
+  if (debug_bucket.addr && next_bucket.addr) {
+    const u32 sprite_drawn =
+        render_mobile_sprite_bucket(data, debug_bucket.addr, next_bucket.addr, g_raster);
+    static bool sprite_trace_requested = false;
+    if (!sprite_trace_requested) {
+      const std::string sprite_trace_path = ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite";
+      if (access(sprite_trace_path.c_str(), F_OK) == 0) {
+        unlink(sprite_trace_path.c_str());
+        sprite_trace_requested = true;
+      }
+    }
+    if (sprite_trace_requested) {
+      lg::info("OTTSEL SPRITE: group-0 sprites={} debug=0x{:x} next=0x{:x}", sprite_drawn,
+               debug_bucket.addr, next_bucket.addr);
+      sprite_trace_requested = false;
+    }
   }
 }
 // Read the tpage id back out of the header (offset 8).
@@ -2064,7 +3299,8 @@ void gfx_texture_upload_now(const u8* tpage, int mode, u32 s7_ptr) {
   rgba.resize(4096 * 4096 * 4);
   u32 tex_idx = 0;
   if (decode_largest_texture(tpage, mode, s7_ptr, rgba.data(), w, h, &tex_idx)) {
-    // S2.2 BOT21: present decoded textures, but skip UNIFORM (empty) pages.
+    // Decode uploaded textures into fake VRAM for the debug rasterizer, but
+    // never present a page directly: it is asset data, not composed graphics.
     // The village boot uploads small all-black/all-gray tpage regions
     // (e.g. tpage 0x2 tex 43 and 0x100 tex 0 decode to a single color); the
     // BOT20 every-decode gate let the LAST such page clobber the visible
@@ -2091,7 +3327,7 @@ void gfx_texture_upload_now(const u8* tpage, int mode, u32 s7_ptr) {
       static u32 ottsel_gfx_uniform = 0;
       if (ottsel_gfx_uniform++ < 4) {
         lg::info("OTTSEL GFX: skip uniform {}x{} tpage=0x{:x} tex={} (px0={:02x}{:02x}{:02x}); "
-                 "keeping the last real frame",
+               "keeping the last composed frame",
                  w, h, page_id(tpage), tex_idx, rgba[0], rgba[1], rgba[2]);
       }
       return;
@@ -2104,12 +3340,8 @@ void gfx_texture_upload_now(const u8* tpage, int mode, u32 s7_ptr) {
                page_id(tpage), tex_idx, w, h, rgba[0], rgba[1], rgba[2], rgba[4], rgba[5],
                rgba[6], rgba[8], rgba[9], rgba[10], rgba[12], rgba[13], rgba[14]);
     }
-    g_frame.assign(rgba.begin(), rgba.begin() + (size_t)w * h * 4);
-    g_fw = w;
-    g_fh = h;
-    ottsel_metal_present(g_metal, g_frame.data(), g_fw, g_fh);
     if ((ottsel_gfx_presents++ & 0x3f) == 0) {
-      lg::info("OTTSEL GFX: presented game frame {}x{} (tpage 0x{:x} tex {})", w, h,
+      lg::info("OTTSEL GFX: decoded texture {}x{} (tpage 0x{:x} tex {}) for raster use", w, h,
                page_id(tpage), tex_idx);
     }
   } else {
@@ -2123,8 +3355,12 @@ void gfx_texture_upload_now(const u8* tpage, int mode, u32 s7_ptr) {
   }
 }
 void gfx_texture_relocate(u32, u32, u32) {}
-void gfx_set_levels(const std::vector<std::string>&) {}
-void gfx_set_active_levels(const std::vector<std::string>&) {}
+void gfx_set_levels(const std::vector<std::string>& levels) {
+  request_mobile_levels(levels, "want");
+}
+void gfx_set_active_levels(const std::vector<std::string>& levels) {
+  request_mobile_levels(levels, "active");
+}
 void gfx_force_reload_all() {}
 void gfx_force_reload_level(const std::string&) {}
 void gfx_force_reload_common() {}
@@ -2159,11 +3395,16 @@ const void* ottsel_metal_gfx_register(void* metal) {
 }
 
 int ottsel_metal_gfx_game_frame(const unsigned char** rgba, int* w, int* h) {
-  if (g_fw > 0 && g_fh > 0 && !g_frame.empty()) {
+  if (g_frame_pending && g_fw > 0 && g_fh > 0 && !g_frame.empty()) {
     *rgba = g_frame.data();
     *w = g_fw;
     *h = g_fh;
+    g_frame_pending = false;
     return 1;
   }
   return 0;
+}
+
+int ottsel_metal_gfx_has_live_scene() {
+  return g_mobile_tfrag_visibility_ready || g_mobile_tie_visibility_ready;
 }

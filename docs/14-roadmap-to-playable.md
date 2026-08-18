@@ -66,16 +66,16 @@ no-emit AOT, Metal/ANGLE rendering, touch, App-Store-shaped packaging.
 
 ## 3. What playable requires — macOS (near-term)
 
-Status: `gk -v --game jak1 -- -boot -fakeiso` launches natively today
-with fr3s + full iso.  Remaining:
+Status: the native arm64 macOS path now passes a fresh retail-flow
+title-to-Village1 integration run with the real streamed intro and verified
+synthetic-pad movement.  `-nosound` is deliberately used while host
+CoreAudio output creation remains unavailable.  Remaining:
 
-1. **M1 gate — verified playable title→village1 on host** (days, mostly
-   verification): confirm the boot reaches the rendered title, intro
-   spool plays (STR now served by the real overlord), village1 displays,
-   input works (SDL keyboard/controller — note gk warned "No active game
-   controllers"; keyboard bindings exist in pc-settings), audio plays
-   (989snd + SBK/VAG present).  Fix what falls out; each fix also
-   benefits iOS since it's the same runtime.
+1. **M1 gate — harden the verified title→Village1 path**: complete a
+   movement/action stability soak and fix visible lighting/framing defects.
+   Separately unblock host output audio; the game requests no input device,
+   and no microphone permission should be accepted for this work.  Fix what
+   falls out; each fix also benefits iOS since it's the same runtime.
 2. Performance sanity on arm64 (upstream jak1 is "in strong shape").
 3. Optional: package a double-clickable app bundle later; not a blocker.
 

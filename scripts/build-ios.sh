@@ -19,6 +19,9 @@ REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WORKTREE="$REPO_DIR/out/jak-project"
 SDL_SRC="$WORKTREE/third-party/SDL"
 SDL_BUILD="$WORKTREE/out/ios/sdl"
+ZSTD_PROJECT="$WORKTREE/out/ios/zstd-project"
+ZSTD_BUILD="$WORKTREE/out/ios/zstd-build"
+ZSTD_LIB="$ZSTD_BUILD/zstd/liblibzstd_static.a"
 APP_BUILD="$WORKTREE/out/ios/app"
 OBJ="$APP_BUILD/obj"
 APP="$APP_BUILD/OttselShell.app"
@@ -37,6 +40,7 @@ INCS=(-I"$WORKTREE" \
   -I"$WORKTREE/third-party/json" \
   -I"$WORKTREE/third-party/replxx/include" \
   -I"$WORKTREE/third-party/lzokay" \
+  -I"$WORKTREE/third-party/zstd/lib" \
   -I"$WORKTREE/third-party/tree-sitter/lib/include" \
   -I"$WORKTREE/third-party/tinyfiledialogs" \
   -I"$SDL_SRC/include" \
@@ -74,6 +78,16 @@ if [ ! -f "$SDL_BUILD/libSDL3.a" ]; then
 fi
 ninja -C "$SDL_BUILD" 2>&1 | tail -1
 
+echo "== [1b/4] Zstandard static (iOS Simulator) =="
+if [ ! -f "$ZSTD_BUILD/build.ninja" ]; then
+  cmake -S "$ZSTD_PROJECT" -B "$ZSTD_BUILD" -G Ninja \
+    -DCMAKE_SYSTEM_NAME=iOS \
+    -DCMAKE_OSX_SYSROOT="$SDK" \
+    -DCMAKE_OSX_ARCHITECTURES=arm64 \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET="$DEPLOY"
+fi
+ninja -C "$ZSTD_BUILD" libzstd_static 2>&1 | tail -1
+
 echo "== [2/4] runtime static lib (no-emit, OTTSEL_IOS) =="
 mkdir -p "$OBJ"
 
@@ -87,6 +101,7 @@ COMMON_SRC="
   common/util/Assert.cpp
   common/util/BitUtils.cpp
   common/util/crc32.cpp
+  common/util/compress.cpp
   common/util/DgoReader.cpp
   common/util/dgo_util.cpp
   common/util/diff.cpp
@@ -102,6 +117,7 @@ COMMON_SRC="
   common/util/string_util.cpp
   common/util/Timer.cpp
   common/util/unicode_util.cpp
+  common/custom_data/TFrag3Data.cpp
   common/versions/versions.cpp
 "
 KERNEL_SRC="
@@ -158,6 +174,7 @@ KERNEL_SRC="
   game/sce/libdma.cpp
   game/sce/libgraph.cpp
   game/sce/libpad.cpp
+  game/sce/ottsel_platform_input.cpp
   game/sce/libscf.cpp
   game/sce/sif_ee.cpp
   game/sce/sif_ee_memcard.cpp
@@ -200,7 +217,7 @@ xcrun --sdk "$SDK" clang++ "${COMMON_FLAGS[@]}" \
   "$OBJ/vu1.o" \
   "$OBJ/a11_slice_runner.o" "$OBJ/a11_slice.o" \
   -I"$SLICE_DIR" \
-  "$APP_BUILD/libottsel-runtime.a" "$SDL_BUILD/libSDL3.a" \
+  "$APP_BUILD/libottsel-runtime.a" "$ZSTD_LIB" "$SDL_BUILD/libSDL3.a" \
   "${FRAMEWORKS[@]}" -lobjc \
   -o "$APP_BUILD/OttselShell"
 
@@ -210,12 +227,11 @@ cp "$APP_BUILD/OttselShell" "$APP/"
 cp "$REPO_DIR/src/shell/Info.plist" "$APP/"
 cp "$WORKTREE/out/jak1/iso/KERNEL.CGO" "$APP/KERNEL.CGO"
 cp "$WORKTREE/out/jak1/iso/GAME.CGO" "$APP/GAME.CGO"
-# Ottsel S2.1+ (BOT11/BOT18): the iOS DGO-loader emulation serves real
-# DGO/CGO data.  The host iso_data tree is not inside the Simulator sandbox,
-# so copy the game data (all DGOs + CGOs + the title VIS) into the bundle.
-# The game needs the level DGOs (e.g. VI1.DGO for the demo) to leave the
-# title; without them the title stays stuck with empty tfrag geometry.
-mkdir -p "$APP/iso_data/DGO" "$APP/iso_data/CGO"
+# Ottsel S2.1+ (BOT11/BOT18): the iOS RPC emulation serves the user's local
+# game data from inside the Simulator sandbox.  Keep these assets local to the
+# bundle; they are not repository inputs.  STR and TEXT are required by the
+# title's external-art-buffer, text, and visibility loaders, respectively.
+mkdir -p "$APP/iso_data/DGO" "$APP/iso_data/CGO" "$APP/iso_data/STR" "$APP/iso_data/TEXT" "$APP/iso_data/VIS" "$APP/iso_data/fr3"
 for f in "$WORKTREE"/iso_data/jak1/CGO/*.CGO; do
   cp "$f" "$APP/iso_data/CGO/" 2>/dev/null || true
 done
@@ -223,22 +239,38 @@ for f in "$WORKTREE"/iso_data/jak1/DGO/*.DGO; do
   base=$(basename "$f")
   # BOT18 regression (2026-08-15): the retail iso_data DGOs use the PS2 v3
   # object format (first word 0x0), which the no-emit linker cannot process.
-  # TIT.DGO must stay the RECOMPILED one copied after this loop; skip it here
-  # so the retail file cannot overwrite the recompiled TIT.DGO.
-  if [ "$base" = "TIT.DGO" ]; then
+  # TIT.DGO and VI1.DGO must stay the RECOMPILED versions copied after this
+  # loop; skip their retail inputs so they cannot overwrite ARM64 GOAL code.
+  if [ "$base" = "TIT.DGO" ] || [ "$base" = "VI1.DGO" ]; then
     continue
   fi
   cp "$f" "$APP/iso_data/DGO/" 2>/dev/null || true
 done
-# S2.1 (BOT13): ship the RECOMPILED TIT.DGO (goalc-built, no-emit
-# "GOAL"-magic title-obs/static-screen objects whose top-levels define the
-# title state symbols) LAST so it wins over the retail DGO copy above.
-if [ -f "$WORKTREE/out/jak1/iso/TIT.DGO" ]; then
-  cp "$WORKTREE/out/jak1/iso/TIT.DGO" "$APP/iso_data/DGO/TIT.DGO" 2>/dev/null || true
-fi
-cp "$WORKTREE/iso_data/jak1/VIS/TIT.VIS" "$APP/iso_data/TIT.VIS" 2>/dev/null || true
+# Ship recompiled DGOs LAST so their ARM64 GOAL objects win over retail PS2
+# v3 code. TIT defines title symbols; VI1 defines start-sequence-a for New Game.
+for dgo in TIT.DGO VI1.DGO; do
+  if [ -f "$WORKTREE/out/jak1/iso/$dgo" ]; then
+    cp "$WORKTREE/out/jak1/iso/$dgo" "$APP/iso_data/DGO/$dgo" 2>/dev/null || true
+  fi
+done
+for f in "$WORKTREE"/iso_data/jak1/VIS/*.VIS; do
+  cp "$f" "$APP/iso_data/VIS/" 2>/dev/null || true
+done
+for f in "$WORKTREE"/out/jak1/fr3/*.fr3; do
+  cp "$f" "$APP/iso_data/fr3/" 2>/dev/null || true
+done
+for f in "$WORKTREE"/iso_data/jak1/STR/*.STR; do
+  cp "$f" "$APP/iso_data/STR/" 2>/dev/null || true
+done
+for f in "$WORKTREE"/iso_data/jak1/TEXT/*.TXT; do
+  cp "$f" "$APP/iso_data/TEXT/" 2>/dev/null || true
+done
+for f in "$WORKTREE"/out/jak1/iso/*.TXT; do
+  cp "$f" "$APP/iso_data/TEXT/" 2>/dev/null || true
+done
 plutil -lint "$APP/Info.plist" >/dev/null
-codesign --force --sign - "$APP" >/dev/null 2>&1 || true
+codesign --force --sign - "$APP"
+codesign --verify --deep --strict "$APP"
 
 echo "OK: $APP"
 ls -la "$APP"
