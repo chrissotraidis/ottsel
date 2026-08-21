@@ -44,6 +44,16 @@ is now the source/data-family selection around Sprite3 frame setup and
 `flush_sprites`, before native Metal composition. See
 `docs/evidence/R1/r1-macos-particle-adgif-output-mapping-2026-08-21.md`.
 
+The follow-up GOAL producer trace now records the first AdGif resource before
+DMA. Its `prims[3]` field is the GS `TEX1` register ID (`0x14`), not a logical
+texture ID, because `particle-setup-adgif` overwrites that overlay. The fresh
+macOS route emits TBP `0x24f2` (64×64) while iPad emits `0x2bc1` (64×64); the
+earlier raw particle-ID trace confirms their input/resource sequences also
+differ. The native consumer therefore is not the first divergence, but the
+exact producer lookup/resource owner remains open. No texture substitution or
+TBP remap is allowed without that source-side comparison. See
+`docs/evidence/R1/r1-sparticle-source-texture-page-comparison-2026-08-21.md`.
+
 Supplemental Jak 2 ARM64 research was read on 2026-08-20. It shares the
 Ottsel upstream pin and supplies useful regression oracles, but its MAP_JIT,
 dynamic-trampoline, inventory-only AOT, and frame-clear Metal paths are not
