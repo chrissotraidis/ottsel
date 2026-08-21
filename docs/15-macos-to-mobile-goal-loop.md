@@ -284,10 +284,24 @@ does not establish physical-device acceptance.
 
 ### Handoff update — 2026-08-21
 
-The current first open dependency is a source-side texture lookup comparison,
-not a TBP remap. The bounded `lookup-texture-by-id` trace has a completed
-macOS capture but no completed iPad capture because the intended iOS rebuild
-was stopped. Compare raw page/index, particle ID, AdGif TEX0, and native
-`first-tex0`/TBP on one fresh validated-pack boot. Keep the blank/partially
-corrupted Simulator result outside the playability bar. Detailed stop state,
-technical debt, and commands are in `docs/BOT34_HANDOFF.md`.
+**Platform-order correction:** the original BOT34 wording implied an iPad-first
+queue, but no visibly playable game exists on either local platform today. The
+authoritative queue is now macOS stability/visible playability first, iPadOS
+second, iPhone/physical readiness third. Until the fresh macOS gate passes,
+do not start another mobile build, Simulator replay, or resource trace.
+
+The active gate now has a **bounded macOS PARTIAL PASS**: title → New Game →
+A/B/C/D1/D2 → Village1 → Training with real keyboard movement, ten active
+interaction cycles, coherent post-soak composition, and no matching fault. It
+does not close cold-start reproducibility, retained audio logs, human audible
+acceptance, neutral background/resume lifecycle, physical-controller soak, or
+overall macOS stable/playable status.
+
+The next dependency remains on macOS to finish those clauses. The R1
+source-side texture lookup comparison remains a
+later iPad dependency and is **paused behind that macOS gate**, not the active
+product queue. It is diagnostic only: compare raw page/index, particle ID,
+AdGif TEX0, and native `first-tex0`/TBP on one fresh validated-pack boot after
+macOS passes. Keep the blank/partially corrupted Simulator result outside the
+playability bar. Detailed stop state, technical debt, and commands are in
+`docs/BOT34_HANDOFF.md`.

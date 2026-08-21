@@ -19,10 +19,13 @@ not causes of the current missing render composition. See
 
 ## 2026-08-18 update — cross-platform loop resumed; iPad input seam verified
 
-The product is now tracked as one macOS/iPadOS/iOS loop. macOS remains the
-working rendering/gameplay reference, but it no longer blocks the mobile
-input/platform work. The one-runtime rule remains strict: macOS `gk` was
-stopped before the iPad Pro 11-inch (M4) Simulator was booted.
+The product is now tracked as one macOS/iPadOS/iOS loop, with a strict order:
+the current macOS checkout must pass a fresh stability/playability gate before
+new iPad/iPhone product work resumes. This 2026-08-21 correction supersedes
+any earlier statement that macOS “no longer blocks” mobile work. Historical
+mobile evidence remains useful diagnostics, not permission to skip the active
+macOS gate. The one-runtime rule also remains strict: never run desktop `gk`
+and Simulator concurrently, and shut down whichever runtime is not under test.
 
 The new mobile platform bridge feeds the same completed DualShock snapshot
 that desktop `PadData` reaches through `scePadRead`: canonical buttons, sticks,
@@ -926,3 +929,20 @@ output. The new page-2 texture lookup trace is proven on macOS only; the iOS
 rebuild was stopped before capture. Preserve the dirty maintained upstream
 worktree and continue with the exact next experiment in
 `docs/BOT34_HANDOFF.md`.
+
+### Handoff correction — macOS-first and bounded increment — 2026-08-21
+
+This correction supersedes the preceding handoff note's queue. The
+authoritative order is macOS stable/visible playability first, iPadOS second,
+then iPhone/physical readiness. A fresh current-checkout run now supplies a
+**bounded PARTIAL PASS**, not full macOS playability: one Windowed native `gk`
+process completed title → New Game → A/B/C/D1/D2 → Village1 → Training with
+visible held-W movement, ten active W/camera/jump cycles, coherent post-soak
+water/Training composition, no booted Simulator, and no matching fault report.
+
+The run remains keyboard-only and does not close explicit background/resume
+lifecycle, retained raw audio artifacts, human audible-output acceptance,
+physical-controller replay, cold-start reproducibility, or a longer soak.
+Those clauses stay in the active macOS queue. R1 remains an iPad diagnostic
+dependency paused behind all of them; see
+`docs/evidence/M1/m1-macos-bounded-stability-increment-2026-08-21.md`.

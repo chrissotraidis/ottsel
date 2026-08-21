@@ -1,14 +1,21 @@
-# BOT34 handoff — Ottsel iPad/iPhone continuation
+# BOT34 handoff — macOS-first continuation (iPad/iPhone paused)
 
 Date: 2026-08-21
 
 ## Fixed objective
 
-Deliver an honestly playable native Ottsel Jak 1 build on iPad first, then
-prove iPhone parity and physical-device readiness. Preserve one runtime, one
-booted Simulator, ROM-safe inputs, the canonical maintained-patch mechanism,
-and the signed-native/no-runtime-executable-code boundary. Do not shrink this
-to “the Mac version boots” or to a static build claim.
+The product target remains one honestly playable native Ottsel Jak 1 build
+across Apple platforms, with iPhone parity and physical-device readiness after
+iPadOS. The execution order is now explicitly:
+
+1. Prove the **current checkout on macOS** stable and visibly playable first.
+2. Resume iPadOS renderer/resource parity and playable interaction.
+3. Then prove iPhone parity and physical-device readiness.
+
+Preserve one runtime at a time, ROM-safe inputs, the canonical maintained-patch
+mechanism, and the signed-native/no-runtime-executable-code boundary. Do not
+shrink macOS work to “the Mac boots,” a title, counters, logs, or a static
+build claim.
 
 ## Exact stop state
 
@@ -24,10 +31,15 @@ to “the Mac version boots” or to a static build claim.
 
 ## What is actually proven
 
-macOS is a partial behavioral reference: title → New Game → A/B/C/D1 →
-Training, visible world rendering, keyboard/mouse actions, bounded five-minute
-soak, and nonzero PCM/device health. Audio audibility, route changes, and
-interruption behavior are still open.
+macOS has one fresh bounded stability increment on the current branch/build,
+but is still not proven fully stable/playable. The fresh run showed title →
+New Game → A/B/C/D1/D2 → Village1 → Training, visible held-W movement, ten
+active interaction cycles, coherent post-soak play, and no matching fault
+during a 22-minute process lifetime. Its boundaries are equally important:
+keyboard-only input, no explicit background/resume proof, no retained raw
+audio artifact, no human-audible acceptance, and only a short active soak.
+Until those clauses close, macOS is the active queue and every mobile track is
+paused for new product work.
 
 iPad has a signed native app, validated imported user data, title/Village1
 progress, visible controls, and partial/corrupted Metal output in some runs.
@@ -51,29 +63,45 @@ AdGif TEX0, and native `first-tex0`/TBP output.
 
 ## First open dependency
 
-Complete the same raw page/index lookup trace on iPad and compare it with the
-completed macOS sequence. This is the next gate; do not reopen signed-native
-foundation or jump to iPhone while the first iPad world frame is still blank
-or corrupted.
+Complete the remaining clauses of the honest macOS reproducibility/stability
+gate on the exact local launch path. The completed increment proves only its
+bounded visible-route/interaction subset. The required evidence still includes
+cold-start reproducibility with retained raw logs/audio artifacts, human
+audible-output acceptance, neutral background/resume/input lifecycle, a longer
+controller-led soak, and zero faults. If any clause fails, diagnose the concrete
+macOS defect; only after all pass may work resume at the R1 iPad
+source/resource comparison below as paused diagnostic work.
+
+R1 remains important, but it is **not** the active first dependency: its
+completed iPad page/index trace diverged from macOS (`54,49,48,42,44,...`
+versus `4,53,4,18,15,...`). Do not build another mobile trace while macOS is
+failing or unproven.
 
 ## Exact next work
 
-1. Apply/verify `patches/h3-jak1-host-boot.patch`, then apply the diagnostic
-   `patches/r1-texture-lookup-trace.patch` to the pinned maintained tree.
-2. Run `(mi)` for all affected GOAL payloads, then `scripts/build-ios.sh`.
-   Verify strict deep codesign and record the executable hash.
-3. Use exactly one booted iPad Simulator and one fresh validated user pack.
-   Replay title-wait → Start → Cross → Down×4 → Cross.
-4. Capture `OTTSEL TEX LOOKUP`, producer AdGif, `MSCAL=211`, and native
-   `first-tex0`/TBP records from the same boot. Save screenshot, fault scan,
-   input/lifecycle result, and exact commands under `docs/evidence/R1/`.
-5. If lookup sequences differ, trace page-directory/FR3/DGO ordering and
-   allocation/login state. If they match, trace texture object fields and
-   data-family selection. Do not change TBP, camera, shader, or renderer
-   policy until this comparison falsifies the source-side hypothesis.
-6. After R1 closes, resume Direct/Sprite/material composition, then shared
-   input/audio/lifecycle gates, then iPhone size/parity, then physical-device
-   proof.
+### Active macOS gate
+
+1. Preserve the completed bounded increment in
+   `docs/evidence/M1/m1-macos-bounded-stability-increment-2026-08-21.md`.
+2. On macOS only, repeat the cold-start path with one Windowed `gk`, retaining
+   raw stdout/stderr/audio-log artifacts this time.
+3. Exercise explicit neutral/background-resume/foreground lifecycle and
+   disconnect-or-neutral input behavior.
+4. Obtain a human audible-output acceptance check through the selected speaker
+   route, then record route-change/interruption behavior separately.
+5. Run a longer bounded physical-controller soak through the same visible
+   route; retain screenshots and fault scans. Keyboard parity may be retained
+   as supplemental evidence, not controller acceptance.
+6. If any requirement fails, stay on macOS and diagnose that concrete defect
+   with the smallest falsifiable regression-first change.
+
+### Paused iPad R1 gate (only after macOS passes)
+
+When unblocked, compare raw `OTTSEL TEX LOOKUP` page/index sequence, particle
+IDs, AdGif TEX0, and native `first-tex0`/TBP from the same boot. Trace
+page-directory/FR3/DGO ordering/allocation when lookup differs, and texture
+object/data-family state when it matches. Do not remap TBP or change camera,
+shader, or Metal policy before a falsifiable source-side result.
 
 ## Remaining technical debt
 

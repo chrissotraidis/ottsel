@@ -2,11 +2,19 @@
 
 ## Current self-audit — 2026-08-21
 
-**Plain status:** the macOS game now genuinely works through a bounded,
-evidence-backed retail path. The iPad app genuinely boots, accepts platform
-input, and draws part of Village1, but it is **not yet a mobile-playable game**.
-The remaining mobile work is renderer composition and product integration, not
-the original ARM64 execution-model proof.
+**Plain status:** macOS now has one fresh bounded stability increment, but it
+is still not fully proven stable/playable. iPadOS remains unproven and
+diagnostic-only. The authoritative product order is:
+
+1. **macOS stable and visibly playable first.**
+2. **iPadOS parity/playability second.**
+3. **iPhone parity and physical-device readiness third.**
+
+No iPad/iPhone renderer or resource-parity slice may become the active product
+dependency until macOS has a fresh end-to-end stability pass: visible title,
+menu/world progression, real input, audible output, neutral lifecycle/input,
+and a fault-free soak. Until that pass exists, the active queue starts with an
+honest macOS reproducibility/stability audit—not another Simulator trace.
 
 This section is the canonical current board. The dated material below is
 preserved evidence history; where it conflicts with this section, it is
@@ -15,10 +23,10 @@ historical and must not be used as a release or playability claim.
 | Product stage | Audited status | What is actually proven | What still prevents completion |
 |---|---|---|---|
 | ARM64/no-emit foundation | **PASS** | OpenGOAL code runs from signed Mach-O `__TEXT` without runtime-created executable code; native host and Simulator boot evidence exists. | Nothing at this layer unless new contradictory evidence appears. |
-| macOS reference | **PARTIAL PASS** | Native arm64 `gk` completed real title → New Game → A/B/C/D1/D2 → Training, rendered the world, accepted keyboard/mouse pad input, and completed a five-minute active soak. | Fresh physical-controller replay and an audible output/route/interruption soak. Audio notes conflict on whether route startup is closed, so audible output is deliberately **open** until one fresh end-to-end proof resolves it. |
-| iPadOS renderer + runtime | **IN PROGRESS** | Signed Simulator app reaches Village1 via the real New Game path; external-keyboard/touch-to-pad transitions and neutral lifecycle state are logged; full-screen Metal shows a partial textured/fogged Village1 TIE/TFRAG scene. | Direct/Sprite rendering and unresolved target/composition attribution, remaining TIE/TFRAG material paths and renderer buckets, title/gameplay visual parity, visible touch controls, mobile audio, and a playable interaction replay. |
-| iPhone parity | **NOT STARTED** | The app declares iPhone support. | iPhone Simulator rendering/input/layout proof, then physical-device performance and signing acceptance. |
-| Release / handoff | **BLOCKED** | Repository remains ROM-safe; `HEAD` and `origin/main` both resolve to `549508e`. | All platform playability, device, packaging, and legal user-data workflow gates. |
+| macOS stable reference | **PARTIAL PASS — ACTIVE QUEUE** | The fresh 2026-08-21 current-checkout run showed title → New Game → retail cinematics → Village1 → Training, real W movement, ten active interaction cycles, coherent post-soak play, and no matching fault. Keyboard-only and human-audible acceptance remain open. | Repeat cold-start reproducibility, retain raw audio evidence, obtain human audible-output acceptance, prove neutral background/resume lifecycle, and complete a longer controller/keyboard soak before calling macOS stable/playable. |
+| iPadOS renderer + runtime | **PAUSED — DIAGNOSTIC ONLY** | Signed Simulator builds can boot, consume scripted input, reach Village1 markers, and emit partial/corrupted Metal output. R1 traces isolate producer/resource differences. | Blocked behind completion of all remaining macOS-stable-reference clauses. Even after unblocking, Direct/Sprite/material composition, visible touch/input/audio, lifecycle, and playable replay remain open. |
+| iPhone parity | **PAUSED** | The app declares iPhone support. | Explicitly after iPadOS; then simulator parity and physical-device performance/signing acceptance. |
+| Release / handoff | **BLOCKED** | Repository remains ROM-safe; current feature work is local on branch `codex/r1-macos-adgif-output-mapping-2026-08-21` at `b2e36fc`; `main`/`origin/main` remain `549508e`. | All platform playability, device, packaging, and legal user-data workflow gates. |
 
 The current macOS product observation is positive but bounded: the title/world
 scene looks decent in the running reference, while stability is not yet a
@@ -1842,17 +1850,76 @@ next experiment is the same producer-ID/TEX0 trace on macOS at the matching
 Village1 transition, followed by source/data-family reconciliation. See
 `docs/evidence/R1/r1-particle-adgif-output-mapping-2026-08-21.md`.
 
-## 2026-08-21 — handoff at the texture lookup gate
+## 2026-08-21 — iPad texture lookup divergence proven
 
-The next bounded producer slice retains the result of
-`lookup-texture-by-id` and records page-2 page/index hits. The completed
-macOS arm64 capture includes hits for indices `0x12`, `0xf`, `0x1e`, `0x0`,
-`0x1c`, and `0x3`; the stable corresponding AdGif/native phase remains
-`TBP=0x24f2`. The iOS rebuild intended to carry this trace was stopped at the
-user's request, so there is no iPad lookup-trace proof yet. `dest=0` in this
-diagnostic output is not authoritative. The first open product dependency is
-now the same raw lookup/page-directory/allocation comparison on iPad, before
-any TBP, camera, shader, or Metal remap. The Simulator remains blank or
-partially corrupted and is not playable proof. See
-`docs/evidence/R1/r1-texture-lookup-page-directory-trace-2026-08-21.md` and
-`docs/BOT34_HANDOFF.md`.
+The signed iPad lookup-trace build completed the fresh validated-pack route
+title-wait → Start → Cross → Down×4 → Cross and reached Village1 twice. Its
+ordered page-2 lookup sequence diverges from macOS at position 5: iPad selects
+`28 → 27 → 3` where macOS selects `30`, omits macOS indices `35/31/36`, adds
+`54/49/48/42/44`, and also visits non-page-2 families. Shared page-2 entries
+have matching dimensions/PSM. The same-boot source boundary correlates this
+with two MSCAL=211 groups (`0x2b8d`/`0x2be0`) followed by six MSCAL=3 world
+groups (`0x2d7c`/`0x2d8c`/`0x2c8d`×4). This moves the first open dependency to
+page-directory login/order, FR3/DGO texture ordering, and default texture-page
+allocation state; no TBP remap, camera change, shader change, or Metal-policy
+change is justified. The Simulator remained blank or partially corrupted and
+is not playability proof. See
+`docs/evidence/R1/r1-ipad-texture-lookup-divergence-2026-08-21.md`.
+
+## 2026-08-21 — R1 lookup comparison corrected and allocator divergence isolated
+
+The R4 replay's apparent early `15 → 0` anomaly was phase contamination: nine
+of its 21 page-2 lookups occurred before the Start trigger. After alignment,
+both mobile runs still select the default-allocated iPad-only family
+`54/49/48/42/44` while omitting macOS's `35/31/36` family. All entries are
+resident hits, so this points to differing particle-spec/runtime-family
+selection upstream of texture resolution rather than failed page-directory
+login or a native TBP remap. A separately supplied PID-34171 crash report at
+12:01:49 predates the live PID-36291 R4 run; it remains an independent
+lifecycle observation, not the R4 result. The Simulator remained blank or
+partially corrupted, so no playability claim is made. See
+`docs/evidence/R1/r1-phase-aligned-lookup-allocator-attribution-2026-08-21.md`.
+
+## 2026-08-21 — platform order corrected: macOS stability is now the active gate
+
+The user correctly rejected the operational implication of the prior handoff:
+there was no visibly playable local game on either platform, and an idle
+diagnostic Simulator process could be mistaken for progress. The iPad runtime
+was stopped and the only booted Simulator was shut down. The R5 lookup evidence
+above remains valid diagnostic history, but **it no longer defines the active
+product queue.**
+
+The active order is now explicit and supersedes any older “iPad first” text:
+
+1. Prove macOS stable/playable on the current checkout.
+2. Resume iPadOS renderer/resource parity and playable interaction.
+3. Then iPhone parity and physical-device readiness.
+
+The first macOS experiment is a clean reproducibility audit of the exact local
+launch path, followed by a fresh visible run with real input, audio output,
+lifecycle checks, fault scan, and a bounded soak. No new mobile build or trace
+is authorized until that run either passes or identifies a concrete macOS
+defect. This does not change ROM safety or signed-native/no-runtime-codegen
+rules.
+
+## 2026-08-21 — fresh macOS bounded stability increment
+
+A fresh one-runtime macOS run now provides the first current-checkout bounded
+stability increment requested by the platform-order correction. PID 44189 ran
+the native arm64 executable from the pinned upstream tree with audio enabled;
+no Simulator was booted. Real keyboard events drove title → New Game →
+overwrite-save YES → the complete A/B/C/D1/D2 cinematic chain → Village1 →
+Training. Jak visibly responded to held-W movement, followed by ten active
+W/camera/jump cycles captured as `soak-01..10.png`. The process stayed alive
+for more than 22 minutes, and two post-soak frames show a coherent animated
+Training/water scene rather than a black frame or menu. No matching crash/fault
+report was found.
+
+This upgrades the macOS board from OPEN to **PARTIAL PASS**, not playable. The
+run used keyboard events rather than a physical controller; nonzero PCM was
+observed live but its raw stream was not retained and no human listener
+confirmed audibility; background/resume was not explicitly exercised; and the
+soak was about four minutes of active interaction, not an endurance test.
+iPadOS/iPhone therefore remain paused behind those explicit macOS clauses.
+See `docs/evidence/M1/m1-macos-bounded-stability-increment-2026-08-21.md` and
+`docs/evidence/M1/artifacts-2026-08-21-macos-stability-gate/`.

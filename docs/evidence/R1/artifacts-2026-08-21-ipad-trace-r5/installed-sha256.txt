@@ -1,0 +1,1 @@
+4bcd415bda0d0d0f49e1aa10421d677b5ebb672147fa9e18f7b6b66258ec1acf  /Users/chrissotraidis/Library/Developer/CoreSimulator/Devices/08636791-2675-4675-8335-EF72EF954DCF/data/Containers/Bundle/Application/40A7F17D-9870-4299-B105-419E0CE170BF/OttselShell.app/OttselShell

@@ -1,11 +1,71 @@
+diff --git a/goal_src/jak1/engine/gfx/sprite/sparticle/sparticle-launcher.gc b/goal_src/jak1/engine/gfx/sprite/sparticle/sparticle-launcher.gc
+index 2262e162a..e0aba9cd1 100644
+--- a/goal_src/jak1/engine/gfx/sprite/sparticle/sparticle-launcher.gc
++++ b/goal_src/jak1/engine/gfx/sprite/sparticle/sparticle-launcher.gc
+@@ -184,10 +186,25 @@
+ ;; the particle system can modify the adgif shader as part of particle effects.
+ ;; it also is responsible for setting up the adgif.
+ 
++(define *ottsel-particle-adgif-trace-count* 0)
++
+ (defun particle-setup-adgif ((arg0 adgif-shader) (arg1 texture-id))
+   "Set up the adgif for a particle and the given texture."
+   ;; grab the texture
+   (let ((a1-1 (lookup-texture-by-id arg1)))
++    ;; Diagnostic-only producer trace. Keep it bounded and outside the
++    ;; renderer so the selected texture-id and lookup result can be compared
++    ;; with the first mobile/macOS Sprite3 AdGif without changing state.
++    (when (< *ottsel-particle-adgif-trace-count* 32)
++      (format 0 "OTTSEL PARTICLE ADGIF: page=~f index=~f lookup=~A~%"
++              (the float (-> arg1 page))
++              (the float (-> arg1 index))
++              (if a1-1 "hit" "miss"))
++      ;; The page/index fields above plus the raw low byte reconstruct the
++      ;; source texture-id word without relying on the iOS hex formatter.
++      (format 0 "OTTSEL PARTICLE RAWID: raw-low=~f~%"
++              (the float (logand (the-as uint arg1) #xff)))
++      (+! *ottsel-particle-adgif-trace-count* 1))
+     ;; set up some texture stuff
+     (set! (-> arg0 tex1) (new 'static 'gs-tex1 :mmag #x1 :mmin #x1))
+     (set! (-> arg0 tex0 tfx) 0)
 diff --git a/goal_src/jak1/engine/gfx/texture/texture.gc b/goal_src/jak1/engine/gfx/texture/texture.gc
-index ca5c19002..e0099cf82 100644
+index ca5c19002..0f744bdbd 100644
 --- a/goal_src/jak1/engine/gfx/texture/texture.gc
 +++ b/goal_src/jak1/engine/gfx/texture/texture.gc
-@@ -1827,14 +1827,34 @@
+@@ -1803,9 +1803,29 @@
+     (set! (-> gp-0 memcpy) #f))
+   #f)
+ 
++(define *ottsel-texture-login-trace-count* 0)
++
+ (defun texture-page-login ((id texture-id) (alloc-func (function texture-pool texture-page kheap int texture-page)) (heap kheap))
+   "Return the tpage-dir entry for the given texture.
+    Load if from the debug network if its not loaded. Return #f if it doesn't work"
++  ;; Bounded residency/allocator discriminator. Numeric values use the GOAL
++  ;; float formatter because the iOS formatter leaves integer fields blank.
++  (when (and (= (-> id page) 2)
++             (< *ottsel-texture-login-trace-count* 256))
++    (let ((probe-entry (-> *texture-page-dir* entries (the-as uint (-> id page))))
++          (current-alloc (-> *texture-pool* allocate-func))
++          (alloc-id 0))
++      (when (= current-alloc texture-page-default-allocate) (set! alloc-id 1))
++      (when (= current-alloc texture-page-common-allocate) (set! alloc-id 2))
++      (when (= current-alloc texture-page-common-boot-allocate) (set! alloc-id 3))
++      (when (= current-alloc texture-page-near-allocate-0) (set! alloc-id 4))
++      (when (= current-alloc texture-page-near-allocate-1) (set! alloc-id 5))
++      (when (= current-alloc texture-page-level-allocate) (set! alloc-id 6))
++      (format 0 "OTTSEL TEX LOGIN: index=~f resident=~A alloc=~f~%"
++              (the float (-> id index))
++              (if (-> probe-entry page) "yes" "no")
++              (the float alloc-id))
++      (+! *ottsel-texture-login-trace-count* 1)))
+   ;; make sure its a valid entry
+   (when (and (nonzero? (-> id page)) (< (the-as uint (-> id page)) (the-as uint (-> *texture-page-dir* length))))
+     ;; look up current entry
+@@ -1827,14 +1847,33 @@
            (set! (-> *texture-pool* allocate-func) old-alloc-func)))
        dir-entry)))
-
+ 
 +(define *ottsel-texture-lookup-trace-count* 0)
 +
  (defun lookup-texture-by-id ((arg0 texture-id))
@@ -23,7 +83,7 @@ index ca5c19002..e0099cf82 100644
 +    ;; formatter because the iOS formatter leaves integer directives blank.
 +    (when (and (= (-> arg0 page) 2)
 +               (< *ottsel-texture-lookup-trace-count* 128))
-+      (format 0 "OTTSEL TEX LOOKUP: page=~f index=~f result=~A"
++      (format 0 "OTTSEL TEX LOOKUP: page=~f index=~f result=~A~%"
 +              (the float (-> arg0 page))
 +              (the float (-> arg0 index))
 +              (if v1-1 "hit" "miss"))
@@ -33,9 +93,8 @@ index ca5c19002..e0099cf82 100644
 +                (the float (-> v1-1 w))
 +                (the float (-> v1-1 h))
 +                (the float (-> v1-1 psm))))
-+      (unless v1-1 (format 0 "~%"))
 +      (+! *ottsel-texture-lookup-trace-count* 1))
 +    v1-1))
-
+ 
  (defmethod unload! ((this texture-pool) (arg0 texture-page))
    "Unload the texture from the directory"

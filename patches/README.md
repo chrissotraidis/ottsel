@@ -134,9 +134,11 @@ Target tree: `open-goal/jak-project` pinned at
 
 - **`r1-texture-lookup-trace.patch`** — bounded GOAL-side page-2
   `lookup-texture-by-id` tracing, retaining the resolved texture only for
-  diagnostics. It does not change lookup behavior or rendering. The printed
-  `dest` field is not authoritative; correlate raw page/index with AdGif TEX0
-  and native `first-tex0`/TBP. See
+  diagnostics. It does not change lookup behavior or rendering; the iOS-safe
+  formatter uses float casts and explicit newlines. The printed `dest` field is
+  not authoritative; correlate raw page/index with AdGif TEX0 and native
+  `first-tex0`/TBP. The completed iPad capture diverges from macOS in ordered
+  page/index membership. See
   `docs/evidence/R1/r1-texture-lookup-page-directory-trace-2026-08-21.md`.
 
 ## Superseded / historical (do not apply)

@@ -1,0 +1,100 @@
+135368:OTTSEL symlink '*default-dead-pool*' at 0x645c -> OFFSET
+135369:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x645c (data=0x4944000)
+137226:OTTSEL symlink '*default-dead-pool*' at 0x847c -> OFFSET
+137227:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x847c (data=0x4968000)
+138569:OTTSEL symlink '*default-dead-pool*' at 0xc8b8 -> OFFSET
+138570:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0xc8b8 (data=0x4974000)
+138571:OTTSEL symlink '*default-dead-pool*' at 0xc924 -> OFFSET
+138572:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0xc924 (data=0x4974000)
+138691:OTTSEL symlink 'default-collision-reaction' at 0xccd0 -> OFFSET
+138692:OTTSEL symlink 'default-collision-reaction' wrote 0xf7b0 at data+0xccd0 (data=0x4974000)
+139161:OTTSEL symlink 'yakow-default-event-handler' at 0x4038 -> OFFSET
+139162:OTTSEL symlink 'yakow-default-event-handler' wrote 0xffff0618 at data+0x4038 (data=0x32d4000)
+139163:OTTSEL symlink 'yakow-default-event-handler' at 0x403c -> OFFSET
+139164:OTTSEL symlink 'yakow-default-event-handler' wrote 0xffff0618 at data+0x403c (data=0x32d4000)
+139165:OTTSEL symlink 'yakow-default-event-handler' at 0x406c -> OFFSET
+139166:OTTSEL symlink 'yakow-default-event-handler' wrote 0xffff0618 at data+0x406c (data=0x32d4000)
+139167:OTTSEL symlink 'yakow-default-event-handler' at 0x4078 -> OFFSET
+139168:OTTSEL symlink 'yakow-default-event-handler' wrote 0xffff0618 at data+0x4078 (data=0x32d4000)
+139169:OTTSEL symlink 'yakow-default-event-handler' at 0x4080 -> OFFSET
+139170:OTTSEL symlink 'yakow-default-event-handler' wrote 0xffff0618 at data+0x4080 (data=0x32d4000)
+139171:OTTSEL symlink 'yakow-default-event-handler' at 0x4090 -> OFFSET
+139172:OTTSEL symlink 'yakow-default-event-handler' wrote 0xffff0618 at data+0x4090 (data=0x32d4000)
+139173:OTTSEL symlink 'yakow-default-event-handler' at 0x40a4 -> OFFSET
+139174:OTTSEL symlink 'yakow-default-event-handler' wrote 0xffff0618 at data+0x40a4 (data=0x32d4000)
+139483:OTTSEL symlink '*default-dead-pool*' at 0x9a84 -> OFFSET
+139484:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x9a84 (data=0x4984000)
+139571:OTTSEL symlink 'default-collision-reaction' at 0x9a58 -> OFFSET
+139572:OTTSEL symlink 'default-collision-reaction' wrote 0xf7b0 at data+0x9a58 (data=0x4984000)
+140621:OTTSEL symlink '*default-dead-pool*' at 0x1222c -> OFFSET
+140622:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x1222c (data=0x4990000)
+140623:OTTSEL symlink '*default-dead-pool*' at 0x1232c -> OFFSET
+140624:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x1232c (data=0x4990000)
+140625:OTTSEL symlink '*default-dead-pool*' at 0x12594 -> OFFSET
+140626:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x12594 (data=0x4990000)
+140627:OTTSEL symlink '*default-dead-pool*' at 0x12630 -> OFFSET
+140628:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x12630 (data=0x4990000)
+140629:OTTSEL symlink '*default-dead-pool*' at 0x1266c -> OFFSET
+140630:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x1266c (data=0x4990000)
+140631:OTTSEL symlink '*default-dead-pool*' at 0x126a8 -> OFFSET
+140632:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x126a8 (data=0x4990000)
+140633:OTTSEL symlink '*default-dead-pool*' at 0x12710 -> OFFSET
+140634:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x12710 (data=0x4990000)
+140681:OTTSEL symlink '*font-default-matrix*' at 0x12188 -> OFFSET
+140682:OTTSEL symlink '*font-default-matrix*' wrote 0xc748 at data+0x12188 (data=0x4990000)
+141019:OTTSEL symlink 'default-collision-reaction' at 0x1247c -> OFFSET
+141020:OTTSEL symlink 'default-collision-reaction' wrote 0xf7b0 at data+0x1247c (data=0x4990000)
+143632:OTTSEL symlink '*default-dead-pool*' at 0x5368 -> OFFSET
+143633:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x5368 (data=0x49c4000)
+143634:OTTSEL symlink '*default-dead-pool*' at 0x541c -> OFFSET
+143635:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x541c (data=0x49c4000)
+143636:OTTSEL symlink '*default-dead-pool*' at 0x54d0 -> OFFSET
+143637:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x54d0 (data=0x49c4000)
+145705:[27:29] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 10), pcm-peak=0
+146910:[27:39] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 20), pcm-peak=0
+147766:[27:49] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 30), pcm-peak=0
+148671:[27:59] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 40), pcm-peak=0
+149560:[28:09] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 50), pcm-peak=0
+150428:[28:19] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 60), pcm-peak=0
+151279:[28:29] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 70), pcm-peak=0
+152173:[28:39] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 80), pcm-peak=0
+152991:[28:49] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 90), pcm-peak=0
+153911:[28:59] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 100), pcm-peak=0
+154761:[29:09] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 110), pcm-peak=0
+155607:[29:19] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 120), pcm-peak=0
+156471:[29:29] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 130), pcm-peak=0
+157362:[29:39] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 140), pcm-peak=0
+158251:[29:49] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 150), pcm-peak=0
+159121:[29:59] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 160), pcm-peak=0
+159987:[30:09] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 170), pcm-peak=0
+160826:[30:19] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 180), pcm-peak=0
+161731:[30:29] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 190), pcm-peak=0
+162561:[30:39] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 200), pcm-peak=0
+163495:[30:49] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 210), pcm-peak=0
+164341:[30:59] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 220), pcm-peak=0
+165201:[31:09] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 230), pcm-peak=0
+166001:[31:19] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 240), pcm-peak=0
+166850:[31:29] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 250), pcm-peak=0
+167653:[31:39] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 260), pcm-peak=0
+168527:[31:49] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 270), pcm-peak=0
+169376:[31:59] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 280), pcm-peak=0
+170182:[32:09] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 290), pcm-peak=0
+171017:[32:19] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 300), pcm-peak=0
+171835:[32:29] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 310), pcm-peak=0
+172706:[32:39] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 320), pcm-peak=0
+173523:[32:49] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 330), pcm-peak=0
+174371:[32:59] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 340), pcm-peak=0
+175175:[33:09] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 350), pcm-peak=0
+176025:[33:19] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 360), pcm-peak=0
+176894:[33:29] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 370), pcm-peak=0
+177741:[33:39] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 380), pcm-peak=0
+178575:[33:49] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 390), pcm-peak=0
+179378:[33:59] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 400), pcm-peak=0
+180265:[34:09] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 410), pcm-peak=0
+180978:[34:19] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 420), pcm-peak=0
+181695:[34:29] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 430), pcm-peak=0
+182416:[34:39] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 440), pcm-peak=0
+183150:[34:49] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 450), pcm-peak=0
+185793:[34:59] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 460), pcm-peak=0
+187824:[35:09] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 470), pcm-peak=0
+189847:[35:19] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 480), pcm-peak=0

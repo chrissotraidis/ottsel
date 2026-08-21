@@ -1,0 +1,1 @@
+TRIGGER_DIR=/Users/chrissotraidis/Library/Developer/CoreSimulator/Devices/08636791-2675-4675-8335-EF72EF954DCF/data/Containers/Data/Application/6F900BD3-5802-4CD6-9A88-456D4B5C2AE0/Library/Application Support/local.ottsel/OttselShell

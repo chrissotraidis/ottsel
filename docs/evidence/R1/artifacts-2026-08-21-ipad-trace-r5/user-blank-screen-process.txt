@@ -1,0 +1,2 @@
+  PID  PPID  %CPU %MEM STARTED                      COMMAND
+40964 33226  59.3  2.3 Fri Aug 21 13:07:42 2026     /Users/chrissotraidis/Library/Developer/CoreSimulator/Devices/08636791-2675-4675-8335-EF72EF954DCF/data/Containers/Bundle/Application/40A7F17D-9870-4299-B105-419E0CE170BF/OttselShell.app/OttselShell
