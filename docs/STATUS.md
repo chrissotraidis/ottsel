@@ -18,7 +18,7 @@ historical and must not be used as a release or playability claim.
 | macOS reference | **PARTIAL PASS** | Native arm64 `gk` completed real title → New Game → A/B/C/D1/D2 → Training, rendered the world, accepted keyboard/mouse pad input, and completed a five-minute active soak. | Fresh physical-controller replay and an audible output/route/interruption soak. Audio notes conflict on whether route startup is closed, so audible output is deliberately **open** until one fresh end-to-end proof resolves it. |
 | iPadOS renderer + runtime | **IN PROGRESS** | Signed Simulator app reaches Village1 via the real New Game path; external-keyboard/touch-to-pad transitions and neutral lifecycle state are logged; full-screen Metal shows a partial textured/fogged Village1 TIE/TFRAG scene. | Direct/Sprite rendering and unresolved target/composition attribution, remaining TIE/TFRAG material paths and renderer buckets, title/gameplay visual parity, visible touch controls, mobile audio, and a playable interaction replay. |
 | iPhone parity | **NOT STARTED** | The app declares iPhone support. | iPhone Simulator rendering/input/layout proof, then physical-device performance and signing acceptance. |
-| Release / handoff | **BLOCKED** | Repository remains ROM-safe; `HEAD` and `origin/main` both resolve to `dc60af3`. | All platform playability, device, packaging, and legal user-data workflow gates. |
+| Release / handoff | **BLOCKED** | Repository remains ROM-safe; `HEAD` and `origin/main` both resolve to `549508e`. | All platform playability, device, packaging, and legal user-data workflow gates. |
 
 The current macOS product observation is positive but bounded: the title/world
 scene looks decent in the running reference, while stability is not yet a
@@ -33,6 +33,16 @@ progression, mobile audio, iPhone parity, and physical-device gates open. See
 `docs/evidence/M1/m1-macos-product-observation-audio-2026-08-20.md`.
 The platform split and this audio boundary are recorded directly in
 `docs/evidence/M1/m1-platform-split-and-audio-boundary-2026-08-20.md`.
+
+The 2026-08-21 macOS follow-up completed the missing half of the particle
+producer trace. At the shared Village1 target marker, macOS producer IDs map
+directly to its own AdGif/TEX0 family (`0x...a518`, `0x...a4f2`, `0x...a5ee`,
+`0x...a6e1`), while the fresh iPad trace maps to a different family beginning
+`0x...ab8d`. Both consumers preserve their producer output; no TBP remap,
+camera rewrite, or shader change is justified. The first open R1 dependency
+is now the source/data-family selection around Sprite3 frame setup and
+`flush_sprites`, before native Metal composition. See
+`docs/evidence/R1/r1-macos-particle-adgif-output-mapping-2026-08-21.md`.
 
 Supplemental Jak 2 ARM64 research was read on 2026-08-20. It shares the
 Ottsel upstream pin and supplies useful regression oracles, but its MAP_JIT,
