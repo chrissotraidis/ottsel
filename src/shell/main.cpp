@@ -13,12 +13,16 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <iomanip>
+#include <array>
+#include <cmath>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "common/log/log.h"
 #include "game/sce/ottsel_platform_input.h"
+#include "game/sound/sndshim.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
@@ -51,6 +55,55 @@ std::vector<std::string> g_lines;
 size_t g_file_pos = 0;
 bool g_quit = false;
 int g_frame = 0;
+SDL_Gamepad* g_gamepad = nullptr;
+SDL_JoystickID g_gamepad_id = 0;
+
+void select_mobile_gamepad();
+void toggle_touch_editor();
+
+enum class TouchRegion : size_t {
+  LeftStick = 0,
+  Camera,
+  Circle,
+  Cross,
+  Square,
+  Triangle,
+  Start,
+  L1,
+  R1,
+  Count,
+};
+
+struct TouchRegionLayout {
+  float x = 0.f;
+  float y = 0.f;
+  float w = 0.f;
+  float h = 0.f;
+};
+
+struct TouchLayout {
+  std::array<TouchRegionLayout, static_cast<size_t>(TouchRegion::Count)> regions{};
+  float opacity = 1.f;
+};
+
+TouchLayout g_touch_layout = {
+    {{{0.055f, 0.605f, 0.13f, 0.165f},  // left stick
+      {0.70f, 0.36f, 0.16f, 0.10f},   // camera
+      {0.785f, 0.615f, 0.055f, 0.055f}, // circle
+      {0.875f, 0.715f, 0.055f, 0.055f}, // cross
+      {0.875f, 0.615f, 0.055f, 0.055f}, // square
+      {0.965f, 0.665f, 0.055f, 0.055f}, // triangle
+      {0.43f, 0.08f, 0.14f, 0.045f},  // start
+      {0.08f, 0.08f, 0.12f, 0.045f},  // L1
+      {0.80f, 0.08f, 0.12f, 0.045f}}}, // R1
+    1.f};
+std::string g_touch_layout_path;
+bool g_touch_editor = false;
+bool g_touch_editor_active = false;
+SDL_FingerID g_touch_editor_finger = 0;
+TouchRegion g_touch_editor_region = TouchRegion::LeftStick;
+
+int touch_region_at(float x, float y);
 
 // The mobile shell does not create the desktop Display/InputManager.  It
 // nevertheless delivers the same completed DualShock snapshot to GOAL, via
@@ -63,6 +116,15 @@ struct ShellPadInput {
   bool key_d = false;
   SDL_FingerID left_stick_finger = 0;
   SDL_FingerID action_finger = 0;
+  SDL_FingerID camera_finger = 0;
+  bool left_stick_active = false;
+  bool action_active = false;
+  bool camera_active = false;
+  Uint64 last_start_tap_ns = 0;
+  ottsel::platform_input::Button action_button =
+      static_cast<ottsel::platform_input::Button>(0);
+  float camera_origin_x = 0.f;
+  float camera_origin_y = 0.f;
   float stick_origin_x = 0;
   float stick_origin_y = 0;
 
@@ -128,7 +190,10 @@ struct ShellPadInput {
     trace("keyboard");
   }
 
-  void gamepad_button(Uint8 button, bool pressed) {
+  void gamepad_button(SDL_JoystickID instance_id, Uint8 button, bool pressed) {
+    if (instance_id != g_gamepad_id) {
+      return;
+    }
     using namespace ottsel::platform_input;
     Button mapped = static_cast<Button>(0);
     switch (button) {
@@ -151,7 +216,10 @@ struct ShellPadInput {
     trace("gamepad-button");
   }
 
-  void gamepad_axis(Uint8 axis, Sint16 value) {
+  void gamepad_axis(SDL_JoystickID instance_id, Uint8 axis, Sint16 value) {
+    if (instance_id != g_gamepad_id) {
+      return;
+    }
     const auto normalize = [](Sint16 input) {
       return static_cast<u8>(std::clamp(127 + int(input) * 128 / 32767, 0, 255));
     };
@@ -176,28 +244,83 @@ struct ShellPadInput {
     using namespace ottsel::platform_input;
     const auto& finger = event.tfinger;
     if (event.type == SDL_EVENT_FINGER_DOWN) {
-      if (finger.x < 0.5f && left_stick_finger == 0) {
+      const int region = touch_region_at(finger.x, finger.y);
+      if (region == static_cast<int>(TouchRegion::L1) && !action_active) {
+        // The top bars are L1/Start/R1 in the same order as the visible
+        // tablet layout. They take precedence over the left-stick half.
+        action_finger = finger.fingerID;
+        action_active = true;
+        action_button = L1;
+        set_button(&state, action_button, true);
+      } else if (region == static_cast<int>(TouchRegion::Start) && !action_active) {
+        if (last_start_tap_ns != 0 && finger.timestamp >= last_start_tap_ns &&
+            finger.timestamp - last_start_tap_ns <= 400000000ULL) {
+          last_start_tap_ns = 0;
+          toggle_touch_editor();
+          return;
+        }
+        last_start_tap_ns = finger.timestamp;
+        action_finger = finger.fingerID;
+        action_active = true;
+        action_button = Start;
+        set_button(&state, action_button, true);
+      } else if (region == static_cast<int>(TouchRegion::R1) && !action_active) {
+        action_finger = finger.fingerID;
+        action_active = true;
+        action_button = R1;
+        set_button(&state, action_button, true);
+      } else if (region == static_cast<int>(TouchRegion::LeftStick) && !left_stick_active) {
         left_stick_finger = finger.fingerID;
+        left_stick_active = true;
         stick_origin_x = finger.x;
         stick_origin_y = finger.y;
-      } else if (action_finger == 0) {
-        // Match the desktop Space/controller-South Cross action. A visible,
-        // configurable touch overlay is the next mobile UI layer.
+      } else if (region == static_cast<int>(TouchRegion::Camera) && !camera_active) {
+        // The upper-right open region is the camera gesture surface. Keep it
+        // independent from the face-button finger so movement + action +
+        // camera can be sampled simultaneously.
+        camera_finger = finger.fingerID;
+        camera_active = true;
+        camera_origin_x = finger.x;
+        camera_origin_y = finger.y;
+      } else if (region >= static_cast<int>(TouchRegion::Circle) &&
+                 region <= static_cast<int>(TouchRegion::Triangle) && !action_active) {
+        // Map the visible face-button regions to the same canonical buttons
+        // used by SDL gamepads; this remains the shared ShellPadInput/PadState
+        // producer.
         action_finger = finger.fingerID;
-        set_button(&state, Cross, true);
+        action_active = true;
+        action_button = Circle;
+        if (region == static_cast<int>(TouchRegion::Cross)) action_button = Cross;
+        if (region == static_cast<int>(TouchRegion::Square)) action_button = Square;
+        if (region == static_cast<int>(TouchRegion::Triangle)) action_button = Triangle;
+        set_button(&state, action_button, true);
       }
-    } else if (event.type == SDL_EVENT_FINGER_MOTION && finger.fingerID == left_stick_finger) {
+    } else if (event.type == SDL_EVENT_FINGER_MOTION && left_stick_active &&
+               finger.fingerID == left_stick_finger) {
       state.leftx = static_cast<u8>(std::clamp(127 + int((finger.x - stick_origin_x) * 510), 0, 255));
       state.lefty = static_cast<u8>(std::clamp(127 + int((finger.y - stick_origin_y) * 510), 0, 255));
+    } else if (event.type == SDL_EVENT_FINGER_MOTION && camera_active &&
+               finger.fingerID == camera_finger) {
+      state.rightx = static_cast<u8>(std::clamp(127 + int((finger.x - camera_origin_x) * 510), 0, 255));
+      state.righty = static_cast<u8>(std::clamp(127 + int((finger.y - camera_origin_y) * 510), 0, 255));
     } else if ((event.type == SDL_EVENT_FINGER_UP || event.type == SDL_EVENT_FINGER_CANCELED) &&
-               finger.fingerID == left_stick_finger) {
+               left_stick_active && finger.fingerID == left_stick_finger) {
       left_stick_finger = 0;
+      left_stick_active = false;
       state.leftx = 127;
       state.lefty = 127;
     } else if ((event.type == SDL_EVENT_FINGER_UP || event.type == SDL_EVENT_FINGER_CANCELED) &&
-               finger.fingerID == action_finger) {
+               camera_active && finger.fingerID == camera_finger) {
+      camera_finger = 0;
+      camera_active = false;
+      state.rightx = 127;
+      state.righty = 127;
+    } else if ((event.type == SDL_EVENT_FINGER_UP || event.type == SDL_EVENT_FINGER_CANCELED) &&
+               action_active && finger.fingerID == action_finger) {
       action_finger = 0;
-      set_button(&state, Cross, false);
+      action_active = false;
+      set_button(&state, action_button, false);
+      action_button = static_cast<Button>(0);
     } else {
       return;
     }
@@ -215,6 +338,233 @@ struct ShellPadInput {
 };
 
 ShellPadInput g_input;
+std::vector<OttselMetalOverlayVertex> g_touch_overlay;
+bool g_touch_overlay_uploaded = false;
+
+void release_mobile_gamepad(const char* reason) {
+  if (!g_gamepad) {
+    return;
+  }
+  SDL_CloseGamepad(g_gamepad);
+  g_gamepad = nullptr;
+  g_gamepad_id = 0;
+  g_input.neutralize();
+  lg::info("OTTSEL GAMEPAD: pad0 released reason={} state=neutral", reason);
+}
+
+bool acquire_mobile_gamepad(SDL_JoystickID instance_id) {
+  if (g_gamepad) {
+    return false;
+  }
+  SDL_Gamepad* gamepad = SDL_OpenGamepad(instance_id);
+  if (!gamepad) {
+    lg::warn("OTTSEL GAMEPAD: open failed id={} error={}", instance_id, SDL_GetError());
+    return false;
+  }
+  g_gamepad = gamepad;
+  g_gamepad_id = SDL_GetGamepadID(gamepad);
+  lg::info("OTTSEL GAMEPAD: pad0 acquired id={} name={}", g_gamepad_id,
+           SDL_GetGamepadName(gamepad) ? SDL_GetGamepadName(gamepad) : "unknown");
+  return true;
+}
+
+void select_mobile_gamepad() {
+  if (g_gamepad) {
+    return;
+  }
+  int count = 0;
+  SDL_JoystickID* devices = SDL_GetGamepads(&count);
+  for (int i = 0; i < count && !g_gamepad; ++i) {
+    acquire_mobile_gamepad(devices[i]);
+  }
+  SDL_free(devices);
+}
+
+void handle_mobile_gamepad_added(SDL_JoystickID instance_id) {
+  // One stable controller owns pad 0. Additional devices remain available to
+  // SDL but cannot leak events into the selected pad.
+  acquire_mobile_gamepad(instance_id);
+}
+
+void handle_mobile_gamepad_removed(SDL_JoystickID instance_id) {
+  if (!ottsel::platform_input::owns_gamepad_event(g_gamepad_id, instance_id)) {
+    return;
+  }
+  release_mobile_gamepad("disconnect");
+  // SDL may deliver another GAMEPAD_ADDED event after the replacement is
+  // enumerated; select now as well for already-present reconnects.
+  select_mobile_gamepad();
+}
+
+void handle_mobile_gamepad_remapped(SDL_JoystickID instance_id) {
+  if (!ottsel::platform_input::owns_gamepad_event(g_gamepad_id, instance_id)) {
+    return;
+  }
+  // A remap can invalidate the button/axis interpretation while the old
+  // snapshot is still held. Neutralize before reopening the same instance.
+  release_mobile_gamepad("remapped");
+  select_mobile_gamepad();
+}
+
+int touch_region_at(float x, float y) {
+  for (size_t i = 0; i < static_cast<size_t>(TouchRegion::Count); ++i) {
+    const auto& region = g_touch_layout.regions[i];
+    if (x >= region.x && x <= region.x + region.w && y >= region.y &&
+        y <= region.y + region.h) {
+      return static_cast<int>(i);
+    }
+  }
+  return -1;
+}
+
+void load_touch_layout() {
+  if (g_touch_layout_path.empty()) {
+    return;
+  }
+  std::ifstream file(g_touch_layout_path);
+  int version = 0;
+  if (!(file >> version) || version != 1) {
+    return;
+  }
+  TouchLayout candidate = g_touch_layout;
+  if (!(file >> candidate.opacity)) {
+    return;
+  }
+  for (auto& region : candidate.regions) {
+    if (!(file >> region.x >> region.y >> region.w >> region.h)) {
+      return;
+    }
+  }
+  if (!std::isfinite(candidate.opacity) || candidate.opacity < 0.1f || candidate.opacity > 1.f) {
+    return;
+  }
+  for (const auto& region : candidate.regions) {
+    if (!std::isfinite(region.x) || !std::isfinite(region.y) || !std::isfinite(region.w) ||
+        !std::isfinite(region.h) || region.w < 0.03f || region.h < 0.03f || region.x < 0.f ||
+        region.y < 0.f || region.x + region.w > 1.f || region.y + region.h > 1.f) {
+      return;
+    }
+  }
+  g_touch_layout = candidate;
+  lg::info("OTTSEL TOUCH: loaded persistent layout {}", g_touch_layout_path);
+}
+
+void save_touch_layout() {
+  if (g_touch_layout_path.empty()) {
+    return;
+  }
+  std::ofstream file(g_touch_layout_path, std::ios::trunc);
+  if (!file) {
+    lg::warn("OTTSEL TOUCH: unable to save layout {}", g_touch_layout_path);
+    return;
+  }
+  file << "1\n" << std::setprecision(7) << g_touch_layout.opacity << "\n";
+  for (const auto& region : g_touch_layout.regions) {
+    file << region.x << ' ' << region.y << ' ' << region.w << ' ' << region.h << "\n";
+  }
+  lg::info("OTTSEL TOUCH: saved persistent layout {}", g_touch_layout_path);
+}
+
+void build_touch_overlay();
+void upload_touch_overlay();
+
+bool handle_touch_editor(const SDL_Event& event) {
+  if (!g_touch_editor) {
+    return false;
+  }
+  const auto& finger = event.tfinger;
+  if (event.type == SDL_EVENT_FINGER_DOWN && !g_touch_editor_active) {
+    const int region = touch_region_at(finger.x, finger.y);
+    if (region >= 0) {
+      g_touch_editor_active = true;
+      g_touch_editor_finger = finger.fingerID;
+      g_touch_editor_region = static_cast<TouchRegion>(region);
+    }
+    return true;
+  }
+  if (g_touch_editor_active && finger.fingerID == g_touch_editor_finger &&
+      event.type == SDL_EVENT_FINGER_MOTION) {
+    auto& region = g_touch_layout.regions[static_cast<size_t>(g_touch_editor_region)];
+    region.x = std::clamp(finger.x - region.w * 0.5f, 0.f, 1.f - region.w);
+    region.y = std::clamp(finger.y - region.h * 0.5f, 0.f, 1.f - region.h);
+    build_touch_overlay();
+    upload_touch_overlay();
+    return true;
+  }
+  if (g_touch_editor_active && finger.fingerID == g_touch_editor_finger &&
+      (event.type == SDL_EVENT_FINGER_UP || event.type == SDL_EVENT_FINGER_CANCELED)) {
+    g_touch_editor_active = false;
+    g_touch_editor_finger = 0;
+    save_touch_layout();
+    g_input.neutralize();
+    return true;
+  }
+  return true;
+}
+
+void toggle_touch_editor() {
+  g_touch_editor = !g_touch_editor;
+  g_touch_editor_active = false;
+  g_input.neutralize();
+  build_touch_overlay();
+  upload_touch_overlay();
+  lg::info("OTTSEL TOUCH: editor={} layout={}", g_touch_editor ? "on" : "off",
+           g_touch_layout_path);
+}
+
+void adjust_touch_opacity(float delta) {
+  if (!g_touch_editor) {
+    return;
+  }
+  g_touch_layout.opacity = std::clamp(g_touch_layout.opacity + delta, 0.1f, 1.f);
+  build_touch_overlay();
+  upload_touch_overlay();
+  save_touch_layout();
+  lg::info("OTTSEL TOUCH: editor opacity={:.2f}", g_touch_layout.opacity);
+}
+
+void add_touch_rect(float x, float y, float w, float h,
+                    float r, float g, float b, float a) {
+  const float left = x * 2.f - 1.f;
+  const float right = (x + w) * 2.f - 1.f;
+  const float top = 1.f - y * 2.f;
+  const float bottom = 1.f - (y + h) * 2.f;
+  const float color[4] = {r, g, b, a};
+  const float positions[6][2] = {{left, bottom}, {right, bottom}, {right, top},
+                                 {left, bottom}, {right, top}, {left, top}};
+  for (const auto& position : positions) {
+    OttselMetalOverlayVertex vertex = {};
+    vertex.pos[0] = position[0];
+    vertex.pos[1] = position[1];
+    vertex.uv[0] = 0.f;
+    vertex.uv[1] = 0.f;
+    memcpy(vertex.color, color, sizeof(color));
+    g_touch_overlay.push_back(vertex);
+  }
+}
+
+void build_touch_overlay() {
+  g_touch_overlay.clear();
+  constexpr float colors[static_cast<size_t>(TouchRegion::Count)][4] = {
+      {0.20f, 0.70f, 1.0f, 0.20f}, {0.95f, 0.75f, 0.20f, 0.16f},
+      {1.0f, 0.35f, 0.35f, 0.24f}, {1.0f, 0.35f, 0.35f, 0.24f},
+      {1.0f, 0.35f, 0.35f, 0.24f}, {1.0f, 0.35f, 0.35f, 0.24f},
+      {0.95f, 0.65f, 0.20f, 0.22f}, {0.65f, 0.65f, 0.75f, 0.18f},
+      {0.65f, 0.65f, 0.75f, 0.18f}};
+  for (size_t i = 0; i < static_cast<size_t>(TouchRegion::Count); ++i) {
+    const auto& region = g_touch_layout.regions[i];
+    add_touch_rect(region.x, region.y, region.w, region.h, colors[i][0], colors[i][1],
+                   colors[i][2], colors[i][3] * g_touch_layout.opacity);
+  }
+}
+
+void upload_touch_overlay() {
+  if (g_metal && !g_touch_overlay.empty()) {
+    ottsel_metal_set_touch_overlay(g_metal, g_touch_overlay.data(),
+                                   static_cast<unsigned int>(g_touch_overlay.size()));
+    g_touch_overlay_uploaded = true;
+  }
+}
 
 void put_pixel(int x, int y, unsigned char r, unsigned char g, unsigned char b) {
   if (x < 0 || y < 0 || x >= g_surf_w || y >= g_surf_h) {
@@ -308,6 +658,12 @@ void render_surface() {
             g_metal ? "GPU path: Metal" : "GPU path: SDL software",
             g_metal ? 120 : 255, g_metal ? 255 : 90, g_metal ? 120 : 90);
 
+  if (!ottsel_ios_has_user_data()) {
+    draw_text(8 * g_font_scale, 26 * g_font_scale,
+              "DATA: import OttselUserData in Files",
+              255, 210, 90);
+  }
+
   int first = (int)g_lines.size() - kTextLines;
   if (first < 0) {
     first = 0;
@@ -359,8 +715,16 @@ bool on_event_watch(void*, SDL_Event* ev) {
     case SDL_EVENT_DID_ENTER_BACKGROUND:
       // Never leave movement or an action held when the app is suspended.
       g_input.neutralize();
+      snd_PauseAudioOutput();
+      lg::info("OTTSEL LIFECYCLE: background input neutralized and audio paused");
       break;
     case SDL_EVENT_DID_ENTER_FOREGROUND:
+      // A controller can disappear while the app is suspended without a
+      // usable add event reaching the shell. Re-enumerate the selected pad so
+      // reconnect does not require relaunching the app.
+      select_mobile_gamepad();
+      snd_ResumeAudioOutput();
+      lg::info("OTTSEL LIFECYCLE: foreground controller rechecked and audio resumed");
       break;
     default:
       break;
@@ -379,6 +743,7 @@ int main(int argc, char** argv) {
     return 1;
   }
   SDL_AddEventWatch(on_event_watch, nullptr);
+  select_mobile_gamepad();
 
   g_win = SDL_CreateWindow("Ottsel Shell", 1024, 768, 0);
   if (!g_win) {
@@ -386,27 +751,6 @@ int main(int argc, char** argv) {
     return 1;
   }
   g_surf = SDL_GetWindowSurface(g_win);
-
-  // S2.0: Metal presentation path (falls back to the SDL surface if the
-  // Metal device/pipeline cannot be created on this Simulator).
-  g_metal = ottsel_metal_create(g_win);
-  if (g_metal) {
-    fprintf(stderr, "ottsel S2.0: Metal surface active (CAMetalLayer)\n");
-    int dw = 0, dh = 0;
-    if (ottsel_metal_drawable_size(g_metal, &dw, &dh) && dw > 0 && dh > 0) {
-      g_surf_w = dw;
-      g_surf_h = dh;
-      g_rgba.assign((size_t)g_surf_w * g_surf_h * 4, 0);
-      g_font_scale = std::max(3, g_surf_w / 430);
-      fprintf(stderr, "ottsel S2.0: drawable %dx%d font scale %d\n", dw, dh, g_font_scale);
-    }
-  } else {
-    fprintf(stderr, "ottsel S2.0: Metal init failed; using SDL software surface\n");
-  }
-
-  // S2.2: register the shell's Metal instance as the Gfx renderer backend so
-  // the game's texture uploads decode and present through the CAMetalLayer.
-  ottsel_metal_gfx_register(g_metal);
 
   std::string bundle = SDL_GetBasePath();
   ottsel_ios_set_bundle_dir(bundle);
@@ -419,10 +763,49 @@ int main(int argc, char** argv) {
   SDL_free(prefs);
   ottsel_ios_set_writable_dir(writable);
   g_log_path = writable + "ottsel-runtime.log";
+  g_touch_layout_path = writable +
+                        (g_surf_w < 1000 ? "touch-layout-phone.cfg" : "touch-layout-tablet.cfg");
 
   // All runtime log output (lg:: + kernel Msg/printstd) goes to this file;
   // the surface renders its tail.  The iOS app bundle is read-only.
   lg::set_file("ottsel-runtime.log", false, false, writable);
+  lg::info("OTTSEL RUNTIME BOOT: pid={} writable={}", (u32)getpid(), writable);
+  if (std::getenv("OTTSEL_PREPARE_DATA_BEFORE_METAL")) {
+    ottsel_ios_prepare_user_data();
+  }
+
+  // S2.0: Metal presentation path (falls back to the SDL surface if the
+  // Metal device/pipeline cannot be created on this Simulator).
+  // The Simulator's SimMetalHost can terminate a process while the drawable
+  // service is unavailable. Keep a diagnostic SDL-only mode so boot/data
+  // boundaries can be verified independently; the product default remains
+  // the Metal path.
+  const bool disable_metal = std::getenv("OTTSEL_DISABLE_METAL") != nullptr;
+  g_metal = disable_metal ? nullptr : ottsel_metal_create(g_win);
+  if (g_metal) {
+    fprintf(stderr, "ottsel S2.0: Metal surface active (CAMetalLayer)\n");
+    int dw = 0, dh = 0;
+    if (ottsel_metal_drawable_size(g_metal, &dw, &dh) && dw > 0 && dh > 0) {
+      g_surf_w = dw;
+      g_surf_h = dh;
+      g_rgba.assign((size_t)g_surf_w * g_surf_h * 4, 0);
+      g_font_scale = std::max(3, g_surf_w / 430);
+      fprintf(stderr, "ottsel S2.0: drawable %dx%d font scale %d\n", dw, dh, g_font_scale);
+    }
+  } else {
+    fprintf(stderr, "ottsel S2.0: %s; using SDL software surface\n",
+            disable_metal ? "Metal disabled by diagnostic environment" : "Metal init failed");
+  }
+
+  // S2.2: register the shell's Metal instance as the Gfx renderer backend so
+  // the game's texture uploads decode and present through the CAMetalLayer.
+  ottsel_metal_gfx_register(g_metal);
+
+  load_touch_layout();
+  // AU1: start the maintained playback-only 989snd/SDL output substrate.
+  // Game-bank requests remain a separate IOP/OVERLORD integration gate.
+  lg::info("OTTSEL AUDIO: starting playback substrate");
+  snd_StartSoundSystem();
 
   std::thread boot(ottsel_ios_run_boot);
 
@@ -433,43 +816,91 @@ int main(int argc, char** argv) {
         g_quit = true;
       }
       switch (ev.type) {
+        case SDL_EVENT_GAMEPAD_ADDED:
+          handle_mobile_gamepad_added(ev.gdevice.which);
+          break;
+        case SDL_EVENT_GAMEPAD_REMOVED:
+          handle_mobile_gamepad_removed(ev.gdevice.which);
+          break;
+        case SDL_EVENT_GAMEPAD_REMAPPED:
+          handle_mobile_gamepad_remapped(ev.gdevice.which);
+          break;
         case SDL_EVENT_KEY_DOWN:
         case SDL_EVENT_KEY_UP:
-          g_input.keyboard(ev.key.key, ev.type == SDL_EVENT_KEY_DOWN);
+          if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_F6) {
+            toggle_touch_editor();
+          } else if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_LEFTBRACKET) {
+            adjust_touch_opacity(-0.05f);
+          } else if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_RIGHTBRACKET) {
+            adjust_touch_opacity(0.05f);
+          } else {
+            g_input.keyboard(ev.key.key, ev.type == SDL_EVENT_KEY_DOWN);
+          }
           break;
         case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
         case SDL_EVENT_GAMEPAD_BUTTON_UP:
-          g_input.gamepad_button(ev.gbutton.button, ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN);
+          g_input.gamepad_button(ev.gbutton.which, ev.gbutton.button,
+                                 ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN);
           break;
         case SDL_EVENT_GAMEPAD_AXIS_MOTION:
-          g_input.gamepad_axis(ev.gaxis.axis, ev.gaxis.value);
+          g_input.gamepad_axis(ev.gaxis.which, ev.gaxis.axis, ev.gaxis.value);
           break;
         case SDL_EVENT_FINGER_DOWN:
         case SDL_EVENT_FINGER_MOTION:
         case SDL_EVENT_FINGER_UP:
         case SDL_EVENT_FINGER_CANCELED:
-          g_input.touch(ev);
+          if (!handle_touch_editor(ev)) {
+            g_input.touch(ev);
+          }
           break;
         default:
           break;
       }
     }
+    snd_PumpAudioInit();
     // BOT22: file-based input trigger for headless driving — creating
     // <bundle>/ottsel-press-start injects a START press (then the file is
-    // removed).  Complements the tap/key mapping above.
+    // removed).  Prefer the writable app directory; the installed bundle is
+    // read-only on device but remains a useful Simulator diagnostic fallback.
     {
+      const auto trigger_path = [&](const char* name) {
+        std::string writable_path = writable + name;
+        if (access(writable_path.c_str(), F_OK) == 0) {
+          return writable_path;
+        }
+        return bundle + name;
+      };
       static int ottsel_trig_divider = 0;
       if ((++ottsel_trig_divider % 30) == 0) {
-        std::string trig = bundle + "ottsel-press-start";
+        std::string trig = trigger_path("ottsel-press-start");
         if (access(trig.c_str(), F_OK) == 0) {
           unlink(trig.c_str());
-          extern unsigned int g_ottsel_synthetic_buttons;
-          extern int g_ottsel_synthetic_frames;
-          g_ottsel_synthetic_buttons = 0x0008;  // START
-          g_ottsel_synthetic_frames = 30;
-          fprintf(stderr, "ottsel BOT22: synthetic START press (file trigger)\n");
+          g_input.keyboard(SDLK_RETURN, true);
+          g_input.keyboard(SDLK_RETURN, false);
+          fprintf(stderr, "ottsel BOT22: latched START tap (file trigger)\n");
         }
-        std::string bgtrig = bundle + "ottsel-bg-village1";
+        std::string cross_trig = trigger_path("ottsel-press-cross");
+        if (access(cross_trig.c_str(), F_OK) == 0) {
+          unlink(cross_trig.c_str());
+          g_input.keyboard(SDLK_SPACE, true);
+          g_input.keyboard(SDLK_SPACE, false);
+          fprintf(stderr, "ottsel BOT22: latched Cross tap (file trigger)\n");
+        }
+        std::string left_trig = trigger_path("ottsel-press-left");
+        if (access(left_trig.c_str(), F_OK) == 0) {
+          unlink(left_trig.c_str());
+          g_input.keyboard(SDLK_LEFT, true);
+          g_input.keyboard(SDLK_LEFT, false);
+          fprintf(stderr, "ottsel BOT22: latched D-pad-left tap (file trigger)\n");
+        }
+        std::string down_trig = trigger_path("ottsel-press-down");
+        if (access(down_trig.c_str(), F_OK) == 0) {
+          unlink(down_trig.c_str());
+          g_input.keyboard(SDLK_DOWN, true);
+          g_input.keyboard(SDLK_DOWN, false);
+          fprintf(stderr, "ottsel BOT22: latched D-pad-down tap (file trigger)\n");
+        }
+        std::string bgtrig = trigger_path("ottsel-bg-village1");
         if (access(bgtrig.c_str(), F_OK) == 0) {
           unlink(bgtrig.c_str());
           extern int g_ottsel_bg_village1_request;
@@ -493,8 +924,9 @@ int main(int argc, char** argv) {
           g_rgba[i + 3] = 255;
         }
       }
-    }
-    if (g_metal) {
+  }
+  release_mobile_gamepad("shutdown");
+  if (g_metal) {
       // The CAMetalLayer's drawable size is only meaningful after the SDL
       // window finishes layout (at creation it can report a pre-layout
       // value like 480x320).  Re-query each frame and resize the CPU
@@ -513,6 +945,15 @@ int main(int argc, char** argv) {
       // S2.2: once the game backend has decoded a frame (the game's texture
       // uploads through the Metal Gfx module), present that instead of the
       // shell log surface.  The texture is scaled to the drawable.
+      // Defer the first Metal resource allocation until the app has presented
+      // a few frames.  Allocating a new shared buffer from SDL's launch timer
+      // races the Simulator Metal host and aborts the app before it reaches
+      // the foreground.  The layout is static for this first T1 increment;
+      // later editor changes will reset this one-shot upload flag.
+      if (!g_touch_overlay_uploaded && g_frame >= 60) {
+        build_touch_overlay();
+        upload_touch_overlay();
+      }
       const unsigned char* game_frame = nullptr;
       int gw = 0, gh = 0;
       if (ottsel_metal_gfx_game_frame(&game_frame, &gw, &gh)) {
@@ -540,14 +981,17 @@ int main(int argc, char** argv) {
     } else if (g_surf) {
       SDL_UpdateWindowSurface(g_win);
     }
+    ottsel_metal_gfx_signal_vsync();
     SDL_Delay(16);
   }
 
   // ask the dispatcher loop to stop (MasterExit lives in the runtime lib)
   extern void ottsel_ios_stop_dispatch();
   ottsel_ios_stop_dispatch();
+  ottsel_metal_gfx_stop_vsync_waiters();
   boot.join();
 
+  snd_StopSoundSystem();
   SDL_DestroyWindow(g_win);
   ottsel_metal_destroy(g_metal);
   SDL_Quit();

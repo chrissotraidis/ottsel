@@ -1,0 +1,57 @@
+diff --git a/common/dma/ottsel_data_root.h b/common/dma/ottsel_data_root.h
+new file mode 100644
+--- /dev/null
++++ b/common/dma/ottsel_data_root.h
+@@ -0,0 +1,14 @@
++#pragma once
++
++#include <string>
++
++namespace ottsel {
++
++// A validated user pack is authoritative; the bundle is only the clean-install
++// fallback when no user root has been selected.
++inline std::string select_user_data_root(const std::string& selected,
++                                         const std::string& bundle_fallback) {
++  return selected.empty() ? bundle_fallback : selected;
++}
++
++}  // namespace ottsel
+diff --git a/test/test_sprite3_native.cpp b/test/test_sprite3_native.cpp
+--- a/test/test_sprite3_native.cpp
++++ b/test/test_sprite3_native.cpp
+@@ -1,3 +1,4 @@
+ #include "common/dma/ottsel_sprite_math.h"
++#include "common/dma/ottsel_data_root.h"
+ 
+ #include "gtest/gtest.h"
+@@ -14,3 +15,9 @@ TEST(Sprite3Native, PreservesJak1DefaultDepthWritePolicy) {
+ TEST(Sprite3Native, PreservesJak1DefaultDepthWritePolicy) {
+   EXPECT_FALSE(ottsel::sprite3_depth_write_enabled());
+ }
++
++TEST(Sprite3Native, PrefersValidatedUserDataRootForFr3) {
++  EXPECT_EQ("/durable/OttselUserData",
++            ottsel::select_user_data_root("/durable/OttselUserData", "/bundle/iso_data"));
++  EXPECT_EQ("/bundle/iso_data", ottsel::select_user_data_root("", "/bundle/iso_data"));
++}
+diff --git a/src/shell/metal_gfx.mm b/src/shell/metal_gfx.mm
+--- a/src/shell/metal_gfx.mm
++++ b/src/shell/metal_gfx.mm
+@@ -28,3 +28,4 @@
+ #include "common/dma/gs.h"
+ #include "common/dma/ottsel_sprite_math.h"
++#include "common/dma/ottsel_data_root.h"
+ #include "common/dma/ottsel_direct_ir.h"
+@@ -33,1 +34,2 @@
+ #include "metal_shell.h"
++#include "game/sce/sif_ee.h"
+@@ -782,1 +784,4 @@ void load_mobile_level(const std::string& level_name) {
+-  const auto path = ottsel_ios_bundle_dir() + "iso_data/fr3/" + level_name + ".fr3";
++  const char* selected_root = ee::ottsel_iso_data_dir();
++  const std::string root = ottsel::select_user_data_root(
++      selected_root ? selected_root : "", ottsel_ios_bundle_dir() + "iso_data");
++  const auto path = fs::path(root) / "fr3" / (level_name + ".fr3");
+@@ -790,1 +795,1 @@ void load_mobile_level(const std::string& level_name) {
+-    lg::warn("OTTSEL FR3: missing level '{}' at {}", level_name, path);
++    lg::warn("OTTSEL FR3: missing level '{}' at {}", level_name, path.string());

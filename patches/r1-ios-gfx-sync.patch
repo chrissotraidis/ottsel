@@ -1,0 +1,25 @@
+diff --git a/game/ios_stubs.cpp b/game/ios_stubs.cpp
+--- a/game/ios_stubs.cpp
++++ b/game/ios_stubs.cpp
+@@ -76,16 +76,21 @@ u32 sceGsSyncV(u32 mode) {
+   static u32 sync_count = 0;
+   ++g_ottsel_ios_vsync_count;
+   if (sync_count++ < 8 || sync_count == 60) {
+-    lg::info("OTTSEL IOS VSYNC: call={} mode={} (stubbed)", sync_count, mode);
++    lg::info("OTTSEL IOS VSYNC: call={} mode={} renderer-delegated={}", sync_count, mode,
++             Gfx::GetCurrentRenderer() && Gfx::GetCurrentRenderer()->vsync != nullptr);
++  }
++  if (Gfx::GetCurrentRenderer() && Gfx::GetCurrentRenderer()->vsync) {
++    return Gfx::GetCurrentRenderer()->vsync();
+   }
+   return 0;
+ }
+ 
+ u32 sceGsSyncPath(u32 mode, u32 timeout) {
++  if (Gfx::GetCurrentRenderer() && Gfx::GetCurrentRenderer()->sync_path) {
++    return Gfx::GetCurrentRenderer()->sync_path();
++  }
+   (void)mode;
+   (void)timeout;
+   return 0;
+ }

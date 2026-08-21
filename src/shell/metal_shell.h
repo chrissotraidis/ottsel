@@ -23,6 +23,18 @@ typedef struct OttselMetalTieDraw {
   unsigned int mode;
 } OttselMetalTieDraw;
 
+typedef struct OttselMetalSpriteVertex {
+  float pos[2];
+  float uv[2];
+  float color[4];
+} OttselMetalSpriteVertex;
+
+typedef struct OttselMetalOverlayVertex {
+  float pos[2];
+  float uv[2];
+  float color[4];
+} OttselMetalOverlayVertex;
+
 // Create a Metal device/queue/pipeline on the SDL window's CAMetalLayer.
 // Returns nullptr on failure (caller keeps the software fallback).
 OttselMetal* ottsel_metal_create(void* sdl_window);
@@ -43,6 +55,8 @@ void ottsel_metal_destroy(OttselMetal* m);
 // present through the CAMetalLayer.  Returns the registered renderer pointer
 // (or nullptr if the shell has no Metal instance).
 const void* ottsel_metal_gfx_register(void* metal);
+void ottsel_metal_gfx_signal_vsync(void);
+void ottsel_metal_gfx_stop_vsync_waiters(void);
 
 // S2.2: if the game backend decoded a frame, return it (RGBA8, top-left
 // origin) and 1; otherwise return 0.
@@ -84,6 +98,62 @@ void ottsel_metal_set_tfrag_mesh(OttselMetal* m,
 void ottsel_metal_set_tfrag_colors(OttselMetal* m,
                                    const unsigned char* rgba,
                                    unsigned int color_count);
+
+// R1 bounded Sprite3 proof: upload one expanded native quad/triangle list.
+// Positions are already in drawable clip space; no CPU frame is produced.
+void ottsel_metal_set_sprite_mesh(OttselMetal* m,
+                                  const OttselMetalSpriteVertex vertices[6],
+                                  const unsigned char* rgba,
+                                  unsigned int width,
+                                  unsigned int height,
+                                  int blended);
+
+// T1 first increment: draw the visible touch overlay above the native scene.
+// The shared ShellPadInput seam remains the input owner; this only supplies
+// native Metal overlay geometry.
+void ottsel_metal_set_touch_overlay(OttselMetal* m,
+                                    const OttselMetalOverlayVertex* vertices,
+                                    unsigned int vertex_count);
+
+// D3 fixture path: upload one generated RGBA pattern and draw it directly
+// through Metal at a normalized drawable rectangle. This is opt-in and does
+// not consume the CPU-composed frame.
+void ottsel_metal_set_direct_fixture(OttselMetal* m,
+                                     const unsigned char* rgba,
+                                     unsigned int width,
+                                     unsigned int height,
+                                     unsigned long long texture_key,
+                                     float x,
+                                     float y,
+                                     float w,
+                                     float h,
+                                     float u0,
+                                     float v0,
+                                     float u1,
+                                     float v1,
+                                     const float color[4]);
+// Retain a decoded user-data texture by its GS TEX0/TBP identity without
+// activating a draw. Direct state resolution selects from this cache later.
+void ottsel_metal_upload_direct_texture(OttselMetal* m,
+                                        const unsigned char* rgba,
+                                        unsigned int width,
+                                        unsigned int height,
+                                        unsigned long long texture_key);
+void ottsel_metal_clear_direct_fixture(OttselMetal* m);
+void ottsel_metal_set_direct_fixture_state(OttselMetal* m,
+                                           unsigned long long prim,
+                                           unsigned long long tex0,
+                                           unsigned long long tex1,
+                                           unsigned long long clamp,
+                                           unsigned long long frame,
+                                           unsigned long long alpha,
+                                           unsigned long long test,
+                                           unsigned long long zbuf,
+                                           unsigned long long texa,
+                                           unsigned int scissor_x0,
+                                           unsigned int scissor_x1,
+                                           unsigned int scissor_y0,
+                                           unsigned int scissor_y1);
 
 #ifdef __cplusplus
 }

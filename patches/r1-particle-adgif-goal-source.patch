@@ -1,0 +1,25 @@
+diff --git a/goal_src/jak1/engine/gfx/sprite/sparticle/sparticle-launcher.gc b/goal_src/jak1/engine/gfx/sprite/sparticle/sparticle-launcher.gc
+--- a/goal_src/jak1/engine/gfx/sprite/sparticle/sparticle-launcher.gc
++++ b/goal_src/jak1/engine/gfx/sprite/sparticle/sparticle-launcher.gc
+@@ -186,10 +186,21 @@
+ ;; the particle system can modify the adgif shader as part of particle effects.
+ ;; it also is responsible for setting up the adgif.
+ 
++(define *ottsel-particle-adgif-trace-count* 0)
++
+ (defun particle-setup-adgif ((arg0 adgif-shader) (arg1 texture-id))
+   "Set up the adgif for a particle and the given texture."
+   ;; grab the texture
+   (let ((a1-1 (lookup-texture-by-id arg1)))
++    ;; Diagnostic-only producer trace. Keep it bounded and outside the
++    ;; renderer so the selected texture-id and lookup result can be compared
++    ;; with the first mobile/macOS Sprite3 AdGif without changing state.
++    (when (< *ottsel-particle-adgif-trace-count* 32)
++      (format 0 "OTTSEL PARTICLE ADGIF: page=~X index=~X lookup=~A~%"
++              (-> arg1 page)
++              (-> arg1 index)
++              (if a1-1 "hit" "miss"))
++      (+! *ottsel-particle-adgif-trace-count* 1))
+     ;; set up some texture stuff
+     (set! (-> arg0 tex1) (new 'static 'gs-tex1 :mmag #x1 :mmin #x1))
+     (set! (-> arg0 tex0 tfx) 0)

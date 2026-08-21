@@ -1,0 +1,45 @@
+D3 live replay — iPad Pro 11-inch (M4) Simulator, iOS 18.5
+Binary SHA-256: b3695406d51acb3198f815c0244eceda0d1e0b8dc1016e7b2d264f5f132e9e38
+
+Focused tests:
+  goalc-test --gtest_filter='DirectFixture.*'  -> 6/6 PASS
+
+Runtime log:
+  OTTSEL MOBILE DIRECT: trace accepted at chain=588 draw-start=0
+  OTTSEL METAL TEXPAGE: id=0x1cf keyed-direct-textures=122
+  OTTSEL METAL TEXPAGE: id=0x2 keyed-direct-textures=48
+  OTTSEL METAL TEXPAGE: id=0x370 keyed-direct-textures=1
+  OTTSEL METAL TEXPAGE: id=0x100 keyed-direct-textures=3
+  OTTSEL METAL TEXPAGE: id=0x4fe keyed-direct-textures=4
+  OTTSEL METAL TEXPAGE: id=0x3e keyed-direct-textures=12
+  OTTSEL METAL TEXPAGE: id=0x5fc keyed-direct-textures=10
+  OTTSEL METAL RELOCATE: source=0x2786 destination=0x3800 format=0x24 size=128x256
+  OTTSEL METAL RELOCATE: source=0x2746 destination=0x3800 format=0x2c size=128x256
+  OTTSEL METAL RELOCATE: source=0x28c6 destination=0x3980 format=0x24 size=256x512
+  OTTSEL METAL RELOCATE: source=0x27c6 destination=0x3980 format=0x2c size=256x512
+  OTTSEL METAL DIRECT: texture upload source=relocated-vram size=256x512 image-checksum=32990107
+  ottsel metal: Direct IR state prim=0x5c tex0=0x2004280662413980 tex1=0x0 clamp=0x0 frame=0x0 alpha=0x0 test=0x0 zbuf=0x0 texa=0x0 sampler=nearest/repeat texture-lookup=hit blend=enabled alpha-test=disabled/0/0 scissor=0..511,0..447
+  ottsel metal: Direct draw contract draws=1 triangles=2 blend=enabled alpha=0x0 test=0x0 zbuf=0x0 alpha-test=disabled/0/0 final-target=same-pass
+  OTTSEL METAL DIRECT: scissor-emitted=false
+  OTTSEL METAL DIRECT: IR geometry accepted x=31104 y=33856 right=31488 bottom=34112 st=(0.379,0.377)..(0.469,0.438) cpu-raster=0
+
+Metal system log:
+  ottsel metal: Direct IR state tex0=0x2004280662413980 frame=0x80180 texture-lookup=hit scissor=0..511,0..447
+
+Fault scan:
+  ottsel-fault.log bytes=0
+
+Decoder note:
+  PACKED RGBAQ uses the maintained DirectRenderer wire layout: R/G/B/A are
+  the low byte of each 32-bit lane (record offsets 0,4,8,12).
+
+Blend note:
+  D0 PRIM=0x5c has ABE=1; the native path selects the source-alpha /
+  one-minus-source-alpha pipeline. TEST=0 remains disabled for this opaque
+  D0 slice.
+
+Texture lifetime note:
+  Real decoded texture pages are uploaded and retained by GS destination/TEX0
+  key before the Direct draw. The PC_PORT font relocation callback now retains
+  the source page as destination key 0x3980; the D0 replay selected the
+  relocated 256x512 image rather than the generated fallback.

@@ -1,0 +1,494 @@
+diff --git a/scripts/build-ios.sh b/scripts/build-ios.sh
+index 9fa45b8..0b32b5d 100755
+--- a/scripts/build-ios.sh
++++ b/scripts/build-ios.sh
+@@ -227,46 +227,27 @@ cp "$APP_BUILD/OttselShell" "$APP/"
+ cp "$REPO_DIR/src/shell/Info.plist" "$APP/"
+ cp "$WORKTREE/out/jak1/iso/KERNEL.CGO" "$APP/KERNEL.CGO"
+ cp "$WORKTREE/out/jak1/iso/GAME.CGO" "$APP/GAME.CGO"
+-# Ottsel S2.1+ (BOT11/BOT18): the iOS RPC emulation serves the user's local
+-# game data from inside the Simulator sandbox.  Keep these assets local to the
+-# bundle; they are not repository inputs.  STR and TEXT are required by the
+-# title's external-art-buffer, text, and visibility loaders, respectively.
+-mkdir -p "$APP/iso_data/DGO" "$APP/iso_data/CGO" "$APP/iso_data/STR" "$APP/iso_data/TEXT" "$APP/iso_data/VIS" "$APP/iso_data/fr3"
+-for f in "$WORKTREE"/iso_data/jak1/CGO/*.CGO; do
+-  cp "$f" "$APP/iso_data/CGO/" 2>/dev/null || true
+-done
+-for f in "$WORKTREE"/iso_data/jak1/DGO/*.DGO; do
+-  base=$(basename "$f")
+-  # BOT18 regression (2026-08-15): the retail iso_data DGOs use the PS2 v3
+-  # object format (first word 0x0), which the no-emit linker cannot process.
+-  # TIT.DGO and VI1.DGO must stay the RECOMPILED versions copied after this
+-  # loop; skip their retail inputs so they cannot overwrite ARM64 GOAL code.
+-  if [ "$base" = "TIT.DGO" ] || [ "$base" = "VI1.DGO" ]; then
+-    continue
+-  fi
+-  cp "$f" "$APP/iso_data/DGO/" 2>/dev/null || true
+-done
+-# Ship recompiled DGOs LAST so their ARM64 GOAL objects win over retail PS2
+-# v3 code. TIT defines title symbols; VI1 defines start-sequence-a for New Game.
++# F1: keep a fresh build free of user-owned game data. A validated pack is imported
++# through Files into Documents/OttselUserData and promoted to the durable data
++# root at runtime. The empty directory is only a diagnostic fallback for clean
++# installs; never copy local extracted or derived data here.
++rm -rf "$APP/iso_data"
++mkdir -p "$APP/iso_data"
++# These two containers are generated from the open-source GOAL sources, not
++# extracted retail data. They carry the recompiled title/start-sequence code
++# required by the no-emit runtime; all user-owned renderer/audio data remains
++# outside the bundle and arrives through F1 import.
++mkdir -p "$APP/iso_data/DGO"
+ for dgo in TIT.DGO VI1.DGO; do
+   if [ -f "$WORKTREE/out/jak1/iso/$dgo" ]; then
+-    cp "$WORKTREE/out/jak1/iso/$dgo" "$APP/iso_data/DGO/$dgo" 2>/dev/null || true
++    cp "$WORKTREE/out/jak1/iso/$dgo" "$APP/iso_data/DGO/$dgo"
+   fi
+ done
+-for f in "$WORKTREE"/iso_data/jak1/VIS/*.VIS; do
+-  cp "$f" "$APP/iso_data/VIS/" 2>/dev/null || true
+-done
+-for f in "$WORKTREE"/out/jak1/fr3/*.fr3; do
+-  cp "$f" "$APP/iso_data/fr3/" 2>/dev/null || true
+-done
+-for f in "$WORKTREE"/iso_data/jak1/STR/*.STR; do
+-  cp "$f" "$APP/iso_data/STR/" 2>/dev/null || true
+-done
+-for f in "$WORKTREE"/iso_data/jak1/TEXT/*.TXT; do
+-  cp "$f" "$APP/iso_data/TEXT/" 2>/dev/null || true
+-done
+-for f in "$WORKTREE"/out/jak1/iso/*.TXT; do
+-  cp "$f" "$APP/iso_data/TEXT/" 2>/dev/null || true
++mkdir -p "$APP/iso_data/TEXT"
++for text in "$WORKTREE"/out/jak1/iso/*.TXT; do
++  if [ -f "$text" ]; then
++    cp "$text" "$APP/iso_data/TEXT/"
++  fi
+ done
+ plutil -lint "$APP/Info.plist" >/dev/null
+ codesign --force --sign - "$APP"
+diff --git a/src/shell/Info.plist b/src/shell/Info.plist
+index 1833bd5..158c29c 100644
+--- a/src/shell/Info.plist
++++ b/src/shell/Info.plist
+@@ -22,6 +22,10 @@
+ 	<string>1</string>
+ 	<key>LSRequiresIPhoneOS</key>
+ 	<true/>
++	<key>UIFileSharingEnabled</key>
++	<true/>
++	<key>LSSupportsOpeningDocumentsInPlace</key>
++	<true/>
+ 	<key>UIApplicationSupportsIndirectInputEvents</key>
+ 	<true/>
+ 	<key>MinimumOSVersion</key>
+diff --git a/src/shell/ios_boot.cpp b/src/shell/ios_boot.cpp
+index 7ba8bdd..0d8b390 100644
+--- a/src/shell/ios_boot.cpp
++++ b/src/shell/ios_boot.cpp
+@@ -12,17 +12,26 @@
+ #include <cstdio>
+ #include <cstring>
+ #include <csignal>
++#include <algorithm>
++#include <array>
++#include <filesystem>
++#include <fstream>
+ #include <fcntl.h>
++#include <cstdlib>
++#include <set>
+ #include <string>
+ #include <sys/mman.h>
+ #include <ucontext.h>
+ #include <unistd.h>
+ #include <vector>
+ 
++#include <CommonCrypto/CommonDigest.h>
++
+ #include "common/common_types.h"
+ #include "common/goal_constants.h"
+ #include "common/log/log.h"
+ #include "common/symbols.h"
++#include "common/util/FileUtil.h"
+ #include "game/kernel/common/kboot.h"
+ #include "game/kernel/common/kernel_types.h"
+ #include "game/kernel/common/kdgo.h"
+@@ -60,6 +69,227 @@ std::string g_bundle_dir;
+ std::string g_writable_dir;
+ int g_fault_log_fd = -1;
+ 
++namespace fs = std::filesystem;
++
++bool generated_overlay_matches(const fs::path& pack, const std::string& relative) {
++  const bool generated_dgo = relative == "DGO/TIT.DGO" || relative == "DGO/VI1.DGO";
++  const bool generated_text = relative.rfind("TEXT/", 0) == 0 &&
++                              fs::path(relative).extension() == ".TXT";
++  if (!generated_dgo && !generated_text) {
++    return false;
++  }
++  const fs::path source = fs::path(g_bundle_dir) / "iso_data" / relative;
++  const fs::path candidate = pack / relative;
++  std::error_code size_error;
++  if (!fs::is_regular_file(source, size_error) || !fs::is_regular_file(candidate, size_error) ||
++      fs::file_size(source, size_error) != fs::file_size(candidate, size_error) || size_error) {
++    return false;
++  }
++  std::ifstream expected(source, std::ios::binary);
++  std::ifstream actual(candidate, std::ios::binary);
++  std::array<char, 64 * 1024> expected_buffer{};
++  std::array<char, 64 * 1024> actual_buffer{};
++  while (expected && actual) {
++    expected.read(expected_buffer.data(), expected_buffer.size());
++    actual.read(actual_buffer.data(), actual_buffer.size());
++    const auto expected_count = expected.gcount();
++    const auto actual_count = actual.gcount();
++    if (expected_count != actual_count ||
++        !std::equal(expected_buffer.begin(), expected_buffer.begin() + expected_count,
++                    actual_buffer.begin())) {
++      return false;
++    }
++  }
++  return expected.eof() && actual.eof();
++}
++
++bool user_pack_hashes_ok(const fs::path& pack) {
++  const fs::path hashes = pack / "SHA256SUMS";
++  std::ifstream input(hashes);
++  if (!input) {
++    return false;
++  }
++  std::string expected;
++  std::string relative;
++  std::set<std::string> hashed_paths;
++  size_t hash_count = 0;
++  while (input >> expected >> relative) {
++    const fs::path relative_path = fs::path(relative).lexically_normal();
++    const std::string normalized = relative_path.generic_string();
++    if (expected.size() != CC_SHA256_DIGEST_LENGTH * 2 || relative.empty() ||
++        relative_path.is_absolute() || normalized.empty() || normalized == "." ||
++        normalized == ".." || normalized.rfind("../", 0) == 0 ||
++        normalized.find("/../") != std::string::npos ||
++        !hashed_paths.insert(normalized).second) {
++      return false;
++    }
++    std::ifstream file(pack / relative_path, std::ios::binary);
++    if (!file) {
++      return false;
++    }
++    CC_SHA256_CTX context;
++    CC_SHA256_Init(&context);
++    std::array<unsigned char, 64 * 1024> buffer{};
++    while (file) {
++      file.read(reinterpret_cast<char*>(buffer.data()), buffer.size());
++      const auto count = file.gcount();
++      if (count > 0) {
++        CC_SHA256_Update(&context, buffer.data(), static_cast<CC_LONG>(count));
++      }
++    }
++    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
++    CC_SHA256_Final(digest, &context);
++    std::string actual;
++    static constexpr char hex[] = "0123456789abcdef";
++    for (unsigned char value : digest) {
++      actual.push_back(hex[value >> 4]);
++      actual.push_back(hex[value & 0xf]);
++    }
++    if (actual != expected && !generated_overlay_matches(pack, normalized)) {
++      return false;
++    }
++    hash_count++;
++  }
++  if (input.bad() || hash_count == 0) {
++    return false;
++  }
++  constexpr const char* families[] = {"CGO", "DGO", "fr3", "MUS", "SBK", "STR", "TEXT", "VAG", "VIS"};
++  for (const char* family : families) {
++    const fs::path dir = pack / family;
++    for (const auto& entry : fs::recursive_directory_iterator(dir)) {
++      if (entry.is_symlink()) return false;
++      if (entry.is_regular_file()) {
++        const auto relative_file = entry.path().lexically_relative(pack).generic_string();
++        if (!hashed_paths.contains(relative_file) && !generated_overlay_matches(pack, relative_file)) {
++          return false;
++        }
++      }
++    }
++  }
++  return true;
++}
++
++bool user_pack_valid(const fs::path& pack) {
++  std::ifstream manifest(pack / "manifest.txt");
++  std::string header;
++  std::string line;
++  if (!manifest || !std::getline(manifest, header) || header != "OTTSEL_USER_DATA_V1") {
++    return false;
++  }
++  bool version_ok = false;
++  bool data_ok = false;
++  while (std::getline(manifest, line)) {
++    if (line == "pack-version=1") version_ok = true;
++    if (line == "data-version=jak1") data_ok = true;
++  }
++  if (!version_ok || !data_ok) {
++    return false;
++  }
++  // The derived FR3 files are looked up as `root/fr3` by the runtime.  Keep
++  // this spelling case-sensitive so a pack that validates here is actually
++  // consumable on the iOS sandbox filesystem.
++  constexpr const char* families[] = {"CGO", "DGO", "fr3", "MUS", "SBK", "STR", "TEXT", "VAG", "VIS"};
++  for (const char* family : families) {
++    const fs::path dir = pack / family;
++    bool has_file = false;
++    if (!fs::is_directory(dir)) return false;
++    for (const auto& entry : fs::recursive_directory_iterator(dir)) {
++      if (entry.is_symlink()) return false;
++      if (entry.is_regular_file()) has_file = true;
++    }
++    if (!has_file) return false;
++  }
++  return user_pack_hashes_ok(pack);
++}
++
++std::string select_ios_iso_data_dir() {
++  const char* home = std::getenv("HOME");
++  if (!home || !*home) {
++    lg::info("OTTSEL F1: HOME unavailable; using diagnostic bundle data");
++    return g_bundle_dir + "iso_data";
++  }
++  const fs::path imported = fs::path(home) / "Documents" / "OttselUserData";
++  const fs::path durable = fs::path(g_writable_dir) / "OttselUserData";
++  const fs::path staging = fs::path(g_writable_dir) / "OttselUserData.staging";
++  auto valid_pack = [](const fs::path& path) {
++    try {
++      return fs::is_directory(path) && user_pack_valid(path);
++    } catch (const fs::filesystem_error& error) {
++      lg::error("OTTSEL F1: user pack filesystem validation failed: {}", error.what());
++      return false;
++    }
++  };
++
++  // A previously promoted pack is the durable source of truth on relaunch.
++  // A new Documents pack supersedes it only after full validation and a
++  // successful staging/rename transaction.
++  if (!fs::is_directory(imported)) {
++    if (valid_pack(durable)) {
++      lg::info("OTTSEL F1: using durable user pack at {}", durable.string());
++      return durable.string();
++    }
++    lg::info("OTTSEL F1: no user pack at {}; using diagnostic bundle data", imported.string());
++    return g_bundle_dir + "iso_data";
++  }
++  if (!valid_pack(imported)) {
++    if (valid_pack(durable)) {
++      lg::error("OTTSEL F1: rejected user pack at {}; retaining durable pack", imported.string());
++      return durable.string();
++    }
++    lg::error("OTTSEL F1: rejected user pack at {}; using diagnostic bundle data", imported.string());
++    return g_bundle_dir + "iso_data";
++  }
++  std::error_code error;
++  fs::remove_all(staging, error);
++  fs::create_directories(staging, error);
++  fs::copy(imported, staging, fs::copy_options::recursive | fs::copy_options::overwrite_existing,
++           error);
++  if (error) {
++    fs::remove_all(staging, error);
++    lg::error("OTTSEL F1: durable user-pack copy failed: {}", error.message());
++    return g_bundle_dir + "iso_data";
++  }
++  // TIT/VI1 are source-generated GOAL code containers. Overlay them after
++  // copying the user pack so retail DGO files cannot replace the recompiled
++  // title and New Game entry points required by the no-emit runtime.
++  for (const char* generated : {"TIT.DGO", "VI1.DGO"}) {
++    const fs::path source = fs::path(g_bundle_dir) / "iso_data" / "DGO" / generated;
++    const fs::path destination = staging / "DGO" / generated;
++    if (fs::is_regular_file(source)) {
++      fs::create_directories(destination.parent_path(), error);
++      fs::copy_file(source, destination, fs::copy_options::overwrite_existing, error);
++      if (error) {
++        fs::remove_all(staging, error);
++        lg::error("OTTSEL F1: generated code overlay failed: {}", error.message());
++        return g_bundle_dir + "iso_data";
++      }
++    }
++  }
++  const fs::path generated_text = fs::path(g_bundle_dir) / "iso_data" / "TEXT";
++  if (fs::is_directory(generated_text)) {
++    for (const auto& entry : fs::directory_iterator(generated_text)) {
++      if (!entry.is_regular_file() || entry.path().extension() != ".TXT") continue;
++      const fs::path destination = staging / "TEXT" / entry.path().filename();
++      fs::create_directories(destination.parent_path(), error);
++      fs::copy_file(entry.path(), destination, fs::copy_options::overwrite_existing, error);
++      if (error) {
++        fs::remove_all(staging, error);
++        lg::error("OTTSEL F1: generated text overlay failed: {}", error.message());
++        return g_bundle_dir + "iso_data";
++      }
++    }
++  }
++  fs::remove_all(durable, error);
++  fs::rename(staging, durable, error);
++  if (error) {
++    fs::remove_all(staging, error);
++    lg::error("OTTSEL F1: durable user-pack commit failed: {}", error.message());
++    return g_bundle_dir + "iso_data";
++  }
++  lg::info("OTTSEL F1: imported validated user pack into {}", durable.string());
++  return durable.string();
++}
++
+ // The gated fault handler may only use async-signal-safe operations.  Keep
+ // its formatting local and write directly to the app's fault log and stderr.
+ void raw_write(const char* data, size_t size) {
+@@ -1409,6 +1639,11 @@ void ottsel_ios_run_boot() {
+   }
+   lg::debug("OTTSEL_IOS: EE main memory mapped at 0x{:016x}", (u64)g_ee_main_mem);
+   memset(g_ee_main_mem, 0, EE_MAIN_MEM_SIZE);
++  // Resolve and durably promote a Files-imported pack before kernel setup.
++  // Import is independent of the GOAL boot and must remain observable even
++  // when a later renderer/runtime failure terminates the Simulator process.
++  const std::string iso_data_dir = select_ios_iso_data_dir();
++  ee::ottsel_set_iso_data_dir(iso_data_dir.c_str());
+   // Ottsel S2.2 (BOT12): keep the low-EE region readable-zero instead of
+   // PROT_NONE.  The PS2 has no MMU: game code legitimately reads low memory
+   // through default-initialized/null pointers (e.g. vector<-cspace! reads
+@@ -1431,6 +1666,11 @@ void ottsel_ios_run_boot() {
+   klisten_init_globals();
+   jak1::klisten_init_globals();
+   kmemcard_init_globals();
++  // Keep raw Jak save banks inside the app-owned durable container. This is
++  // the same writable root used by the validated user-data import and avoids
++  // relying on the process working directory on iOS.
++  file_util::override_user_config_dir(g_writable_dir, true);
++  lg::info("OTTSEL F1: save root={}", file_util::get_user_memcard_dir(GameVersion::Jak1).string());
+   // Ottsel S2.1 (BOT11): the native boot (jak1/kboot.cpp goal_main) calls
+   // init_crc() before InitMachine(); the iOS shell skips goal_main, so the
+   // CRC table stayed all zeros.  Symbol interning is self-consistent with a
+@@ -1445,9 +1685,8 @@ void ottsel_ios_run_boot() {
+   // ---- boot the kernel (IOP/gfx/sound/listener are OTTSEL_IOS-stubbed) ----
+   MasterDebug = 0;
+   MasterUseKernel = 1;
+-  // Ottsel S2.1 (BOT11): serve DGO/CGO loads from the bundle's iso_data copy
+-  // (the host iso_data tree is not reachable from the Simulator sandbox).
+-  ee::ottsel_set_iso_data_dir((g_bundle_dir + "iso_data").c_str());
++  // Ottsel S2.1 (BOT11): serve DGO/CGO loads from the selected user pack or
++  // the clean-install diagnostic bundle fallback.
+   if (jak1::InitMachine() >= 0) {
+     // Match the native boot order: linking GAME invokes Mips2C callbacks,
+     // so register their C exports while arena B is writable, then seal it
+diff --git a/scripts/validate-user-data-pack.sh b/scripts/validate-user-data-pack.sh
+new file mode 100755
+index 0000000..991060e
+--- /dev/null
++++ b/scripts/validate-user-data-pack.sh
+@@ -0,0 +1,110 @@
++#!/usr/bin/env bash
++# Validate a user-owned Jak 1 data pack before an app-side Files import.
++# This script never copies, packages, or embeds the pack.
++
++set -euo pipefail
++
++if [[ $# -ne 1 ]]; then
++  echo "usage: $0 /path/to/user-data-pack" >&2
++  exit 2
++fi
++
++pack=$(cd "$1" 2>/dev/null && pwd) || {
++  echo "F1: pack directory does not exist: $1" >&2
++  exit 1
++}
++
++manifest="$pack/manifest.txt"
++if [[ ! -f "$manifest" ]]; then
++  echo "F1: missing manifest.txt" >&2
++  exit 1
++fi
++
++read -r header < "$manifest"
++if [[ "$header" != "OTTSEL_USER_DATA_V1" ]]; then
++  echo "F1: unsupported manifest header: $header" >&2
++  exit 1
++fi
++
++pack_version=""
++data_version=""
++while IFS='=' read -r key value; do
++  [[ -z "$key" || "$key" == \#* ]] && continue
++  case "$key" in
++    pack-version) pack_version="$value" ;;
++    data-version) data_version="$value" ;;
++    *) echo "F1: unknown manifest key: $key" >&2; exit 1 ;;
++  esac
++done < <(tail -n +2 "$manifest")
++
++if [[ "$pack_version" != "1" || "$data_version" != "jak1" ]]; then
++  echo "F1: expected pack-version=1 and data-version=jak1" >&2
++  exit 1
++fi
++
++# These families are required by the real title-to-Village1 route and the
++# playback-only audio boundary. The validator checks presence and non-empty
++# contents only; the user-supplied SHA256SUMS file below provides the exact
++# content contract without exposing protected data to this repository.
++# Keep the derived FR3 directory spelling aligned with the runtime's
++# case-sensitive lookup (`root / "fr3"`).  The extracted disc families retain
++# their conventional uppercase directory names.
++required_families=(CGO DGO fr3 MUS SBK STR TEXT VAG VIS)
++for family in "${required_families[@]}"; do
++  dir="$pack/$family"
++  if [[ ! -d "$dir" || -L "$dir" ]] || ! find -P "$dir" -type f -print -quit | grep -q .; then
++    echo "F1: required family is missing or empty: $family" >&2
++    exit 1
++  fi
++done
++
++hashes="$pack/SHA256SUMS"
++if [[ ! -f "$hashes" ]]; then
++  echo "F1: missing SHA256SUMS" >&2
++  exit 1
++fi
++if ! awk '
++  length($1) != 64 { exit 1 }
++  { path = $0; sub(/^[^[:space:]]+[[:space:]]+/, "", path)
++    if (path ~ /^\// || path ~ /(^|\/)\.\.(\/|$)/) exit 1 }
++' "$hashes"; then
++  echo "F1: SHA256SUMS contains an invalid or escaping path" >&2
++  exit 1
++fi
++if ! awk 'NF >= 2 { found = 1 } END { exit found ? 0 : 1 }' "$hashes"; then
++  echo "F1: SHA256SUMS is empty" >&2
++  exit 1
++fi
++if ! (cd "$pack" && shasum -a 256 -c SHA256SUMS >/dev/null); then
++  echo "F1: SHA256SUMS verification failed" >&2
++  exit 1
++fi
++
++hash_paths=$(awk 'NF >= 2 { print $2 }' "$hashes" | sed 's#^\./##' | sort -u)
++while IFS= read -r file; do
++  relative=${file#"$pack"/}
++  if ! grep -Fqx "$relative" <<<"$hash_paths"; then
++    echo "F1: SHA256SUMS does not cover $relative" >&2
++    exit 1
++  fi
++done < <(find -P "$pack" \( -path "$pack/CGO/*" -o -path "$pack/DGO/*" -o -path "$pack/fr3/*" \
++  -o -path "$pack/MUS/*" -o -path "$pack/SBK/*" -o -path "$pack/STR/*" \
++  -o -path "$pack/TEXT/*" -o -path "$pack/VAG/*" -o -path "$pack/VIS/*" \) \
++  -type f -print)
++
++if [[ -e "$pack/iso" ]] || compgen -G "$pack/*.iso" >/dev/null; then
++  echo "F1: pass must contain extracted families, not an ISO" >&2
++  exit 1
++fi
++
++if ! command -v df >/dev/null; then
++  echo "F1: df is required for available-space validation" >&2
++  exit 1
++fi
++available_kb=$(df -Pk "$pack" | awk 'NR==2 {print $4}')
++if [[ -z "$available_kb" || "$available_kb" -lt 1048576 ]]; then
++  echo "F1: less than 1 GiB is available at the pack volume" >&2
++  exit 1
++fi
++
++echo "F1: manifest/data-family/space validation passed: $pack"

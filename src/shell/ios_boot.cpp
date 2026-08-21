@@ -1,8 +1,9 @@
 // Ottsel S1.3 — no-emit runtime boot driver for iOS.
 //
 // Mirrors the host boot (runtime.cpp + jak1::kboot) minus the subsystems the
-// headless shell does not have: no IOP/OVERLORD, no graphics, no sound, no
-// listener/REPL.  KERNEL.CGO is read from the app bundle and linked by the
+// headless shell does not have: no IOP/OVERLORD, no graphics, no listener/REPL.
+// Playback output is owned by the SDL-backed sound substrate in the shell;
+// KERNEL.CGO is read from the app bundle and linked by the
 // no-emit linker; code pages flip RW -> RX exactly like the host H3 proof.
 
 #include "ios_boot.h"
@@ -12,17 +13,27 @@
 #include <cstdio>
 #include <cstring>
 #include <csignal>
+#include <algorithm>
+#include <array>
+#include <filesystem>
+#include <fstream>
 #include <fcntl.h>
+#include <cstdlib>
+#include <set>
 #include <string>
+#include <thread>
 #include <sys/mman.h>
 #include <ucontext.h>
 #include <unistd.h>
 #include <vector>
 
+#include <CommonCrypto/CommonDigest.h>
+
 #include "common/common_types.h"
 #include "common/goal_constants.h"
 #include "common/log/log.h"
 #include "common/symbols.h"
+#include "common/util/FileUtil.h"
 #include "game/kernel/common/kboot.h"
 #include "game/kernel/common/kernel_types.h"
 #include "game/kernel/common/kdgo.h"
@@ -41,8 +52,12 @@
 #include "game/kernel/jak1/kmachine.h"
 #include "game/kernel/jak1/kscheme.h"
 #include "game/mips2c/mips2c_table.h"
+#include "game/overlord/common/fake_iso.h"
+#include "game/overlord/common/sbank.h"
+#include "game/overlord/jak1/fake_iso.h"
 #include "game/runtime.h"
 #include "game/sce/sif_ee.h"
+#include "game/sound/sndshim.h"
 
 // Ottsel A1.0 bounded trace (TEMPORARY): ring buffer written by the goalc
 // IR_FunctionCall shim via the 'ottsel-goal-call-trace' C export.
@@ -58,7 +73,459 @@ namespace {
 
 std::string g_bundle_dir;
 std::string g_writable_dir;
+std::string g_prepared_iso_data_dir;
+bool g_has_user_data = false;
 int g_fault_log_fd = -1;
+
+namespace fs = std::filesystem;
+
+bool generated_overlay_matches(const fs::path& pack, const std::string& relative) {
+  const bool generated_dgo = relative == "DGO/TIT.DGO" || relative == "DGO/VI1.DGO";
+  const bool generated_text = relative.rfind("TEXT/", 0) == 0 &&
+                              fs::path(relative).extension() == ".TXT";
+  if (!generated_dgo && !generated_text) {
+    return false;
+  }
+  const fs::path source = fs::path(g_bundle_dir) / "iso_data" / relative;
+  const fs::path candidate = pack / relative;
+  std::error_code size_error;
+  if (!fs::is_regular_file(source, size_error) || !fs::is_regular_file(candidate, size_error) ||
+      fs::file_size(source, size_error) != fs::file_size(candidate, size_error) || size_error) {
+    return false;
+  }
+  std::ifstream expected(source, std::ios::binary);
+  std::ifstream actual(candidate, std::ios::binary);
+  std::array<char, 64 * 1024> expected_buffer{};
+  std::array<char, 64 * 1024> actual_buffer{};
+  while (expected && actual) {
+    expected.read(expected_buffer.data(), expected_buffer.size());
+    actual.read(actual_buffer.data(), actual_buffer.size());
+    const auto expected_count = expected.gcount();
+    const auto actual_count = actual.gcount();
+    if (expected_count != actual_count ||
+        !std::equal(expected_buffer.begin(), expected_buffer.begin() + expected_count,
+                    actual_buffer.begin())) {
+      return false;
+    }
+  }
+  return expected.eof() && actual.eof();
+}
+
+bool user_pack_hashes_ok(const fs::path& pack) {
+  const fs::path hashes = pack / "SHA256SUMS";
+  std::ifstream input(hashes);
+  if (!input) {
+    return false;
+  }
+  std::string expected;
+  std::string relative;
+  std::set<std::string> hashed_paths;
+  size_t hash_count = 0;
+  while (input >> expected >> relative) {
+    const fs::path relative_path = fs::path(relative).lexically_normal();
+    const std::string normalized = relative_path.generic_string();
+    if (expected.size() != CC_SHA256_DIGEST_LENGTH * 2 || relative.empty() ||
+        relative_path.is_absolute() || normalized.empty() || normalized == "." ||
+        normalized == ".." || normalized.rfind("../", 0) == 0 ||
+        normalized.find("/../") != std::string::npos ||
+        !hashed_paths.insert(normalized).second) {
+      return false;
+    }
+    std::ifstream file(pack / relative_path, std::ios::binary);
+    if (!file) {
+      return false;
+    }
+    CC_SHA256_CTX context;
+    CC_SHA256_Init(&context);
+    std::array<unsigned char, 64 * 1024> buffer{};
+    while (file) {
+      file.read(reinterpret_cast<char*>(buffer.data()), buffer.size());
+      const auto count = file.gcount();
+      if (count > 0) {
+        CC_SHA256_Update(&context, buffer.data(), static_cast<CC_LONG>(count));
+      }
+    }
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256_Final(digest, &context);
+    std::string actual;
+    static constexpr char hex[] = "0123456789abcdef";
+    for (unsigned char value : digest) {
+      actual.push_back(hex[value >> 4]);
+      actual.push_back(hex[value & 0xf]);
+    }
+    if (actual != expected && !generated_overlay_matches(pack, normalized)) {
+      return false;
+    }
+    hash_count++;
+  }
+  if (input.bad() || hash_count == 0) {
+    return false;
+  }
+  constexpr const char* families[] = {"CGO", "DGO", "fr3", "MUS", "SBK", "STR", "TEXT", "VAG", "VIS"};
+  for (const char* family : families) {
+    const fs::path dir = pack / family;
+    for (const auto& entry : fs::recursive_directory_iterator(dir)) {
+      if (entry.is_symlink()) return false;
+      if (entry.is_regular_file()) {
+        const auto relative_file = entry.path().lexically_relative(pack).generic_string();
+        if (!hashed_paths.contains(relative_file) && !generated_overlay_matches(pack, relative_file)) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+bool user_pack_valid(const fs::path& pack) {
+  std::ifstream manifest(pack / "manifest.txt");
+  std::string header;
+  std::string line;
+  if (!manifest || !std::getline(manifest, header) || header != "OTTSEL_USER_DATA_V1") {
+    return false;
+  }
+  bool version_ok = false;
+  bool data_ok = false;
+  while (std::getline(manifest, line)) {
+    if (line == "pack-version=1") version_ok = true;
+    if (line == "data-version=jak1") data_ok = true;
+  }
+  if (!version_ok || !data_ok) {
+    return false;
+  }
+  // The derived FR3 files are looked up as `root/fr3` by the runtime.  Keep
+  // this spelling case-sensitive so a pack that validates here is actually
+  // consumable on the iOS sandbox filesystem.
+  constexpr const char* families[] = {"CGO", "DGO", "fr3", "MUS", "SBK", "STR", "TEXT", "VAG", "VIS"};
+  for (const char* family : families) {
+    const fs::path dir = pack / family;
+    bool has_file = false;
+    if (!fs::is_directory(dir)) return false;
+    for (const auto& entry : fs::recursive_directory_iterator(dir)) {
+      if (entry.is_symlink()) return false;
+      if (entry.is_regular_file()) has_file = true;
+    }
+    if (!has_file) return false;
+  }
+  return user_pack_hashes_ok(pack);
+}
+
+std::string select_ios_iso_data_dir() {
+  g_has_user_data = false;
+  const char* home = std::getenv("HOME");
+  if (!home || !*home) {
+    lg::info("OTTSEL F1: HOME unavailable; using diagnostic bundle data");
+    return g_bundle_dir + "iso_data";
+  }
+  const fs::path imported = fs::path(home) / "Documents" / "OttselUserData";
+  const fs::path durable = fs::path(g_writable_dir) / "OttselUserData";
+  const fs::path staging = fs::path(g_writable_dir) / "OttselUserData.staging";
+  auto valid_pack = [](const fs::path& path) {
+    try {
+      return fs::is_directory(path) && user_pack_valid(path);
+    } catch (const fs::filesystem_error& error) {
+      lg::error("OTTSEL F1: user pack filesystem validation failed: {}", error.what());
+      return false;
+    }
+  };
+
+  // A previously promoted pack is the durable source of truth on relaunch.
+  // A new Documents pack supersedes it only after full validation and a
+  // successful staging/rename transaction.
+  if (!fs::is_directory(imported)) {
+    if (valid_pack(durable)) {
+      g_has_user_data = true;
+      lg::info("OTTSEL F1: using durable user pack at {}", durable.string());
+      return durable.string();
+    }
+    lg::info("OTTSEL F1: no user pack at {}; using diagnostic bundle data", imported.string());
+    return g_bundle_dir + "iso_data";
+  }
+  if (!valid_pack(imported)) {
+    if (valid_pack(durable)) {
+      g_has_user_data = true;
+      lg::error("OTTSEL F1: rejected user pack at {}; retaining durable pack", imported.string());
+      return durable.string();
+    }
+    lg::error("OTTSEL F1: rejected user pack at {}; using diagnostic bundle data", imported.string());
+    return g_bundle_dir + "iso_data";
+  }
+  std::error_code error;
+  fs::remove_all(staging, error);
+  fs::create_directories(staging, error);
+  fs::copy(imported, staging, fs::copy_options::recursive | fs::copy_options::overwrite_existing,
+           error);
+  if (error) {
+    fs::remove_all(staging, error);
+    lg::error("OTTSEL F1: durable user-pack copy failed: {}", error.message());
+    return g_bundle_dir + "iso_data";
+  }
+  // TIT/VI1 are source-generated GOAL code containers. Overlay them after
+  // copying the user pack so retail DGO files cannot replace the recompiled
+  // title and New Game entry points required by the no-emit runtime.
+  for (const char* generated : {"TIT.DGO", "VI1.DGO"}) {
+    const fs::path source = fs::path(g_bundle_dir) / "iso_data" / "DGO" / generated;
+    const fs::path destination = staging / "DGO" / generated;
+    if (fs::is_regular_file(source)) {
+      fs::create_directories(destination.parent_path(), error);
+      fs::copy_file(source, destination, fs::copy_options::overwrite_existing, error);
+      if (error) {
+        fs::remove_all(staging, error);
+        lg::error("OTTSEL F1: generated code overlay failed: {}", error.message());
+        return g_bundle_dir + "iso_data";
+      }
+    }
+  }
+  const fs::path generated_text = fs::path(g_bundle_dir) / "iso_data" / "TEXT";
+  if (fs::is_directory(generated_text)) {
+    for (const auto& entry : fs::directory_iterator(generated_text)) {
+      if (!entry.is_regular_file() || entry.path().extension() != ".TXT") continue;
+      const fs::path destination = staging / "TEXT" / entry.path().filename();
+      fs::create_directories(destination.parent_path(), error);
+      fs::copy_file(entry.path(), destination, fs::copy_options::overwrite_existing, error);
+      if (error) {
+        fs::remove_all(staging, error);
+        lg::error("OTTSEL F1: generated text overlay failed: {}", error.message());
+        return g_bundle_dir + "iso_data";
+      }
+    }
+  }
+  fs::remove_all(durable, error);
+  fs::rename(staging, durable, error);
+  if (error) {
+    fs::remove_all(staging, error);
+    lg::error("OTTSEL F1: durable user-pack commit failed: {}", error.message());
+    return g_bundle_dir + "iso_data";
+  }
+  g_has_user_data = true;
+  lg::info("OTTSEL F1: imported validated user pack into {}", durable.string());
+  return durable.string();
+}
+
+void prepare_user_data_impl() {
+  if (!g_prepared_iso_data_dir.empty()) {
+    return;
+  }
+  g_prepared_iso_data_dir = select_ios_iso_data_dir();
+  lg::info("OTTSEL BOOT PHASE: user-data root prepared before Metal");
+}
+
+void maybe_probe_user_sound_bank(const std::string& iso_data_dir) {
+  const char* bank_enabled = std::getenv("OTTSEL_AUDIO_BANK_PROBE");
+  const char* music_enabled = std::getenv("OTTSEL_AUDIO_MUSIC_PROBE");
+  const char* vag_enabled = std::getenv("OTTSEL_AUDIO_VAG_PROBE");
+  const bool bank_requested = bank_enabled && bank_enabled[0] == '1';
+  const bool music_requested = music_enabled && music_enabled[0] == '1';
+  const bool vag_requested = vag_enabled && vag_enabled[0] == '1';
+  if (!bank_requested && !music_requested && !vag_requested) {
+    return;
+  }
+
+  if (bank_requested) {
+    constexpr u64 kSoundNameTableOffset = 10 * 2048;
+    const fs::path bank_path = fs::path(iso_data_dir) / "SBK" / "COMMON.SBK";
+    std::error_code error;
+    const u64 size = fs::file_size(bank_path, error);
+    if (error || size <= kSoundNameTableOffset) {
+      lg::warn("OTTSEL AUDIO: bank probe unavailable path={} size={} error={}",
+               bank_path.string(), size, error.message());
+      return;
+    }
+
+    const std::string bank_root = bank_path.parent_path().string();
+    fake_iso_set_root(bank_root);
+    fake_iso_init_globals();
+    jak1::fake_iso_init_globals();
+    if (fake_iso_FS_Init() < 0) {
+      lg::error("OTTSEL AUDIO: fake-ISO bank probe failed to initialize {}", bank_root);
+      return;
+    }
+    SoundBank sound_bank{};
+    char bank_name[] = "COMMON";
+    if (jak1::FS_LoadSoundBank(bank_name, &sound_bank) != 0 || !sound_bank.bank_handle) {
+      lg::error("OTTSEL AUDIO: fake-ISO bank probe failed to load {}", bank_path.string());
+      return;
+    }
+    snd_ResolveBankXREFS();
+    lg::info("OTTSEL AUDIO: fake-ISO bank probe loaded {} offset={} bytes={}", bank_path.string(),
+             kSoundNameTableOffset, size);
+    const s32 sound = snd_PlaySoundVolPanPMPB(sound_bank.bank_handle, 0, 0x400, 0, 0, 0);
+    lg::info("OTTSEL AUDIO: bank probe requested bank-sound=0 handle={}", sound);
+  }
+
+  if (music_requested) {
+    const fs::path music_path = fs::path(iso_data_dir) / "MUS" / "VILLAGE1.MUS";
+    std::error_code error;
+    const u64 music_size = fs::file_size(music_path, error);
+    const std::string music_root = music_path.parent_path().string();
+    fake_iso_set_root(music_root);
+    fake_iso_init_globals();
+    jak1::fake_iso_init_globals();
+    if (fake_iso_FS_Init() < 0 || error || music_size == 0) {
+      lg::error("OTTSEL AUDIO: fake-ISO music probe unavailable path={} size={} error={}",
+                music_path.string(), music_size, error.message());
+      return;
+    }
+    snd::BankHandle music_bank = nullptr;
+    char music_name[] = "VILLAGE1";
+    if (jak1::FS_LoadMusic(music_name, &music_bank) != 0 || !music_bank) {
+      lg::error("OTTSEL AUDIO: fake-ISO music probe failed to load {}", music_path.string());
+      return;
+    }
+    const s32 music_sound = snd_PlaySoundVolPanPMPB(music_bank, 0, 0x400, 0, 0, 0);
+    lg::info("OTTSEL AUDIO: fake-ISO music probe loaded {} bytes={} handle={}",
+             music_path.string(), music_size, music_sound);
+  }
+
+  if (vag_requested) {
+    const fs::path vag_root = fs::path(iso_data_dir) / "VAG";
+    const fs::path dir_path = vag_root / "VAGDIR.AYB";
+    const fs::path wad_path = vag_root / "VAGWAD.ENG";
+    const auto dir_data = file_util::read_binary_file(dir_path.string());
+    constexpr size_t kVagDirHeaderAndEntry = sizeof(u32) + sizeof(char[8]) + sizeof(u32);
+    if (dir_data.size() < kVagDirHeaderAndEntry) {
+      lg::error("OTTSEL AUDIO: VAG probe directory unavailable {} bytes={}",
+                dir_path.string(), dir_data.size());
+      return;
+    }
+    u32 vag_count = 0;
+    memcpy(&vag_count, dir_data.data(), sizeof(vag_count));
+    constexpr u32 kMaxVagEntries = 868;
+    const size_t entry_bytes = sizeof(char[8]) + sizeof(u32);
+    if (vag_count == 0 || vag_count > kMaxVagEntries ||
+        dir_data.size() < sizeof(u32) + (size_t)vag_count * entry_bytes) {
+      lg::error("OTTSEL AUDIO: VAG probe invalid directory count={} bytes={}", vag_count,
+                dir_data.size());
+      return;
+    }
+    // Short directory records are marker clips. Use the maintained long-form
+    // stream so the first diagnostic chunk can exercise decode over time.
+    const u32 entry_index = vag_count > 106 ? 106 : (vag_count > 1 ? 1 : 0);
+    std::array<char, 8> entry_name{};
+    u32 entry_offset = 0;
+    const u8* entry_data = dir_data.data() + sizeof(u32) + entry_index * entry_bytes;
+    memcpy(entry_name.data(), entry_data, entry_name.size());
+    memcpy(&entry_offset, entry_data + entry_name.size(), sizeof(entry_offset));
+    fake_iso_set_root(vag_root.string());
+    fake_iso_init_globals();
+    jak1::fake_iso_init_globals();
+    if (fake_iso_FS_Init() < 0) {
+      lg::error("OTTSEL AUDIO: VAG probe fake-ISO init failed {}", vag_root.string());
+      return;
+    }
+    FileRecord* wad = FS_Find("VAGWAD.ENG");
+    if (!wad || !fs::exists(wad_path)) {
+      lg::error("OTTSEL AUDIO: VAG probe WAD unavailable {}", wad_path.string());
+      return;
+    }
+    jak1::LoadStackEntry* stream = jak1::FS_OpenWad(wad, entry_offset);
+    constexpr size_t kVagChunkBytes = 0x6000;
+    constexpr u32 kMaxDiagnosticVagBytes = 16 * 1024 * 1024;
+    std::vector<u8> stream_data(kVagChunkBytes);
+    u32 read_status = 0;
+    size_t chunks_read = 0;
+    if (stream) {
+      read_status = jak1::FS_BeginRead(stream, stream_data.data(), (s32)kVagChunkBytes);
+      chunks_read = 1;
+    }
+    bool vag_header = stream_data.size() >= 4 &&
+                      (memcmp(stream_data.data(), "VAGp", 4) == 0 ||
+                       memcmp(stream_data.data(), "pGAV", 4) == 0);
+    u32 data_bytes = 0;
+    if (vag_header && stream_data.size() >= 0x10) {
+      data_bytes = ((u32)stream_data[0x0c] << 24) | ((u32)stream_data[0x0d] << 16) |
+                   ((u32)stream_data[0x0e] << 8) | (u32)stream_data[0x0f];
+      const u32 padded_data_bytes = (data_bytes + 15) & ~15u;
+      const size_t total_bytes = 48ull + padded_data_bytes;
+      const size_t chunk_count = (total_bytes + kVagChunkBytes - 1) / kVagChunkBytes;
+      if (data_bytes == 0 || data_bytes > kMaxDiagnosticVagBytes || chunk_count == 0) {
+        lg::error("OTTSEL AUDIO: VAG probe invalid data-bytes={}", data_bytes);
+        if (stream) {
+          jak1::FS_Close(stream);
+        }
+        return;
+      }
+      const char* refill_enabled = std::getenv("OTTSEL_AUDIO_VAG_REFILL_PROBE");
+      if (refill_enabled && refill_enabled[0] == '1' && stream) {
+        constexpr size_t kInitialVagChunks = 8;
+        const size_t initial_chunks = std::min(kInitialVagChunks, chunk_count);
+        stream_data.resize(initial_chunks * kVagChunkBytes);
+        for (size_t i = 1; i < initial_chunks; i++) {
+          read_status = jak1::FS_BeginRead(stream, stream_data.data() + i * kVagChunkBytes,
+                                           (s32)kVagChunkBytes);
+          chunks_read++;
+        }
+        const u32 sample_rate = ((u32)stream_data[0x10] << 24) |
+                                ((u32)stream_data[0x11] << 16) |
+                                ((u32)stream_data[0x12] << 8) | (u32)stream_data[0x13];
+        auto sample = std::make_shared<std::vector<u16>>(padded_data_bytes / sizeof(u16));
+        const size_t initial_payload = std::min<size_t>(padded_data_bytes,
+                                                        stream_data.size() - 48);
+        memcpy(sample->data(), stream_data.data() + 48, initial_payload);
+        const bool voice_started =
+            snd_StartVAGProbeShared(sample, (u32)sample->size(), sample_rate);
+        std::thread([stream, sample, initial_chunks, chunk_count, padded_data_bytes,
+                     entry_name]() mutable {
+          constexpr size_t kChunkBytes = 0x6000;
+          std::vector<u8> chunk(kChunkBytes);
+          size_t produced = initial_chunks;
+          for (size_t i = initial_chunks; i < chunk_count; i++) {
+            const u32 status = jak1::FS_BeginRead(stream, chunk.data(), (s32)kChunkBytes);
+            const size_t dst = initial_chunks * kChunkBytes - 48 +
+                               (i - initial_chunks) * kChunkBytes;
+            if (dst < padded_data_bytes) {
+              const size_t copy_bytes = std::min(kChunkBytes, (size_t)padded_data_bytes - dst);
+              memcpy(reinterpret_cast<u8*>(sample->data()) + dst, chunk.data(), copy_bytes);
+            }
+            produced++;
+            if (status != CMD_STATUS_IN_PROGRESS) {
+              lg::warn("OTTSEL AUDIO: VAG refill read status={} chunk={}", status, i);
+            }
+          }
+          if (sample->size() >= 8) {
+            sample->at(sample->size() - 8) |= 0x0100;
+          }
+          jak1::FS_Close(stream);
+          lg::info("OTTSEL AUDIO: VAG refill producer finished entry={} chunks={} bytes={}",
+                   std::string(entry_name.data(), strnlen(entry_name.data(), entry_name.size())),
+                   produced, padded_data_bytes);
+        }).detach();
+        lg::info("OTTSEL AUDIO: VAG refill producer started entry={} initial-chunks={} total-chunks={} bytes={} voice={}",
+                 std::string(entry_name.data(), strnlen(entry_name.data(), entry_name.size())),
+                 initial_chunks, chunk_count, padded_data_bytes, voice_started ? "started" : "failed");
+        return;
+      }
+      stream_data.resize(chunk_count * kVagChunkBytes);
+      if (stream) {
+        for (size_t i = 1; i < chunk_count; i++) {
+          read_status = jak1::FS_BeginRead(stream, stream_data.data() + i * kVagChunkBytes,
+                                           (s32)kVagChunkBytes);
+          chunks_read++;
+        }
+      }
+      stream_data.resize(total_bytes);
+    }
+    if (stream) {
+      jak1::FS_Close(stream);
+    }
+    u32 sample_rate = ((u32)stream_data[0x10] << 24) | ((u32)stream_data[0x11] << 16) |
+                      ((u32)stream_data[0x12] << 8) | (u32)stream_data[0x13];
+    bool voice_started = false;
+    if (vag_header && stream_data.size() > 48) {
+      voice_started = snd_StartVAGProbe(stream_data.data() + 48,
+                                         (u32)stream_data.size() - 48, sample_rate);
+    }
+    lg::info("OTTSEL AUDIO: VAG probe entry={} offset={} wad-bytes={} data-bytes={} chunks={} bytes={} read-status={} header={}",
+             std::string(entry_name.data(), strnlen(entry_name.data(), entry_name.size())),
+             entry_offset, fs::file_size(wad_path), data_bytes, chunks_read, stream_data.size(),
+             read_status,
+             vag_header ? (voice_started ? "valid-voice-started" : "valid-voice-failed") : "invalid");
+  }
+}
+
+bool has_user_data_impl() {
+  return g_has_user_data;
+}
 
 // The gated fault handler may only use async-signal-safe operations.  Keep
 // its formatting local and write directly to the app's fault log and stderr.
@@ -1286,6 +1753,14 @@ void install_gated_signal_handlers() {
 
 }  // namespace
 
+bool ottsel_ios_has_user_data() {
+  return has_user_data_impl();
+}
+
+void ottsel_ios_prepare_user_data() {
+  prepare_user_data_impl();
+}
+
 void ottsel_ios_set_bundle_dir(const std::string& dir) {
   g_bundle_dir = dir;
 }
@@ -1409,6 +1884,18 @@ void ottsel_ios_run_boot() {
   }
   lg::debug("OTTSEL_IOS: EE main memory mapped at 0x{:016x}", (u64)g_ee_main_mem);
   memset(g_ee_main_mem, 0, EE_MAIN_MEM_SIZE);
+  lg::info("OTTSEL BOOT PHASE: selecting iOS data root");
+  // Resolve and durably promote a Files-imported pack before kernel setup.
+  // Import is independent of the GOAL boot and must remain observable even
+  // when a later renderer/runtime failure terminates the Simulator process.
+  const std::string iso_data_dir = g_prepared_iso_data_dir.empty()
+                                       ? select_ios_iso_data_dir()
+                                       : g_prepared_iso_data_dir;
+  lg::info("OTTSEL BOOT PHASE: selected iOS data root");
+  ee::ottsel_set_iso_data_dir(iso_data_dir.c_str());
+  lg::info("OTTSEL BOOT PHASE: probing optional sound data");
+  maybe_probe_user_sound_bank(iso_data_dir);
+  lg::info("OTTSEL BOOT PHASE: optional sound probe complete");
   // Ottsel S2.2 (BOT12): keep the low-EE region readable-zero instead of
   // PROT_NONE.  The PS2 has no MMU: game code legitimately reads low memory
   // through default-initialized/null pointers (e.g. vector<-cspace! reads
@@ -1419,8 +1906,10 @@ void ottsel_ios_run_boot() {
   // attempts still fault (SIGSEGV, caught by the gated handler), so null
   // pointer WRITES/CALLS are still diagnosed.
   mprotect(g_ee_main_mem, EE_MAIN_MEM_LOW_PROTECT, PROT_READ);
+  lg::info("OTTSEL BOOT PHASE: low-EE protection installed");
 
   // ---- globals (kernel subset of the host init sequence) ----
+  lg::info("OTTSEL BOOT PHASE: initializing kernel globals");
   fileio_init_globals();
   kmalloc_init_globals_common();
   jak1::kboot_init_globals();
@@ -1431,6 +1920,12 @@ void ottsel_ios_run_boot() {
   klisten_init_globals();
   jak1::klisten_init_globals();
   kmemcard_init_globals();
+  lg::info("OTTSEL BOOT PHASE: kernel globals initialized");
+  // Keep raw Jak save banks inside the app-owned durable container. This is
+  // the same writable root used by the validated user-data import and avoids
+  // relying on the process working directory on iOS.
+  file_util::override_user_config_dir(g_writable_dir, true);
+  lg::info("OTTSEL F1: save root={}", file_util::get_user_memcard_dir(GameVersion::Jak1).string());
   // Ottsel S2.1 (BOT11): the native boot (jak1/kboot.cpp goal_main) calls
   // init_crc() before InitMachine(); the iOS shell skips goal_main, so the
   // CRC table stayed all zeros.  Symbol interning is self-consistent with a
@@ -1442,12 +1937,11 @@ void ottsel_ios_run_boot() {
   // past the end into near-null (game-info get-continue-by-name fault).
   init_crc();
 
-  // ---- boot the kernel (IOP/gfx/sound/listener are OTTSEL_IOS-stubbed) ----
+  // ---- boot the kernel (IOP/gfx/listener remain OTTSEL_IOS-stubbed) ----
   MasterDebug = 0;
   MasterUseKernel = 1;
-  // Ottsel S2.1 (BOT11): serve DGO/CGO loads from the bundle's iso_data copy
-  // (the host iso_data tree is not reachable from the Simulator sandbox).
-  ee::ottsel_set_iso_data_dir((g_bundle_dir + "iso_data").c_str());
+  // Ottsel S2.1 (BOT11): serve DGO/CGO loads from the selected user pack or
+  // the clean-install diagnostic bundle fallback.
   if (jak1::InitMachine() >= 0) {
     // Match the native boot order: linking GAME invokes Mips2C callbacks,
     // so register their C exports while arena B is writable, then seal it

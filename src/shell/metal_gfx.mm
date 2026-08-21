@@ -13,8 +13,11 @@
 #include <cstdlib>
 #include <array>
 #include <cmath>
+#include <condition_variable>
 #include <cstring>
 #include <memory>
+#include <mutex>
+#include <numeric>
 #include <unordered_map>
 #include <vector>
 #include <unistd.h>
@@ -27,8 +30,13 @@
 #include "common/texture/texture_conversion.h"
 #include "common/dma/dma_chain_read.h"
 #include "common/dma/gs.h"
+#include "common/dma/ottsel_sprite_math.h"
+#include "common/dma/ottsel_data_root.h"
+#include "common/dma/ottsel_direct_ir.h"
+#include "common/dma/ottsel_sprite_phase.h"
 
 #include "metal_shell.h"
+#include "game/sce/sif_ee.h"
 
 // BOT22: synthetic pad press state (defined in game/sce/libpad.cpp).
 extern int g_ottsel_synthetic_frames;
@@ -43,6 +51,7 @@ extern int g_ottsel_synthetic_frames;
 // The app's bundle and writable directories (src/shell/ios_boot.cpp).
 extern std::string ottsel_ios_bundle_dir();
 extern std::string ottsel_ios_writable_dir();
+extern u32 g_ottsel_ios_vsync_count;
 
 // The in-game texture-page structures (mirrored from
 // game/graphics/texture/TexturePool.h; defined here to keep the iOS shell
@@ -107,17 +116,9 @@ struct CommonPCPortFunctionWrappers {
 extern CommonPCPortFunctionWrappers g_pc_port_funcs;
 
 namespace {
-// The shell's Metal presenter + the last composed debug frame.  Texture
-// uploads populate fake VRAM for the rasterizer; an individual uploaded page
-// is not a game frame and must never be handed to the presenter as one.
+// The shell's Metal presenter. CPU raster output remains diagnostic only and
+// is never published as a product frame.
 OttselMetal* g_metal = nullptr;
-std::vector<unsigned char> g_frame;  // RGBA8 frame buffer for the presenter
-int g_fw = 0, g_fh = 0;
-// A Direct/GIF composition is a point-in-time product of a DMA window, not a
-// persistent replacement for the live PC-port background renderer.  Keep one
-// pending publication for the main loop to consume, then return to its live
-// surface on the next present.
-bool g_frame_pending = false;
 
 // A deliberately short, file-triggered accounting window for the real GS
 // Direct path.  It answers one product question without producing a
@@ -148,15 +149,28 @@ struct MobileDirectTrace {
   u32 other_mscal_entry_count = 0;
   u32 unhandled_packed_registers = 0;
   u32 font_packet_samples = 0;
+  u32 glyph_packet_samples = 0;
+  bool glyph_ir_logged = false;
   int draw_start = 0;
 };
 MobileDirectTrace g_mobile_direct_trace;
+u32 g_mobile_chain_no = 0;
+u32& g_chain_no = g_mobile_chain_no;
 bool g_mobile_generic_probe_pending = false;
+constexpr u32 kMobileDirectTraceChains = 900;
 
 // CPU-side level data shared with the desktop PC renderer.  iOS keeps this
 // parsed form independent of the experimental VU/GIF decoder; Metal bucket
 // renderers will consume these same tfrag3 trees directly.
 std::unordered_map<std::string, std::unique_ptr<tfrag3::Level>> g_mobile_levels;
+bool g_mobile_native_sprite_uploaded = false;
+bool g_mobile_native_sprite_probe_requested = false;
+bool g_mobile_native_sprite_color_only_probe = false;
+bool g_mobile_bucket67_world_probe_active = false;
+u32 g_mobile_native_sprite_candidates = 0;
+bool g_mobile_sprite_record_trace = false;
+u32 g_mobile_sprite_record_trace_count = 0;
+bool g_mobile_sprite_identity_auto_armed = false;
 
 // Byte-for-byte mirror of the PC-port packet emitted by the game before a
 // TFRAG/TIE bucket. Keep it local to avoid pulling OpenGL renderer headers
@@ -175,7 +189,12 @@ struct OttselPcPortData {
 static_assert(sizeof(OttselPcPortData) == 16 * 25, "PC-port packet layout");
 
 OttselPcPortData g_mobile_camera{};
+u64 g_mobile_camera_packet_count = 0;
+u32 g_mobile_camera_last_chain = 0;
+u32 g_mobile_camera_last_transfer = 0;
 std::string g_mobile_camera_level;
+bool g_mobile_camera_transition_trace = false;
+u32 g_mobile_camera_transition_trace_count = 0;
 std::string g_mobile_tie_level;
 u32 g_mobile_tie_geo = 0;
 u32 g_mobile_tie_tree = 0;
@@ -781,9 +800,12 @@ void load_mobile_level(const std::string& level_name) {
   if (level_name.empty() || g_mobile_levels.contains(level_name)) {
     return;
   }
-  const auto path = ottsel_ios_bundle_dir() + "iso_data/fr3/" + level_name + ".fr3";
+  const char* selected_root = ee::ottsel_iso_data_dir();
+  const std::string root = ottsel::select_user_data_root(
+      selected_root ? selected_root : "", ottsel_ios_bundle_dir() + "iso_data");
+  const auto path = fs::path(root) / "fr3" / (level_name + ".fr3");
   if (!fs::exists(path)) {
-    lg::warn("OTTSEL FR3: missing level '{}' at {}", level_name, path);
+    lg::warn("OTTSEL FR3: missing level '{}' at {}", level_name, path.string());
     return;
   }
 
@@ -865,11 +887,38 @@ void capture_mobile_camera(const void* packet, size_t size) {
   if (level.empty() || !g_mobile_levels.contains(level)) {
     return;
   }
+  if (!g_mobile_camera_transition_trace) {
+    const std::string trace_path =
+        ottsel_ios_writable_dir() + "ottsel-trace-mobile-camera-transition";
+    if (access(trace_path.c_str(), F_OK) == 0) {
+      unlink(trace_path.c_str());
+      g_mobile_camera_transition_trace = true;
+      g_mobile_camera_transition_trace_count = 0;
+      lg::info("OTTSEL CAMERA PACKETS: bounded transition ledger armed");
+    }
+  }
   const bool finite = std::isfinite(candidate.camera[0][0]) &&
                       std::isfinite(candidate.camera[1][1]) &&
                       std::isfinite(candidate.camera[2][2]) &&
                       std::isfinite(candidate.trans[0]) && std::isfinite(candidate.trans[1]) &&
                       std::isfinite(candidate.trans[2]);
+  if (g_mobile_camera_transition_trace &&
+      g_mobile_camera_transition_trace_count < 64) {
+    lg::info("OTTSEL CAMERA PACKET: index={} level='{}' finite={} trans=({}, {}, {}) "
+             "r0=({}, {}, {}) r2=({}, {}, {}) persp=({}, {}, {}, {}) hvdf=({}, {}) fog={}",
+             g_mobile_camera_transition_trace_count, level, finite, candidate.trans[0],
+             candidate.trans[1], candidate.trans[2], candidate.rot[0][0], candidate.rot[0][1],
+             candidate.rot[0][2], candidate.rot[2][0], candidate.rot[2][1], candidate.rot[2][2],
+             candidate.perspective[0][0], candidate.perspective[1][1], candidate.perspective[2][2],
+             candidate.perspective[2][3], candidate.hvdf_off[2], candidate.hvdf_off[3],
+             candidate.fog[0]);
+    ++g_mobile_camera_transition_trace_count;
+    if (g_mobile_camera_transition_trace_count >= 64) {
+      g_mobile_camera_transition_trace = false;
+      lg::info("OTTSEL CAMERA PACKETS: bounded transition ledger complete");
+    }
+  }
+  ++g_mobile_camera_packet_count;
   g_mobile_camera = candidate;
   if (finite && level == g_mobile_tie_level) {
     build_visible_mobile_tfrag_mesh(level, candidate);
@@ -892,6 +941,29 @@ void capture_mobile_camera(const void* packet, size_t size) {
 // gs-trxreg rrw=128 rrh=size/128).  We replay that placement here, then
 // un-swizzle with the texture's own format (download_rgba8888-style).
 std::vector<u8> g_vram(4 * 1024 * 1024);
+
+struct DirectTextureMetadata {
+  u32 width = 0;
+  u32 height = 0;
+  u32 psm = 0;
+  u32 clut_psm = 0;
+  u32 clut_addr = 0;
+};
+
+struct DirectRelocatedTexture {
+  u32 width = 0;
+  u32 height = 0;
+  std::vector<u8> rgba;
+};
+
+// Source texture-page descriptors survive long enough for the PC_PORT font
+// relocation callback to identify the source image by its GS word address.
+std::unordered_map<u32, DirectTextureMetadata> g_direct_texture_metadata;
+std::unordered_map<u64, DirectRelocatedTexture> g_direct_relocated_textures;
+
+u64 direct_texture_cache_key(u32 destination, u32 psm) {
+  return (u64(destination) << 8) | (psm & 0x3f);
+}
 
 // Place `size_words` 32-bit words of pre-scrambled texture data into fake VRAM
 // exactly as the GS would for a PSMCT32 IMAGE transfer 128 px wide.
@@ -1003,6 +1075,24 @@ bool download_texture_rgba8888(u8* result,
     }
     return true;
   }
+  if ((psm == 0x24 || psm == 0x2c) && (clut_psm == 0 || clut_psm == 2)) {
+    // PSMT4HL/PSMT4HH address the high byte of a PSMCT32 word.  HL uses the
+    // low nibble and HH the high nibble; both use the ordinary 16-entry CSM1
+    // palette layout for the resulting index.
+    int read_width = 64 * goal_tex_width;
+    for (u32 y = 0; y < h; y++) {
+      for (u32 x = 0; x < w; x++) {
+        u32 texel_addr = psmct32_addr(x, y, read_width) + vram_addr * 256;
+        u8 packed = get8(texel_addr + 3);
+        u8 value = (psm == 0x24) ? (packed & 0x0f) : (packed >> 4);
+        u32 clut_addr = psmct32_addr(value & 0x7, value >> 3, 64) + clut_vram_addr * 256;
+        u32 clut_value = (clut_psm == 0) ? get32(clut_addr) : (u32)rgba16_to_rgba32(get16(clut_addr));
+        memcpy(result + out_offset, &clut_value, 4);
+        out_offset += 4;
+      }
+    }
+    return true;
+  }
   if (psm == 2) {  // PSMCT16, no clut.
     int read_width = 64 * goal_tex_width;
     for (u32 y = 0; y < h; y++) {
@@ -1016,6 +1106,65 @@ bool download_texture_rgba8888(u8* result,
     return true;
   }
   return false;
+}
+
+// A ROM-free 2x2 PSMT4HL fixture.  The indexed texels and four-entry CSM1
+// palette are written to generated VRAM, expanded through the same decoder
+// used by the Direct path, and only then uploaded as RGBA8 to Metal.
+std::array<u8, 16> make_generated_direct_clut_image() {
+  constexpr u32 texture_base = 0x3c00;
+  constexpr u32 clut_base = 0x3d00;
+  constexpr u32 read_width = 64;
+  const std::array<u8, 4> indices = {0, 1, 2, 3};
+  const std::array<u32, 4> palette = {
+      0xff0000ff, 0xff00ff00, 0xffff0000, 0xffffffff};
+  for (u32 y = 0; y < 2; y++) {
+    for (u32 x = 0; x < 2; x++) {
+      const u32 addr = psmct32_addr(x, y, read_width) + texture_base * 256;
+      g_vram.at(addr + 3) = indices[y * 2 + x];
+    }
+  }
+  for (u32 i = 0; i < palette.size(); i++) {
+    const u32 addr = psmct32_addr(i, 0, 64) + clut_base * 256;
+    memcpy(g_vram.data() + addr, &palette[i], sizeof(u32));
+  }
+  std::array<u8, 16> rgba{};
+  const bool decoded = download_texture_rgba8888(rgba.data(), texture_base, 1, 2, 2, 0x24, 0,
+                                                 clut_base);
+  if (!decoded) {
+    rgba.fill(0);
+  }
+  return rgba;
+}
+
+// Decode the texture named by the live Direct TEX0 from the retained GS-VRAM
+// mirror.  The mirror is populated by the existing texture-page upload path;
+// return an empty image when this title phase has not uploaded the referenced
+// page yet so the ROM-free generated D3 discriminator remains deterministic.
+std::vector<u8> decode_direct_vram_texture(u64 tex0_value,
+                                            u32& out_width,
+                                            u32& out_height,
+                                            bool& used_vram) {
+  used_vram = false;
+  out_width = 0;
+  out_height = 0;
+  const GsTex0 tex0(tex0_value);
+  const u32 width = 1u << tex0.tw();
+  const u32 height = 1u << tex0.th();
+  if (width == 0 || height == 0 || width > 2048 || height > 2048) {
+    return {};
+  }
+  std::vector<u8> rgba((size_t)width * height * 4, 0);
+  const bool decoded = download_texture_rgba8888(
+      rgba.data(), tex0.tbp0(), std::max(1u, width / 64), width, height,
+      (u32)tex0.psm(), tex0.cpsm(), tex0.cbp());
+  if (!decoded || std::none_of(rgba.begin(), rgba.end(), [](u8 value) { return value != 0; })) {
+    return {};
+  }
+  out_width = width;
+  out_height = height;
+  used_vram = true;
+  return rgba;
 }
 
 // Decode the largest texture of a tpage into RGBA8 (top-left origin).
@@ -1092,7 +1241,61 @@ std::shared_ptr<GfxDisplay> gfx_make_display(int, int, const char*, GfxGlobalSet
   return nullptr;
 }
 void gfx_exit() {}
-u32 gfx_vsync() { return 0; }
+static std::mutex g_ios_vsync_mutex;
+static std::condition_variable g_ios_vsync_cv;
+static u64 g_ios_present_epoch = 0;
+static bool g_ios_vsync_stopping = false;
+
+extern "C" void ottsel_metal_gfx_signal_vsync() {
+  {
+    std::lock_guard<std::mutex> lock(g_ios_vsync_mutex);
+    ++g_ios_present_epoch;
+  }
+  g_ios_vsync_cv.notify_all();
+}
+
+extern "C" void ottsel_metal_gfx_stop_vsync_waiters() {
+  {
+    std::lock_guard<std::mutex> lock(g_ios_vsync_mutex);
+    g_ios_vsync_stopping = true;
+  }
+  g_ios_vsync_cv.notify_all();
+}
+
+void ottsel_metal_gfx_note_vsync() {
+  static u32 g_mobile_vsync_no = 0;
+  static bool trace_active = false;
+  const std::string trace_path = ottsel_ios_writable_dir() + "ottsel-trace-mobile-frame-boundary";
+  if (!trace_active && access(trace_path.c_str(), F_OK) == 0) {
+    unlink(trace_path.c_str());
+    trace_active = true;
+    lg::info("OTTSEL FRAME: boundary trace accepted at vsync={} chain={}", g_mobile_vsync_no,
+             g_mobile_chain_no);
+  }
+  ++g_mobile_vsync_no;
+  if (trace_active && g_mobile_vsync_no <= 8) {
+    lg::info("OTTSEL FRAME: vsync={} chain={}", g_mobile_vsync_no, g_mobile_chain_no);
+  }
+  if (trace_active && g_mobile_vsync_no == 8) {
+    trace_active = false;
+    lg::info("OTTSEL FRAME: boundary trace complete");
+  }
+}
+
+u32 gfx_vsync() {
+  std::unique_lock<std::mutex> lock(g_ios_vsync_mutex);
+  const u64 observed_epoch = g_ios_present_epoch;
+  g_ios_vsync_cv.wait(lock, [&] {
+    return g_ios_vsync_stopping || g_ios_present_epoch != observed_epoch;
+  });
+  if (g_ios_vsync_stopping) {
+    return 0;
+  }
+  const u32 parity = (u32)(g_ios_present_epoch & 1);
+  lock.unlock();
+  ottsel_metal_gfx_note_vsync();
+  return parity;
+}
 u32 gfx_sync_path() { return 0; }
 // S2.2 renderer core: walk the DMA chain with the runtime's own DmaFollower,
 // decode the VIF DIRECT / GIF draw packets (register state + prims), and log
@@ -1347,10 +1550,91 @@ struct OttselGifDecoder {
   u32 prims_logged = 0;
   u32 chain_no = 0;
   u32 reglist_dumps = 0;
+  std::vector<ottsel::DirectIrEvent> ordered_ir;
+  u32 direct_min_x = UINT32_MAX;
+  u32 direct_min_y = UINT32_MAX;
+  u32 direct_max_x = 0;
+  u32 direct_max_y = 0;
+  float direct_min_s = 0.f;
+  float direct_min_t = 0.f;
+  float direct_max_s = 1.f;
+  float direct_max_t = 1.f;
+  ottsel::DirectIrStateSnapshot last_direct_snapshot;
+  bool have_direct_snapshot = false;
+  bool direct_scissor_seen = false;
+
+  void record_ir(ottsel::DirectIrKind kind, u64 value = 0) {
+    if (g_mobile_direct_trace.active && g_mobile_direct_trace.decoding_direct &&
+        ordered_ir.size() < 4096) {
+      ordered_ir.push_back({kind, value});
+    }
+    if (kind == ottsel::DirectIrKind::Vertex) {
+      const u32 x = (u32)(value & 0xffff);
+      const u32 y = (u32)((value >> 32) & 0xffff);
+      direct_min_x = std::min(direct_min_x, x);
+      direct_min_y = std::min(direct_min_y, y);
+      direct_max_x = std::max(direct_max_x, x);
+      direct_max_y = std::max(direct_max_y, y);
+    }
+  }
+
+  void reset_direct_geometry() {
+    direct_min_x = UINT32_MAX;
+    direct_min_y = UINT32_MAX;
+    direct_max_x = 0;
+    direct_max_y = 0;
+    direct_min_s = 0.f;
+    direct_min_t = 0.f;
+    direct_max_s = 1.f;
+    direct_max_t = 1.f;
+  }
+
+  void record_state_snapshot() {
+    if (!g_mobile_direct_trace.active || !g_mobile_direct_trace.decoding_direct ||
+        ordered_ir.size() >= 4096) {
+      return;
+    }
+    ottsel::DirectIrStateSnapshot snapshot;
+    snapshot.prim = st.prim;
+    snapshot.tex0 = st.tex0;
+    snapshot.tex1 = st.tex1;
+    snapshot.alpha = st.alpha;
+    snapshot.zbuf = st.zbuf;
+    snapshot.test = st.test;
+    snapshot.clamp = st.clamp;
+    snapshot.frame = st.frame;
+    snapshot.xyoffset = st.xyoffset;
+    snapshot.scissor = st.scissor;
+    snapshot.texa = st.texa;
+    memcpy(snapshot.st, st.st, sizeof(snapshot.st));
+    memcpy(snapshot.rgba, st.rgba, sizeof(snapshot.rgba));
+    snapshot.uv_u = st.uv_u;
+    snapshot.uv_v = st.uv_v;
+    snapshot.flags = (st.st_valid ? 1 : 0) | (st.rgba_valid ? 2 : 0) |
+                     (st.uv_valid ? 4 : 0) | (direct_scissor_seen ? 8 : 0);
+    last_direct_snapshot = snapshot;
+    have_direct_snapshot = true;
+    ordered_ir.push_back({ottsel::DirectIrKind::StateSnapshot, 0, snapshot});
+  }
+
+  void record_boundary(ottsel::DirectIrKind kind, u64 value) {
+    if (g_mobile_direct_trace.active && ordered_ir.size() < 4096) {
+      ordered_ir.push_back({kind, value});
+    }
+  }
+
+  void record_error(ottsel::DirectIrError error, u64 detail = 0) {
+    if (g_mobile_direct_trace.active && g_mobile_direct_trace.decoding_direct &&
+        ordered_ir.size() < 4096) {
+      ordered_ir.push_back({ottsel::DirectIrKind::Error,
+                            (u64(error) << 32) | (detail & 0xffffffffu)});
+    }
+  }
 
   void on_prim_start(u64 prim) {
     st.prim = prim;
     vert_count = 0;
+    record_ir(ottsel::DirectIrKind::Prim, prim);
   }
 
   void on_vertex() {
@@ -1457,6 +1741,19 @@ struct OttselGifDecoder {
     v.x = x;
     v.y = y;
     v.z = z;
+    if (v.has_st) {
+      if (direct_min_s == 0.f && direct_max_s == 1.f) {
+        direct_min_s = v.s;
+        direct_max_s = v.s;
+        direct_min_t = v.t;
+        direct_max_t = v.t;
+      } else {
+        direct_min_s = std::min(direct_min_s, v.s);
+        direct_min_t = std::min(direct_min_t, v.t);
+        direct_max_s = std::max(direct_max_s, v.s);
+        direct_max_t = std::max(direct_max_t, v.t);
+      }
+    }
     GsPrim gp(st.prim);
     switch (gp.kind()) {
       case GsPrim::Kind::SPRITE:
@@ -1491,6 +1788,7 @@ struct OttselGifDecoder {
       case GsRegisterAddress::TEX0_1:
       case GsRegisterAddress::TEX0_2:
         st.tex0 = value;
+        record_ir(ottsel::DirectIrKind::Tex0, value);
         break;
       case GsRegisterAddress::TEX1_1:
         st.tex1 = value;
@@ -1522,6 +1820,7 @@ struct OttselGifDecoder {
         break;
       case GsRegisterAddress::SCISSOR_1:
         st.scissor = value;
+        direct_scissor_seen = true;
         if (rst) {
           GsScissor sc(value);
           rst->scissor[0] = sc.x0();
@@ -1566,9 +1865,41 @@ void decode_gif_packets(const u8* g, u32 size, OttselGifDecoder& dec) {
       }
     }
     u32 nreg = tag.nreg();
+    if (nreg > 16) {
+      dec.record_error(ottsel::DirectIrError::MalformedTag, nreg);
+      break;
+    }
+    u64 payload_bytes = 0;
+    switch (tag.flg()) {
+      case GifTag::Format::PACKED:
+        payload_bytes = u64(tag.nloop()) * nreg * 16;
+        break;
+      case GifTag::Format::REGLIST:
+        payload_bytes = u64(tag.nloop()) * nreg * 8;
+        break;
+      case GifTag::Format::IMAGE:
+        payload_bytes = u64(tag.nloop()) * 16;
+        break;
+      default:
+        dec.record_error(ottsel::DirectIrError::MalformedTag, (u64)tag.flg());
+        break;
+    }
+    if (payload_bytes > size - offset) {
+      dec.record_error(ottsel::DirectIrError::OutOfBounds, payload_bytes);
+      break;
+    }
     GifTag::RegisterDescriptor reg_desc[16];
     for (u32 i = 0; i < nreg; i++) {
       reg_desc[i] = tag.reg(i);
+    }
+    const bool is_d0_glyph = g_mobile_direct_trace.active &&
+                             g_mobile_direct_trace.decoding_direct && tag.nloop() == 1 &&
+                             tag.pre() && tag.prim() == 0x5c && tag.nreg() == 13;
+    const size_t d0_ir_start = dec.ordered_ir.size();
+    if (is_d0_glyph && g_mobile_direct_trace.glyph_packet_samples < 8) {
+      ++g_mobile_direct_trace.glyph_packet_samples;
+      lg::info("OTTSEL MOBILE DIRECT: glyph candidate sample={} eop={} bytes={}",
+               g_mobile_direct_trace.glyph_packet_samples, (int)tag.eop(), size);
     }
     if (tag.flg() == GifTag::Format::PACKED) {
       static u32 ottsel_pkt_logged = 0;
@@ -1593,12 +1924,21 @@ void decode_gif_packets(const u8* g, u32 size, OttselGifDecoder& dec) {
               dec.handle_ad(value, addr);
             } break;
             case GifTag::RegisterDescriptor::ST: {
+              u64 raw = 0;
+              memcpy(&raw, rec, sizeof(raw));
+              dec.record_ir(ottsel::DirectIrKind::St, raw);
               memcpy(&dec.st.st[0], rec, 4);
               memcpy(&dec.st.st[1], rec + 4, 4);
               memcpy(&dec.st.st[2], rec + 8, 4);
               dec.st.st_valid = true;
             } break;
             case GifTag::RegisterDescriptor::RGBAQ: {
+              u64 raw = 0;
+              memcpy(&raw, rec, sizeof(raw));
+              dec.record_ir(ottsel::DirectIrKind::Rgbaq, raw);
+              // PACKED RGBAQ is a 128-bit GIF record whose four color
+              // components occupy the low byte of each 32-bit lane.  The
+              // desktop DirectRenderer consumes the same wire layout.
               dec.st.rgba[0] = rec[0];
               dec.st.rgba[1] = rec[4];
               dec.st.rgba[2] = rec[8];
@@ -1615,6 +1955,9 @@ void decode_gif_packets(const u8* g, u32 size, OttselGifDecoder& dec) {
             } break;
             case GifTag::RegisterDescriptor::XYZF2:
             case GifTag::RegisterDescriptor::XYZ2: {
+              u64 raw = 0;
+              memcpy(&raw, rec, sizeof(raw));
+              dec.record_ir(ottsel::DirectIrKind::Vertex, raw);
               // Match the desktop DirectRenderer's PACKED wire format: X
               // and Y occupy their own words and Z/F/ADC occupy the upper
               // qword.  This is distinct from the REGLIST representation.
@@ -1647,6 +1990,8 @@ void decode_gif_packets(const u8* g, u32 size, OttselGifDecoder& dec) {
                          (u32)reg_desc[r], dec.chain_no);
                 ++g_mobile_direct_trace.unhandled_packed_registers;
               }
+              dec.record_error(ottsel::DirectIrError::UnsupportedRegister,
+                               (u64)reg_desc[r]);
               break;
          }
           offset += 16;
@@ -1692,6 +2037,8 @@ void decode_gif_packets(const u8* g, u32 size, OttselGifDecoder& dec) {
               dec.st.st_valid = true;
               break;
             default:
+              dec.record_error(ottsel::DirectIrError::UnsupportedRegister,
+                               (u64)reg_desc[r]);
               break;
           }
           offset += 8;
@@ -1705,6 +2052,17 @@ void decode_gif_packets(const u8* g, u32 size, OttselGifDecoder& dec) {
       break;
     }
     if (tag.eop()) {
+      if (is_d0_glyph && g_mobile_direct_trace.glyph_packet_samples <= 8) {
+        std::string events;
+        for (size_t i = d0_ir_start; i < dec.ordered_ir.size(); ++i) {
+          if (!events.empty()) {
+            events += ",";
+          }
+          events += ottsel::direct_ir_kind_name(dec.ordered_ir[i].kind);
+        }
+        lg::info("OTTSEL MOBILE DIRECT IR: glyph sample={} events={}",
+                 g_mobile_direct_trace.glyph_packet_samples, events);
+      }
       break;
     }
   }
@@ -1713,6 +2071,23 @@ void decode_gif_packets(const u8* g, u32 size, OttselGifDecoder& dec) {
 // Decode one transfer: if its VIF codes say DIRECT, walk VIF words + GIF data
 // like the reference DirectRenderer::render_vif.
 void decode_transfer(const DmaTransfer& t, OttselGifDecoder& dec) {
+  auto log_ordered_ir = [&](size_t start) {
+    if (!g_mobile_direct_trace.active || g_mobile_direct_trace.font_packet_samples == 0 ||
+        g_mobile_direct_trace.font_packet_samples > 8 || g_mobile_direct_trace.glyph_ir_logged ||
+        start >= dec.ordered_ir.size()) {
+      return;
+    }
+    std::string events;
+    for (size_t i = start; i < dec.ordered_ir.size(); ++i) {
+      if (!events.empty()) {
+        events += ",";
+      }
+      events += ottsel::direct_ir_kind_name(dec.ordered_ir[i].kind);
+    }
+    lg::info("OTTSEL MOBILE DIRECT IR: qwc14 sample={} events={}",
+             g_mobile_direct_trace.font_packet_samples, events);
+    g_mobile_direct_trace.glyph_ir_logged = true;
+  };
   u32 gif_qwc = 0;
   auto direct_or_nop = [](const VifCode& c) -> u32 {
     if (c.kind == VifCode::Kind::NOP || c.kind == VifCode::Kind::FLUSHA) {
@@ -1746,9 +2121,15 @@ void decode_transfer(const DmaTransfer& t, OttselGifDecoder& dec) {
       g_mobile_direct_trace.direct_bytes += bytes;
     }
     const bool old_direct_context = g_mobile_direct_trace.decoding_direct;
+    const size_t ir_start = dec.ordered_ir.size();
     g_mobile_direct_trace.decoding_direct = true;
     decode_gif_packets(t.data, bytes, dec);
+    dec.record_state_snapshot();
+    dec.record_boundary(ottsel::DirectIrKind::Flush,
+                       u64(ottsel::DirectIrFlushReason::TransferEnd));
+    dec.record_ir(ottsel::DirectIrKind::TransferEnd, bytes / 16);
     g_mobile_direct_trace.decoding_direct = old_direct_context;
+    log_ordered_ir(ir_start);
     return;
   }
   // No DIRECT in the tag's vif fields: walk vif words inside the data.
@@ -1767,9 +2148,15 @@ void decode_transfer(const DmaTransfer& t, OttselGifDecoder& dec) {
           g_mobile_direct_trace.direct_bytes += sz;
         }
         const bool old_direct_context = g_mobile_direct_trace.decoding_direct;
+        const size_t ir_start = dec.ordered_ir.size();
         g_mobile_direct_trace.decoding_direct = true;
         decode_gif_packets(t.data + off, sz, dec);
+        dec.record_state_snapshot();
+        dec.record_boundary(ottsel::DirectIrKind::Flush,
+                           u64(ottsel::DirectIrFlushReason::TransferEnd));
+        dec.record_ir(ottsel::DirectIrKind::TransferEnd, sz / 16);
         g_mobile_direct_trace.decoding_direct = old_direct_context;
+        log_ordered_ir(ir_start);
         off += gif_qwc * 16;
         gif_qwc = 0;
       }
@@ -1818,6 +2205,69 @@ struct MobileSpriteMatrix {
 };
 static_assert(sizeof(MobileSpriteMatrix) == 5 * 16, "Sprite3 matrix layout");
 
+static u64 ottsel_sprite_trace_hash(const void* data, size_t size) {
+  const auto* bytes = static_cast<const u8*>(data);
+  u64 hash = 1469598103934665603ull;
+  for (size_t i = 0; i < size; ++i) {
+    hash ^= bytes[i];
+    hash *= 1099511628211ull;
+  }
+  return hash;
+}
+
+static void log_mobile_sprite_texture_identity(const AdGifData& adgif, u32 chain_no,
+                                               u32 group_no, u32 sprite_count) {
+  const GsTex0 tex(adgif.tex0_data);
+  if (!ottsel::sprite3_uses_texture(adgif.tex0_data) || tex.tbp0() == 0) {
+    return;
+  }
+  const u32 width = 1u << tex.tw();
+  const u32 height = 1u << tex.th();
+  if (width > 2048 || height > 2048) {
+    return;
+  }
+  std::vector<u8> rgba((size_t)width * height * 4);
+  if (!download_texture_rgba8888(rgba.data(), tex.tbp0(), std::max(1u, width / 64), width,
+                                  height, (u32)tex.psm(), tex.cpsm(), tex.cbp())) {
+    lg::warn("OTTSEL SPRITE IDENTITY: mobile decode failed chain={} group={} tbp=0x{:x}",
+             chain_no, group_no, tex.tbp0());
+    return;
+  }
+  u8 alpha_max = 0;
+  u32 nonzero_alpha = 0;
+  for (size_t i = 3; i < rgba.size(); i += 4) {
+    alpha_max = std::max(alpha_max, rgba[i]);
+    nonzero_alpha += rgba[i] != 0;
+  }
+  lg::info("OTTSEL SPRITE IDENTITY: mobile chain={} group={} sprites={} tbp=0x{:x} "
+           "tex0=0x{:016x} psm={} size={}x{} rgba-hash=0x{:x} alpha-max={} nonzero-alpha={}",
+           chain_no, group_no, sprite_count, tex.tbp0(), adgif.tex0_data, (u32)tex.psm(), width,
+           height, ottsel_sprite_trace_hash(rgba.data(), rgba.size()), alpha_max, nonzero_alpha);
+}
+
+static void ottsel_sprite_trace_hash_bytes(u64& hash, const void* data, size_t size) {
+  const auto* bytes = static_cast<const u8*>(data);
+  for (size_t i = 0; i < size; ++i) {
+    hash ^= bytes[i];
+    hash *= 1099511628211ull;
+  }
+}
+
+static u64 ottsel_sprite_camera_frame_hash(const MobileSpriteFrameJak1& frame) {
+  u64 hash = 1469598103934665603ull;
+  ottsel_sprite_trace_hash_bytes(hash, &frame.hmge_scale, sizeof(frame.hmge_scale));
+  ottsel_sprite_trace_hash_bytes(hash, &frame.pfog0, sizeof(frame.pfog0));
+  ottsel_sprite_trace_hash_bytes(hash, &frame.deg_to_rad, sizeof(frame.deg_to_rad));
+  ottsel_sprite_trace_hash_bytes(hash, &frame.min_scale, sizeof(frame.min_scale));
+  ottsel_sprite_trace_hash_bytes(hash, &frame.inv_area, sizeof(frame.inv_area));
+  ottsel_sprite_trace_hash_bytes(hash, &frame.basis_x, sizeof(frame.basis_x));
+  ottsel_sprite_trace_hash_bytes(hash, &frame.basis_y, sizeof(frame.basis_y));
+  ottsel_sprite_trace_hash_bytes(hash, &frame.inv_hmge_scale, sizeof(frame.inv_hmge_scale));
+  ottsel_sprite_trace_hash_bytes(hash, &frame.fog_min, sizeof(frame.fog_min));
+  ottsel_sprite_trace_hash_bytes(hash, &frame.fog_max, sizeof(frame.fog_max));
+  return hash;
+}
+
 struct MobileSpriteVec2d {
   MobileSpriteVec4 xyz_sx;
   MobileSpriteVec4 flag_rot_sy;
@@ -1845,6 +2295,18 @@ static u8 sprite_color(float value) {
   return (u8)std::clamp((int)value, 0, 255);
 }
 
+static bool g_mobile_sprite_parser_trace = false;
+static bool g_mobile_sprite_parser_trace_logged = false;
+static bool g_mobile_sprite_source_boundary_trace = false;
+static u32 g_mobile_sprite_source_boundary_count = 0;
+
+// Sprite3 traffic is emitted during title and level transitions. Diagnostic
+// windows must not consume their one-shot trigger on title traffic when the
+// intended comparison is Village1.
+static bool mobile_sprite_village1_phase() {
+  return g_mobile_camera_level == "village1";
+}
+
 static OttselVertex sprite_raster_vertex(const MobileSpriteVec4& transformed,
                                          const MobileSpriteVec4& st,
                                          const MobileSpriteVec4& color,
@@ -1869,6 +2331,15 @@ static OttselVertex sprite_raster_vertex(const MobileSpriteVec4& transformed,
   return out;
 }
 
+static std::array<float, 2> sprite_shader_clip_vertex(const MobileSpriteVec4& transformed) {
+  // The desktop shader writes homogeneous gl_Position and the GL pipeline
+  // performs the perspective divide. Metal's native Sprite3 vertex carries
+  // only x/y (implicit w=1), so upload the post-divide coordinates here.
+  const float clip_x = (transformed.x - 2048.f) / 256.f;
+  const float clip_y = ((transformed.y - 2048.f) / -128.f) * (512.f / 448.f);
+  return {clip_x, clip_y};
+}
+
 static u32 render_mobile_sprite_group0(const MobileSpriteFrameJak1& frame,
                                        const MobileSpriteMatrix& matrix,
                                        const MobileSpriteVec2d* vectors,
@@ -1876,18 +2347,61 @@ static u32 render_mobile_sprite_group0(const MobileSpriteFrameJak1& frame,
                                        u32 count,
                                        OttselRaster& raster) {
   u32 drawn = 0;
+  if (g_mobile_sprite_parser_trace && !g_mobile_sprite_parser_trace_logged) {
+    g_mobile_sprite_parser_trace_logged = true;
+    lg::info("OTTSEL SPRITE TRACE: group count={} pfog0={} scale=({}, {}) camera-t=({}, {}, {}, {}) "
+             "hvdf=({}, {}, {}, {}) first=({}, {}, {}, {})",
+             count, frame.pfog0, frame.min_scale, frame.max_scale, matrix.camera[3].x,
+             matrix.camera[3].y, matrix.camera[3].z, matrix.camera[3].w, matrix.hvdf.x,
+             matrix.hvdf.y, matrix.hvdf.z, matrix.hvdf.w, vectors[0].xyz_sx.x,
+             vectors[0].xyz_sx.y, vectors[0].xyz_sx.z, vectors[0].xyz_sx.w);
+  }
   for (u32 index = 0; index < count; ++index) {
     const auto& vector = vectors[index];
-    const float denominator = sprite_matrix_transform(matrix.camera, vector.xyz_sx).w;
+    const MobileSpriteVec4 camera_transformed =
+        sprite_matrix_transform(matrix.camera, vector.xyz_sx);
+    const bool color_only_sprite = !ottsel::sprite3_uses_texture(adgifs[index].tex0_data);
+    // This bucket is MSCAL 3 (desktop Sprites2dGrp0), whose shader keeps the
+    // camera transform sign for its 2D path. The 3D shader's negation is not
+    // applicable here.
+    const float denominator = camera_transformed.w;
+    if (g_mobile_sprite_parser_trace && index == 0) {
+      lg::info("OTTSEL SPRITE TRACE: first camera=({}, {}, {}, {}) 2d-w={} "
+               "3d-negated-w={} finite={} xyz=({}, {}, {}, {})",
+               camera_transformed.x, camera_transformed.y, camera_transformed.z,
+               camera_transformed.w, denominator, -camera_transformed.w,
+               std::isfinite(denominator), vector.xyz_sx.x, vector.xyz_sx.y, vector.xyz_sx.z,
+               vector.xyz_sx.w);
+    }
     if (!std::isfinite(denominator) || denominator == 0.f) {
+      static u32 color_only_transform_rejects = 0;
+      if (g_mobile_native_sprite_color_only_probe && color_only_sprite &&
+          color_only_transform_rejects < 16) {
+        ++color_only_transform_rejects;
+        lg::warn("OTTSEL SPRITE COLOR-ONLY TRANSFORM: reject={} index={} tex0=0x{:016x} "
+                 "vector=({}, {}, {}, {}) camera=({}, {}, {}, {}) pfog0={} denominator={} "
+                 "finite={}",
+                 color_only_transform_rejects, index, adgifs[index].tex0_data, vector.xyz_sx.x,
+                 vector.xyz_sx.y, vector.xyz_sx.z, vector.xyz_sx.w, camera_transformed.x,
+                 camera_transformed.y, camera_transformed.z, camera_transformed.w, frame.pfog0,
+                 denominator, std::isfinite(denominator));
+      }
       continue;
     }
     const float q = frame.pfog0 / denominator;
     if (!std::isfinite(q)) {
+      static u32 color_only_q_rejects = 0;
+      if (g_mobile_native_sprite_color_only_probe && color_only_sprite &&
+          color_only_q_rejects < 16) {
+        ++color_only_q_rejects;
+        lg::warn("OTTSEL SPRITE COLOR-ONLY Q: reject={} index={} tex0=0x{:016x} "
+                 "pfog0={} denominator={} q={}",
+                 color_only_q_rejects, index, adgifs[index].tex0_data, frame.pfog0, denominator, q);
+      }
       continue;
     }
 
-    MobileSpriteVec4 base = sprite_matrix_transform(matrix.camera, vector.xyz_sx);
+    MobileSpriteVec4 base = camera_transformed;
     base.x *= q;
     base.y *= q;
     base.z *= q;
@@ -1896,6 +2410,16 @@ static u32 render_mobile_sprite_group0(const MobileSpriteFrameJak1& frame,
 
     const float sx = std::clamp(vector.xyz_sx.w * q, frame.min_scale, frame.max_scale);
     const float sy = std::clamp(vector.flag_rot_sy.w * q, frame.min_scale, frame.max_scale);
+    if (g_mobile_sprite_parser_trace && index == 0) {
+      lg::info("OTTSEL SPRITE TRACE: 2d q={} base=({}, {}, {}, {}) fog-min={} "
+               "scale=({}, {}) raw-scale=({}, {}) basis-x=({}, {}, {}, {}) "
+               "basis-y=({}, {}, {}, {}) xy0=({}, {}, {}, {})",
+               q, base.x, base.y, base.z, base.w, frame.fog_min, sx, sy,
+               vector.xyz_sx.w * q, vector.flag_rot_sy.w * q, frame.basis_x.x,
+               frame.basis_x.y, frame.basis_x.z, frame.basis_x.w, frame.basis_y.x,
+               frame.basis_y.y, frame.basis_y.z, frame.basis_y.w, frame.xy[0].x,
+               frame.xy[0].y, frame.xy[0].z, frame.xy[0].w);
+    }
     const float radians = vector.flag_rot_sy.z * frame.deg_to_rad;
     const float sine = std::sin(radians);
     const float cosine = std::cos(radians);
@@ -1906,18 +2430,144 @@ static u32 render_mobile_sprite_group0(const MobileSpriteFrameJak1& frame,
     const u32 flags = *(const u32*)&vector.flag_rot_sy.x;
 
     OttselVertex vertices[4];
+    std::array<float, 2> shader_clip[4];
     for (u32 vertex = 0; vertex < 4; ++vertex) {
       const MobileSpriteVec4& offset = frame.xy[vertex + (flags & 15u)];
       const MobileSpriteVec4 transformed =
           sprite_add(base, sprite_add(sprite_scale(x_basis, offset.x),
                                       sprite_scale(y_basis, offset.y)));
       vertices[vertex] = sprite_raster_vertex(transformed, frame.st[vertex], vector.rgba, raster);
+      shader_clip[vertex] = sprite_shader_clip_vertex(transformed);
     }
 
-    const GsTex0 tex0(adgifs[index].tex0_data);
-    raster.load_tex(tex0.tbp0(), tex0.tw(), tex0.th(), (u32)tex0.psm(), tex0.cbp(), tex0.cpsm());
-    raster.tri(vertices[0], vertices[1], vertices[3], true, false, true, 128);
-    raster.tri(vertices[0], vertices[3], vertices[2], true, false, true, 128);
+    // R1 discriminator: move the first real Sprite3 expansion to Metal. The
+    // CPU raster call below remains diagnostic until this bounded native draw
+    // is live-verified; it is never published as a product frame.
+    bool native_sprite_consumed = false;
+    if (!g_mobile_native_sprite_probe_requested) {
+      const std::string sprite_probe_path =
+          ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite-metal";
+      const std::string color_only_probe_path =
+          ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite-metal-color-only";
+      if (access(color_only_probe_path.c_str(), F_OK) == 0) {
+        unlink(color_only_probe_path.c_str());
+        g_mobile_native_sprite_probe_requested = true;
+        g_mobile_native_sprite_color_only_probe = true;
+        lg::info("OTTSEL SPRITE METAL: color-only probe accepted; awaiting TCC=0 group");
+      }
+      if (access(sprite_probe_path.c_str(), F_OK) == 0) {
+        unlink(sprite_probe_path.c_str());
+        g_mobile_native_sprite_probe_requested = true;
+        lg::info("OTTSEL SPRITE METAL: probe accepted; awaiting bounded native group");
+      }
+    }
+    if (g_mobile_native_sprite_probe_requested && g_metal) {
+      const GsTex0 sprite_tex(adgifs[index].tex0_data);
+      const bool uses_texture = ottsel::sprite3_uses_texture(adgifs[index].tex0_data);
+      const bool allow_native_upload =
+          !g_mobile_native_sprite_uploaded &&
+          (!g_mobile_native_sprite_color_only_probe || !uses_texture);
+      const u32 sprite_w = uses_texture ? 1u << sprite_tex.tw() : 1u;
+      const u32 sprite_h = uses_texture ? 1u << sprite_tex.th() : 1u;
+      if (sprite_w <= 2048 && sprite_h <= 2048) {
+        std::vector<u8> sprite_rgba((size_t)sprite_w * sprite_h * 4, 0);
+        bool decoded = false;
+        if (!uses_texture) {
+          // Desktop Sprite3 treats TEX0.TCC=0 as color-only: keep the normal
+          // sampled path alive with a generated opaque white texel, leaving
+          // the vertex color as the source of RGB/A semantics.
+          std::fill(sprite_rgba.begin(), sprite_rgba.end(), 255);
+          decoded = true;
+        } else {
+          decoded = download_texture_rgba8888(
+              sprite_rgba.data(), sprite_tex.tbp0(), std::max(1u, sprite_w / 64), sprite_w,
+              sprite_h, (u32)sprite_tex.psm(), sprite_tex.cpsm(), sprite_tex.cbp());
+        }
+        if (decoded) {
+          u32 texture_nonzero_alpha = 0;
+          u8 texture_max_alpha = 0;
+          for (size_t alpha_offset = 3; alpha_offset < sprite_rgba.size(); alpha_offset += 4) {
+            texture_max_alpha = std::max(texture_max_alpha, sprite_rgba[alpha_offset]);
+            texture_nonzero_alpha += sprite_rgba[alpha_offset] != 0;
+          }
+          float min_clip_x = shader_clip[0][0], max_clip_x = shader_clip[0][0];
+          float min_clip_y = shader_clip[0][1], max_clip_y = shader_clip[0][1];
+          for (u32 vertex = 1; vertex < 4; ++vertex) {
+            min_clip_x = std::min(min_clip_x, shader_clip[vertex][0]);
+            max_clip_x = std::max(max_clip_x, shader_clip[vertex][0]);
+            min_clip_y = std::min(min_clip_y, shader_clip[vertex][1]);
+            max_clip_y = std::max(max_clip_y, shader_clip[vertex][1]);
+          }
+          const float normalized_width = (max_clip_x - min_clip_x) * 0.5f;
+          const float normalized_height = (max_clip_y - min_clip_y) * 0.5f;
+          const float visible_width =
+              (std::min(max_clip_x, 1.f) - std::max(min_clip_x, -1.f)) * 0.5f;
+          const float visible_height =
+              (std::min(max_clip_y, 1.f) - std::max(min_clip_y, -1.f)) * 0.5f;
+          const bool overlaps_view = visible_width > 0.f && visible_height > 0.f;
+          const bool usable_probe_bounds = overlaps_view && visible_width >= 0.02f &&
+                                           visible_height >= 0.02f;
+          const bool visible_probe_texture =
+              (!uses_texture || texture_nonzero_alpha != 0) && vector.rgba.w > 0.f;
+          if (g_mobile_native_sprite_probe_requested && g_mobile_native_sprite_candidates < 32) {
+            lg::info("OTTSEL SPRITE METAL: candidate={} index={} tbp=0x{:x} psm={} bounds=({:.3f},{:.3f}).."
+                     "({:.3f},{:.3f}) size=({:.3f},{:.3f}) visible=({:.3f},{:.3f}) usable={}",
+                     g_mobile_native_sprite_candidates, index, sprite_tex.tbp0(),
+                     (u32)sprite_tex.psm(), (min_clip_x + 1.f) * 0.5f,
+                     (min_clip_y + 1.f) * 0.5f, (max_clip_x + 1.f) * 0.5f,
+                     (max_clip_y + 1.f) * 0.5f, normalized_width, normalized_height, visible_width,
+                     visible_height,
+                     usable_probe_bounds && visible_probe_texture);
+          }
+          ++g_mobile_native_sprite_candidates;
+          const bool bucket67_fixture =
+              !g_mobile_bucket67_world_probe_active ||
+              ottsel::matches_bucket67_world_fixture(ottsel::Jak1SpritePhase::World2D, count,
+                                                      sprite_tex.tbp0(), (u32)sprite_tex.psm(),
+                                                      sprite_tex.tw(), sprite_tex.th());
+          if (allow_native_upload && bucket67_fixture && max_clip_x > min_clip_x &&
+              max_clip_y > min_clip_y && usable_probe_bounds && visible_probe_texture) {
+            const float faded_alpha = ottsel::sprite3_faded_alpha_normalized(
+                vector.rgba.w, sx, sy, frame.inv_area);
+            const float color[4] = {std::clamp(vector.rgba.x, 0.f, 1.f),
+                                    std::clamp(vector.rgba.y, 0.f, 1.f),
+                                    std::clamp(vector.rgba.z, 0.f, 1.f), faded_alpha};
+            OttselMetalSpriteVertex native_vertices[6] = {};
+            const u32 order[6] = {0, 1, 3, 0, 3, 2};
+            for (int out = 0; out < 6; ++out) {
+              const u32 source = order[out];
+              native_vertices[out].pos[0] = shader_clip[source][0];
+              native_vertices[out].pos[1] = shader_clip[source][1];
+              native_vertices[out].uv[0] = frame.st[source].x;
+              native_vertices[out].uv[1] = frame.st[source].y;
+              memcpy(native_vertices[out].color, color, sizeof(color));
+            }
+            ottsel_metal_set_sprite_mesh(g_metal, native_vertices, sprite_rgba.data(), sprite_w,
+                                         sprite_h, 1);
+            g_mobile_native_sprite_uploaded = true;
+            native_sprite_consumed = true;
+            lg::info("OTTSEL SPRITE METAL: native group=0 index={} bounds=({:.3f},{:.3f}).."
+                     "({:.3f},{:.3f}) texture=0x{:x} tcc={} size={}x{} blend=enabled "
+                     "cpu-raster=skipped-for-native-candidate alpha-test=gequal/2 "
+                     "blend=source-over",
+                     index, (min_clip_x + 1.f) * 0.5f, (min_clip_y + 1.f) * 0.5f,
+                     (max_clip_x + 1.f) * 0.5f, (max_clip_y + 1.f) * 0.5f, sprite_tex.tbp0(),
+                     sprite_tex.tcc(), sprite_w, sprite_h);
+            lg::info("OTTSEL SPRITE METAL: native visibility color-alpha={} texture-alpha-max={} "
+                     "texture-alpha-nonzero={} area-fade={} uploaded-alpha={}",
+                     vector.rgba.w, texture_max_alpha, texture_nonzero_alpha,
+                     std::clamp(sx * sy * frame.inv_area, 0.f, 1.f), faded_alpha);
+          }
+        }
+      }
+    }
+
+    if (!native_sprite_consumed) {
+      const GsTex0 tex0(adgifs[index].tex0_data);
+      raster.load_tex(tex0.tbp0(), tex0.tw(), tex0.th(), (u32)tex0.psm(), tex0.cbp(), tex0.cpsm());
+      raster.tri(vertices[0], vertices[1], vertices[3], true, false, true, 128);
+      raster.tri(vertices[0], vertices[3], vertices[2], true, false, true, 128);
+    }
     ++drawn;
   }
   return drawn;
@@ -1929,30 +2579,278 @@ static bool is_sprite_header(const DmaTransfer& transfer) {
          (code.immediate & 0x3ff) == 0;
 }
 
+struct MobileSpritePhaseSummary {
+  u32 groups = 0;
+  u32 sprites = 0;
+  u32 world = 0;
+  u32 hud = 0;
+  u32 three_d = 0;
+  u32 other = 0;
+  struct Item {
+    ottsel::Jak1SpritePhase phase = ottsel::Jak1SpritePhase::Other;
+    u32 count = 0;
+    u32 tbp = 0;
+    u32 psm = 0;
+    u32 tw = 0;
+    u32 th = 0;
+  };
+  std::array<Item, 64> items{};
+  u32 item_count = 0;
+};
+
+static void trace_mobile_sprite_phase_bucket(const void* data,
+                                             u32 start_offset,
+                                             u32 next_bucket,
+                                             u32 chain_no,
+                                             const char* label,
+                                             MobileSpritePhaseSummary* summary = nullptr,
+                                             bool emit_logs = true) {
+  DmaFollower dma(data, start_offset);
+  u32 groups = 0;
+  u32 sprites = 0;
+  u32 world = 0;
+  u32 hud = 0;
+  u32 three_d = 0;
+  u32 other = 0;
+  u32 transfers = 0;
+  u32 header_candidates = 0;
+  u32 rejected_headers = 0;
+  u32 boundary_stops = 0;
+  for (u32 transfer_index = 0; transfer_index < 256 && !dma.ended() &&
+                                dma.current_tag_offset() != next_bucket; ++transfer_index) {
+    DmaTransfer header = dma.read_and_advance();
+    ++transfers;
+    if (!is_sprite_header(header) || header.size_bytes < 16) {
+      continue;
+    }
+    ++header_candidates;
+    const u32 sprite_count = *(const u32*)header.data;
+    if (sprite_count == 0 || sprite_count > 48 || dma.ended() ||
+        dma.current_tag_offset() == next_bucket) {
+      ++rejected_headers;
+      if (dma.current_tag_offset() == next_bucket) {
+        ++boundary_stops;
+      }
+      continue;
+    }
+    DmaTransfer vectors = dma.read_and_advance();
+    DmaTransfer adgifs = dma.read_and_advance();
+    DmaTransfer run = dma.read_and_advance();
+    const VifCode run_vif(run.vif1());
+    if (vectors.size_bytes != sprite_count * sizeof(MobileSpriteVec2d) ||
+        adgifs.size_bytes != sprite_count * sizeof(AdGifData) || run.size_bytes != 0 ||
+        run_vif.kind != VifCode::Kind::MSCAL) {
+      ++rejected_headers;
+      if (dma.current_tag_offset() == next_bucket) {
+        ++boundary_stops;
+      }
+      continue;
+    }
+    ++groups;
+    sprites += sprite_count;
+    const auto phase = ottsel::classify_jak1_sprite_mscal(run_vif.immediate);
+    const char* phase_name = "other";
+    switch (phase) {
+      case ottsel::Jak1SpritePhase::World2D:
+        phase_name = "world";
+        world += sprite_count;
+        break;
+      case ottsel::Jak1SpritePhase::Hud2D:
+        phase_name = "hud";
+        hud += sprite_count;
+        break;
+      case ottsel::Jak1SpritePhase::ThreeD:
+        phase_name = "3d";
+        three_d += sprite_count;
+        break;
+      case ottsel::Jak1SpritePhase::Other:
+        other += sprite_count;
+        break;
+    }
+    const GsTex0 first_tex(((const AdGifData*)adgifs.data)[0].tex0_data);
+    static u32 zero_tbp_dumps = 0;
+    if (first_tex.tbp0() == 0 && zero_tbp_dumps < 8) {
+      const auto* first_adgif = (const AdGifData*)adgifs.data;
+      ++zero_tbp_dumps;
+      lg::warn("OTTSEL SPRITE ZERO TEX: label={} chain={} group={} count={} dump={} "
+               "tex0=0x{:016x} tex0-addr=0x{:016x} tex1=0x{:016x} tex1-addr=0x{:016x} "
+               "clamp=0x{:016x} alpha=0x{:016x}",
+               label, chain_no, groups + 1, sprite_count, zero_tbp_dumps,
+               first_adgif->tex0_data, first_adgif->tex0_addr, first_adgif->tex1_data,
+               first_adgif->tex1_addr, first_adgif->clamp_data, first_adgif->alpha_data);
+    }
+    const bool bucket67_world_fixture = ottsel::matches_bucket67_world_fixture(
+        phase, sprite_count, first_tex.tbp0(), (u32)first_tex.psm(), first_tex.tw(), first_tex.th());
+    if (emit_logs && groups <= 2) {
+      const auto* first_vec = (const u32*)vectors.data;
+      const auto* first_adgif = (const AdGifData*)adgifs.data;
+      lg::info("OTTSEL SPRITE SOURCE ITEM: label={} chain={} group={} count={} "
+               "header-vif0=0x{:08x} header-vif1=0x{:08x} vec-bytes={} adgif-bytes={} "
+               "mscal={} vec0=0x{:08x}/0x{:08x}/0x{:08x}/0x{:08x} tex0=0x{:016x}",
+               label, chain_no, groups, sprite_count, header.vif0(), header.vif1(),
+               vectors.size_bytes, adgifs.size_bytes, run_vif.immediate, first_vec[0],
+               first_vec[1], first_vec[2], first_vec[3], first_adgif->tex0_data);
+    }
+    if (summary && summary->item_count < summary->items.size()) {
+      summary->items[summary->item_count++] = {phase, sprite_count, first_tex.tbp0(),
+                                                (u32)first_tex.psm(), first_tex.tw(), first_tex.th()};
+    }
+    if (emit_logs) {
+      lg::info("OTTSEL SPRITE PHASE ITEM: label={} chain={} vsync={} group={} phase={} count={} "
+               "tbp=0x{:x} psm={} tw={} th={} fixture={}",
+               label, chain_no, g_ottsel_ios_vsync_count, groups, phase_name, sprite_count,
+               first_tex.tbp0(), (u32)first_tex.psm(), first_tex.tw(), first_tex.th(),
+               bucket67_world_fixture);
+    }
+  }
+  if (summary) {
+    summary->groups = groups;
+    summary->sprites = sprites;
+    summary->world = world;
+    summary->hud = hud;
+    summary->three_d = three_d;
+    summary->other = other;
+  }
+  if (emit_logs) {
+    lg::info("OTTSEL SPRITE RAW SPAN: label={} chain={} transfers={} headers={} rejected={} "
+             "boundary-stops={} start=0x{:x} next=0x{:x}",
+             label, chain_no, transfers, header_candidates, rejected_headers, boundary_stops,
+             start_offset, next_bucket);
+    lg::info("OTTSEL SPRITE PHASE: label={} chain={} vsync={} groups={} sprites={} world={} hud={} "
+             "3d={} other={} start=0x{:x} next=0x{:x}",
+             label, chain_no, g_ottsel_ios_vsync_count, groups, sprites, world, hud, three_d,
+             other, start_offset, next_bucket);
+  }
+}
+
 static u32 render_mobile_sprite_bucket(const void* data,
                                        u32 start_offset,
                                        u32 next_bucket,
-                                       OttselRaster& raster) {
+                                       OttselRaster& raster,
+                                       u32 chain_no) {
+  if (!g_mobile_sprite_parser_trace) {
+    const std::string trace_path = ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite";
+    if (access(trace_path.c_str(), F_OK) == 0) {
+      g_mobile_sprite_parser_trace = true;
+      lg::info("OTTSEL SPRITE TRACE: parser probe armed");
+    }
+  }
+  if (!g_mobile_sprite_record_trace && mobile_sprite_village1_phase()) {
+    const std::string record_trace_path =
+        ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite-records";
+    const bool auto_arm = std::getenv("OTTSEL_TRACE_MOBILE_SPRITE_IDENTITY") != nullptr;
+    if (access(record_trace_path.c_str(), F_OK) == 0 ||
+        (auto_arm && !g_mobile_sprite_identity_auto_armed)) {
+      unlink(record_trace_path.c_str());
+      g_mobile_sprite_record_trace = true;
+      g_mobile_sprite_record_trace_count = 0;
+      g_mobile_sprite_identity_auto_armed = auto_arm;
+      lg::info("OTTSEL SPRITE RECORDS: bounded ledger armed bucket=66 chain={} auto={}", chain_no,
+               auto_arm);
+    }
+  }
+  if (!g_mobile_sprite_source_boundary_trace && mobile_sprite_village1_phase()) {
+    const std::string source_boundary_path =
+        ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite-source-boundary";
+    if (access(source_boundary_path.c_str(), F_OK) == 0) {
+      unlink(source_boundary_path.c_str());
+      g_mobile_sprite_source_boundary_trace = true;
+      g_mobile_sprite_source_boundary_count = 0;
+      lg::info("OTTSEL SPRITE SOURCE BOUNDARY: armed chain={} start=0x{:x} next=0x{:x} "
+               "vsync={} level='{}' camera-source-chain={} camera-source-transfer={}",
+               chain_no, start_offset, next_bucket, g_ottsel_ios_vsync_count,
+               g_mobile_camera_level, g_mobile_camera_last_chain, g_mobile_camera_last_transfer);
+    }
+  }
   DmaFollower dma(data, start_offset);
   MobileSpriteFrameJak1 frame{};
   MobileSpriteMatrix matrix{};
   bool have_frame = false;
   bool have_matrix = false;
+  u32 frame_transfer_index = UINT32_MAX;
+  u32 matrix_transfer_index = UINT32_MAX;
+  u64 frame_trace_hash = 0;
+  u64 frame_camera_trace_hash = 0;
+  u64 matrix_trace_hash = 0;
+  bool producer_setup_logged = false;
+  bool producer_setup_transfers_logged = false;
+  bool first_mscal_logged = false;
+  u32 group_no = 0;
   u32 drawn = 0;
+  u32 parser_group_count = 0;
+  u32 parser_sprite_count = 0;
+  u32 parser_hud_sprite_count = 0;
+  u32 parser_3d_sprite_count = 0;
+  u32 parser_other_sprite_count = 0;
+  u32 parser_first_tbp = UINT32_MAX;
+  u32 parser_last_tbp = 0;
   for (u32 transfer_index = 0; transfer_index < 256 && !dma.ended() &&
                                 dma.current_tag_offset() != next_bucket; ++transfer_index) {
+    const u32 header_offset = dma.current_tag_offset();
     DmaTransfer transfer = dma.read_and_advance();
     const VifCode vif1(transfer.vif1());
+    if (g_mobile_sprite_record_trace && !producer_setup_transfers_logged && !have_frame) {
+      u64 q0 = 0;
+      u64 q1 = 0;
+      u64 q2 = 0;
+      if (transfer.size_bytes >= 8) {
+        memcpy(&q0, transfer.data, sizeof(q0));
+      }
+      if (transfer.size_bytes >= 16) {
+        memcpy(&q1, transfer.data + 8, sizeof(q1));
+      }
+      if (transfer.size_bytes >= 24) {
+        memcpy(&q2, transfer.data + 16, sizeof(q2));
+      }
+      lg::info("OTTSEL SPRITE PRODUCER SETUP TRANSFER: chain={} transfer={} size={} "
+               "tag=0x{:016x} vif0=0x{:08x} vif1=0x{:08x} q0=0x{:016x} q1=0x{:016x} "
+               "q2=0x{:016x}",
+               chain_no, transfer_index, transfer.size_bytes, transfer.transferred_tag, transfer.vif0(),
+               transfer.vif1(), q0, q1, q2);
+    }
     if (transfer.size_bytes == sizeof(frame) && vif1.kind == VifCode::Kind::UNPACK_V4_32 &&
         (vif1.immediate & 0x3ff) == 0x3d4) {
       memcpy(&frame, transfer.data, sizeof(frame));
       have_frame = true;
+      frame_transfer_index = transfer_index;
+      frame_trace_hash = ottsel_sprite_trace_hash(transfer.data, sizeof(frame));
+      frame_camera_trace_hash = ottsel_sprite_camera_frame_hash(frame);
+      producer_setup_transfers_logged = true;
+      if (g_mobile_sprite_parser_trace) {
+        lg::info("OTTSEL SPRITE TRACE: frame transfer={} size={} imm=0x{:x}", transfer_index,
+                 transfer.size_bytes, vif1.immediate);
+      }
       continue;
     }
     if (transfer.size_bytes == sizeof(matrix) && vif1.kind == VifCode::Kind::UNPACK_V4_32 &&
         (vif1.immediate & 0x3ff) == 0x384) {
       memcpy(&matrix, transfer.data, sizeof(matrix));
       have_matrix = true;
+      matrix_transfer_index = transfer_index;
+      matrix_trace_hash = ottsel_sprite_trace_hash(transfer.data, sizeof(matrix));
+      if (g_mobile_sprite_record_trace && have_frame && !producer_setup_logged) {
+        producer_setup_logged = true;
+        lg::info("OTTSEL SPRITE PRODUCER SETUP: chain={} frame-transfer={} matrix-transfer={} "
+                 "pfog0={} inv-area={} camera-t=({}, {}, {}, {}) hvdf=({}, {}, {}, {}) "
+                 "basis-x=({}, {}, {}, {}) basis-y=({}, {}, {}, {}) frame-hash=0x{:x} "
+                 "camera-frame-hash=0x{:x} "
+                 "matrix-hash=0x{:x} vsync={} camera-packets={} camera-source-chain={} "
+                 "camera-source-transfer={} pc-level='{}' pc-trans=({}, {}, {})",
+                 chain_no, frame_transfer_index, matrix_transfer_index, frame.pfog0, frame.inv_area,
+                 matrix.camera[3].x, matrix.camera[3].y, matrix.camera[3].z, matrix.camera[3].w,
+                 matrix.hvdf.x, matrix.hvdf.y, matrix.hvdf.z, matrix.hvdf.w, frame.basis_x.x,
+                 frame.basis_x.y, frame.basis_x.z, frame.basis_x.w, frame.basis_y.x,
+                 frame.basis_y.y, frame.basis_y.z, frame.basis_y.w, frame_trace_hash,
+                 frame_camera_trace_hash, matrix_trace_hash, g_ottsel_ios_vsync_count,
+                 g_mobile_camera_packet_count,
+                 g_mobile_camera_last_chain,
+                 g_mobile_camera_last_transfer, g_mobile_camera_level, g_mobile_camera.trans[0],
+                 g_mobile_camera.trans[1], g_mobile_camera.trans[2]);
+      }
+      if (g_mobile_sprite_parser_trace) {
+        lg::info("OTTSEL SPRITE TRACE: matrix transfer={} size={} imm=0x{:x}", transfer_index,
+                 transfer.size_bytes, vif1.immediate);
+      }
       continue;
     }
     if (!have_frame || !have_matrix || !is_sprite_header(transfer)) {
@@ -1960,6 +2858,10 @@ static u32 render_mobile_sprite_bucket(const void* data,
     }
 
     const u32 sprite_count = *(const u32*)transfer.data;
+    if (g_mobile_sprite_parser_trace && have_frame && have_matrix) {
+      lg::info("OTTSEL SPRITE TRACE: header transfer={} count={} next=0x{:x}", transfer_index,
+               sprite_count, dma.current_tag_offset());
+    }
     if (sprite_count == 0 || sprite_count > 48 || dma.ended() ||
         dma.current_tag_offset() == next_bucket) {
       continue;
@@ -1976,13 +2878,329 @@ static u32 render_mobile_sprite_bucket(const void* data,
     }
     DmaTransfer run = dma.read_and_advance();
     const VifCode run_vif(run.vif1());
+    if (g_mobile_sprite_parser_trace && have_frame && have_matrix) {
+      lg::info("OTTSEL SPRITE TRACE: payload vectors={} adgif={} run-size={} run-vif=0x{:x} "
+               "run-kind={} run-imm={}",
+               vectors.size_bytes, adgifs.size_bytes, run.size_bytes, run.vif1(),
+               (u32)run_vif.kind, run_vif.immediate);
+    }
+    if (g_mobile_sprite_source_boundary_trace &&
+        g_mobile_sprite_source_boundary_count < 8 && run.size_bytes == 0 &&
+        run_vif.kind == VifCode::Kind::MSCAL) {
+      const auto phase = ottsel::classify_jak1_sprite_mscal(run_vif.immediate);
+      if (phase == ottsel::Jak1SpritePhase::ThreeD ||
+          phase == ottsel::Jak1SpritePhase::World2D ||
+          phase == ottsel::Jak1SpritePhase::Hud2D) {
+        const char* phase_name = phase == ottsel::Jak1SpritePhase::ThreeD
+                                     ? "3d"
+                                     : phase == ottsel::Jak1SpritePhase::World2D ? "world" : "hud";
+        const GsTex0 first_tex(((const AdGifData*)adgifs.data)[0].tex0_data);
+        const auto& first_vector = ((const MobileSpriteVec2d*)vectors.data)[0];
+        const auto& first_adgif = ((const AdGifData*)adgifs.data)[0];
+        lg::info("OTTSEL SPRITE SOURCE BOUNDARY: item={} chain={} vsync={} level='{}' "
+                 "phase={} mscal={} group={} transfer={} header=0x{:x} start=0x{:x} next=0x{:x} "
+                 "count={} tbp=0x{:x} psm={} tw={} th={} frame-transfer={} matrix-transfer={} "
+                 "pfog0={} inv-area={} camera-t=({}, {}, {}, {}) hvdf=({}, {}, {}, {}) "
+                 "frame-hash=0x{:x} camera-frame-hash=0x{:x} matrix-hash=0x{:x} "
+                 "camera-source-chain={} camera-source-transfer={} first-xyz=({}, {}, {}, {}) "
+                 "first-flag=({}, {}, {}, {}) first-rgba=({}, {}, {}, {}) first-tex0=0x{:x} "
+                 "first-tex1=0x{:x} first-clamp=0x{:x} first-alpha=0x{:x}",
+                 g_mobile_sprite_source_boundary_count, chain_no, g_ottsel_ios_vsync_count,
+                 g_mobile_camera_level, phase_name, run_vif.immediate, group_no, transfer_index,
+                 header_offset, start_offset, next_bucket, sprite_count, first_tex.tbp0(),
+                 (u32)first_tex.psm(), first_tex.tw(), first_tex.th(), frame_transfer_index,
+                 matrix_transfer_index, frame.pfog0, frame.inv_area, matrix.camera[3].x,
+                 matrix.camera[3].y, matrix.camera[3].z, matrix.camera[3].w, matrix.hvdf.x,
+                 matrix.hvdf.y, matrix.hvdf.z, matrix.hvdf.w, frame_trace_hash,
+                 frame_camera_trace_hash, matrix_trace_hash, g_mobile_camera_last_chain,
+                 g_mobile_camera_last_transfer, first_vector.xyz_sx.x, first_vector.xyz_sx.y,
+                 first_vector.xyz_sx.z, first_vector.xyz_sx.w, first_vector.flag_rot_sy.x,
+                 first_vector.flag_rot_sy.y, first_vector.flag_rot_sy.z, first_vector.flag_rot_sy.w,
+                 first_vector.rgba.x, first_vector.rgba.y, first_vector.rgba.z,
+                 first_vector.rgba.w, first_adgif.tex0_data, first_adgif.tex1_data,
+                 first_adgif.clamp_data, first_adgif.alpha_data);
+        ++g_mobile_sprite_source_boundary_count;
+      }
+    }
     if (run.size_bytes == 0 && run_vif.kind == VifCode::Kind::MSCAL && run_vif.immediate == 3) {
+      if (g_mobile_sprite_record_trace && !first_mscal_logged) {
+        first_mscal_logged = true;
+        lg::info("OTTSEL SPRITE PRODUCER MSCAL3: chain={} group={} transfer={} frame-transfer={} "
+                 "matrix-transfer={} frame-pfog0={} frame-inv-area={} first-tbp=0x{:x}",
+                 chain_no, group_no, transfer_index, frame_transfer_index, matrix_transfer_index,
+                 frame.pfog0, frame.inv_area,
+                 GsTex0(((const AdGifData*)adgifs.data)[0].tex0_data).tbp0());
+      }
+      const auto* parsed_adgifs = (const AdGifData*)adgifs.data;
+      const GsTex0 first_product_tex(parsed_adgifs[0].tex0_data);
+      static u32 product_zero_tbp_dumps = 0;
+      if (first_product_tex.tbp0() == 0 && product_zero_tbp_dumps < 8) {
+        ++product_zero_tbp_dumps;
+        lg::warn("OTTSEL SPRITE ZERO TEX PRODUCT: chain={} group={} count={} dump={} "
+                 "size={} vif0=0x{:08x} vif1=0x{:08x} tex0=0x{:016x} "
+                 "tex0-addr=0x{:016x} tex1=0x{:016x} tex1-addr=0x{:016x} "
+                 "clamp=0x{:016x} alpha=0x{:016x}",
+                 chain_no, group_no, sprite_count, product_zero_tbp_dumps,
+                 adgifs.size_bytes, adgifs.vif0(), adgifs.vif1(), parsed_adgifs[0].tex0_data,
+                 parsed_adgifs[0].tex0_addr,
+                 parsed_adgifs[0].tex1_data, parsed_adgifs[0].tex1_addr,
+                 parsed_adgifs[0].clamp_data, parsed_adgifs[0].alpha_data);
+        const auto* raw = reinterpret_cast<const u64*>(adgifs.data);
+        lg::warn("OTTSEL SPRITE ZERO TEX RAW: q0..4={:016x}/{:016x}/{:016x}/{:016x}/{:016x} "
+                 "q5..9={:016x}/{:016x}/{:016x}/{:016x}/{:016x}",
+                 raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7], raw[8], raw[9]);
+      }
+      if (g_mobile_sprite_parser_trace) {
+        const GsTex0 first_tex(parsed_adgifs[0].tex0_data);
+        parser_first_tbp = std::min(parser_first_tbp, first_tex.tbp0());
+        parser_last_tbp = first_tex.tbp0();
+        ++parser_group_count;
+        parser_sprite_count += sprite_count;
+      }
+      if (g_mobile_sprite_record_trace && g_mobile_sprite_record_trace_count == 0) {
+        log_mobile_sprite_texture_identity(parsed_adgifs[0], chain_no, group_no, sprite_count);
+      }
+      if (g_mobile_sprite_record_trace && g_mobile_sprite_record_trace_count < 64) {
+        const auto* record_vectors = (const MobileSpriteVec2d*)vectors.data;
+        const auto* record_adgifs = (const AdGifData*)adgifs.data;
+        const u32 records_to_log = std::min(sprite_count, 8u);
+        lg::info("OTTSEL SPRITE RECORDS: chain={} group={} count={} frame-pfog0={} "
+                 "frame-inv-area={} camera-t=({}, {}, {}, {}) pc-level='{}' "
+                 "pc-trans=({}, {}, {}) pc-fog={} pc-r0=({}, {}, {}) pc-r2=({}, {}, {}) "
+                 "pc-persp=({}, {}, {}, {}) pc-hvdf=({}, {})",
+                 chain_no, group_no, sprite_count, frame.pfog0, frame.inv_area,
+                 matrix.camera[3].x, matrix.camera[3].y, matrix.camera[3].z,
+                 matrix.camera[3].w, g_mobile_camera_level, g_mobile_camera.trans[0],
+                 g_mobile_camera.trans[1], g_mobile_camera.trans[2], g_mobile_camera.fog[0],
+                 g_mobile_camera.rot[0][0], g_mobile_camera.rot[0][1],
+                 g_mobile_camera.rot[0][2], g_mobile_camera.rot[2][0],
+                 g_mobile_camera.rot[2][1], g_mobile_camera.rot[2][2],
+                 g_mobile_camera.perspective[0][0], g_mobile_camera.perspective[1][1],
+                 g_mobile_camera.perspective[2][2], g_mobile_camera.perspective[2][3],
+                 g_mobile_camera.hvdf_off[2], g_mobile_camera.hvdf_off[3]);
+        for (u32 record = 0; record < records_to_log &&
+                                g_mobile_sprite_record_trace_count < 64; ++record) {
+          const auto& vector = record_vectors[record];
+          const auto& adgif = record_adgifs[record];
+          const GsTex0 tex0(adgif.tex0_data);
+          lg::info("OTTSEL SPRITE RECORDS: chain={} group={} index={} tbp=0x{:x} psm={} "
+                   "tw={} th={} tcc={} tfx={} tex0=0x{:016x} tex1=0x{:016x} "
+                   "clamp=0x{:016x} alpha=0x{:016x} xyz=({}, {}, {}, {}) "
+                   "flag=({}, {}, {}, {}) rgba=({}, {}, {}, {})",
+                   chain_no, group_no, record, tex0.tbp0(), (u32)tex0.psm(), tex0.tw(),
+                   tex0.th(), tex0.tcc(), (u32)tex0.tfx(), adgif.tex0_data, adgif.tex1_data,
+                   adgif.clamp_data, adgif.alpha_data, vector.xyz_sx.x, vector.xyz_sx.y,
+                   vector.xyz_sx.z, vector.xyz_sx.w, vector.flag_rot_sy.x,
+                   vector.flag_rot_sy.y, vector.flag_rot_sy.z, vector.flag_rot_sy.w,
+                   vector.rgba.x, vector.rgba.y, vector.rgba.z, vector.rgba.w);
+          ++g_mobile_sprite_record_trace_count;
+        }
+        ++group_no;
+        if (g_mobile_sprite_record_trace_count >= 64) {
+          g_mobile_sprite_record_trace = false;
+          lg::info("OTTSEL SPRITE RECORDS: bounded ledger complete records=64");
+        }
+      } else if (g_mobile_sprite_record_trace) {
+        g_mobile_sprite_record_trace = false;
+      }
       drawn += render_mobile_sprite_group0(frame, matrix,
                                            (const MobileSpriteVec2d*)vectors.data,
                                            (const AdGifData*)adgifs.data, sprite_count, raster);
+    } else if (run.size_bytes == 0 && run_vif.kind == VifCode::Kind::MSCAL &&
+               g_mobile_sprite_parser_trace) {
+      const auto phase = ottsel::classify_jak1_sprite_mscal(run_vif.immediate);
+      switch (phase) {
+        case ottsel::Jak1SpritePhase::Hud2D:
+          parser_hud_sprite_count += sprite_count;
+          break;
+        case ottsel::Jak1SpritePhase::ThreeD:
+          parser_3d_sprite_count += sprite_count;
+          break;
+        case ottsel::Jak1SpritePhase::Other:
+          parser_other_sprite_count += sprite_count;
+          break;
+        case ottsel::Jak1SpritePhase::World2D:
+          break;
+      }
     }
   }
+  if (g_mobile_sprite_source_boundary_trace && g_mobile_sprite_source_boundary_count >= 8) {
+    g_mobile_sprite_source_boundary_trace = false;
+    lg::info("OTTSEL SPRITE SOURCE BOUNDARY: complete items={}",
+             g_mobile_sprite_source_boundary_count);
+  }
+  if (g_mobile_sprite_parser_trace) {
+    lg::info("OTTSEL SPRITE TRACE: bucket complete chain={} vsync={} groups={} sprites={} hud-sprites={} "
+             "3d-sprites={} other-sprites={} first-tbp=0x{:x} last-tbp=0x{:x} "
+             "start=0x{:x} next=0x{:x}",
+             chain_no, g_ottsel_ios_vsync_count, parser_group_count, parser_sprite_count,
+             parser_hud_sprite_count, parser_3d_sprite_count, parser_other_sprite_count,
+             parser_first_tbp == UINT32_MAX ? 0 : parser_first_tbp, parser_last_tbp,
+             start_offset, next_bucket);
+    g_mobile_sprite_parser_trace = false;
+  }
   return drawn;
+}
+
+// Bucket 67 also carries standalone title/progress Direct GIF transfers after
+// its Sprite3 records.  The product path keeps the Sprite3 expansion above;
+// when the bounded Direct trace is armed, walk only those transfers through
+// the shared decoder with no raster consumer so the D0 packet can be compared
+// without changing the rendered frame.
+static void trace_mobile_direct_bucket(const void* data,
+                                       u32 start_offset,
+                                       u32 next_bucket,
+                                       OttselGifDecoder& decoder) {
+  if (!g_mobile_direct_trace.active) {
+    return;
+  }
+  static u32 trace_calls = 0;
+  if (trace_calls < 2) {
+    lg::info("OTTSEL MOBILE DIRECT: bucket trace begin start=0x{:x} next=0x{:x}",
+             start_offset, next_bucket);
+  }
+  DmaFollower dma(data, start_offset);
+  OttselRaster* old_raster = decoder.rst;
+  decoder.rst = nullptr;
+  u32 transfers = 0;
+  u32 glyphs = 0;
+  static bool direct_ir_metal_triggered = false;
+  // The title Direct records follow the nominal bucket-67 boundary through
+  // linked DMA data.  Keep this diagnostic window bounded to the 64-transfer
+  // capture used to identify them; the product Sprite3 walk remains bounded by
+  // the actual next-bucket address below.
+  for (u32 transfer_index = 0; transfer_index < 64 && !dma.ended();
+       ++transfer_index) {
+    DmaTransfer transfer = dma.read_and_advance();
+    ++transfers;
+    const VifCode vif0(transfer.vif0());
+    const VifCode vif1(transfer.vif1());
+    if (vif0.kind == VifCode::Kind::DIRECT || vif1.kind == VifCode::Kind::DIRECT) {
+      if (transfer.size_bytes >= 16) {
+        const GifTag tag(transfer.data);
+        const bool is_d0_glyph = tag.nloop() == 1 && tag.eop() && tag.pre() &&
+                                 tag.prim() == 0x5c && tag.nreg() == 13;
+        if (is_d0_glyph) {
+          ++glyphs;
+          if (glyphs == 1) {
+            // Isolate one unsplit packet from the normal-chain IR budget so
+            // this live comparison cannot be masked by earlier Direct data.
+            decoder.ordered_ir.clear();
+            decoder.reset_direct_geometry();
+            // The desktop D0 packet begins with only A+D(TEX0); its alpha,
+            // test, zbuf, and scissor values are the renderer defaults. Do
+            // not carry register state from an unrelated linked transfer
+            // into this isolated bucket proof.
+            decoder.st = OttselDrawState{};
+            decoder.have_direct_snapshot = false;
+            decoder.direct_scissor_seen = false;
+            decoder.record_boundary(ottsel::DirectIrKind::BucketBegin, 67);
+            decode_transfer(transfer, decoder);
+            decoder.record_boundary(ottsel::DirectIrKind::Flush,
+                                    u64(ottsel::DirectIrFlushReason::BucketEnd));
+            decoder.record_boundary(ottsel::DirectIrKind::BucketEnd, 67);
+            const std::string metal_ir_path =
+                ottsel_ios_writable_dir() + "ottsel-trace-metal-direct-ir";
+            if (!direct_ir_metal_triggered && g_metal &&
+                access(metal_ir_path.c_str(), F_OK) == 0) {
+              unlink(metal_ir_path.c_str());
+              direct_ir_metal_triggered = true;
+              // Match DirectRenderer's Jak 1 shader seam: XYZ is normalized
+              // from the GS 16-bit range into clip space, with the 512x448
+              // game viewport and interlace height adjustment applied before
+              // the native Metal drawable transform.
+              const auto metal_x = [](u32 value) {
+                return std::clamp((value / 65536.f - 0.5f) * 8.f + 0.5f, 0.f, 1.f);
+              };
+              const auto metal_y = [](u32 value) {
+                const float clip_y = -(value / 65536.f - 0.5f) * 32.f * (512.f / 448.f);
+                return std::clamp(0.5f - clip_y * 0.5f, 0.f, 1.f);
+              };
+              const float x = metal_x(decoder.direct_min_x);
+              const float y = metal_y(decoder.direct_min_y);
+              const float right = metal_x(decoder.direct_max_x + 1);
+              const float bottom = metal_y(decoder.direct_max_y + 1);
+              u32 direct_texture_width = 2;
+              u32 direct_texture_height = 2;
+              bool used_live_vram = false;
+              std::vector<u8> direct_ir_image;
+              if (decoder.have_direct_snapshot) {
+                const u64 direct_texture_key = decoder.last_direct_snapshot.tex0;
+                const GsTex0 direct_tex0(direct_texture_key);
+                const auto relocated_it = g_direct_relocated_textures.find(
+                    direct_texture_cache_key(direct_tex0.tbp0(), (u32)direct_tex0.psm()));
+                if (relocated_it != g_direct_relocated_textures.end()) {
+                  direct_texture_width = relocated_it->second.width;
+                  direct_texture_height = relocated_it->second.height;
+                  direct_ir_image = relocated_it->second.rgba;
+                  used_live_vram = true;
+                }
+              }
+              if (direct_ir_image.empty() && decoder.have_direct_snapshot) {
+                direct_ir_image = decode_direct_vram_texture(
+                    decoder.last_direct_snapshot.tex0, direct_texture_width,
+                    direct_texture_height, used_live_vram);
+              }
+              if (direct_ir_image.empty()) {
+                direct_texture_width = 2;
+                direct_texture_height = 2;
+                const auto generated = make_generated_direct_clut_image();
+                direct_ir_image.assign(generated.begin(), generated.end());
+              }
+              lg::info("OTTSEL METAL DIRECT: texture upload source={} size={}x{} "
+                       "image-checksum={}",
+                       used_live_vram ? "relocated-vram" : "generated-fallback", direct_texture_width,
+                       direct_texture_height,
+                       std::accumulate(direct_ir_image.begin(), direct_ir_image.end(), 0u));
+              const u64 texture_key = decoder.have_direct_snapshot
+                                          ? decoder.last_direct_snapshot.tex0
+                                          : 0;
+              const float direct_color[4] = {
+                  decoder.have_direct_snapshot ? decoder.last_direct_snapshot.rgba[0] / 255.f : 1.f,
+                  decoder.have_direct_snapshot ? decoder.last_direct_snapshot.rgba[1] / 255.f : 1.f,
+                  decoder.have_direct_snapshot ? decoder.last_direct_snapshot.rgba[2] / 255.f : 1.f,
+                  decoder.have_direct_snapshot ? decoder.last_direct_snapshot.rgba[3] / 255.f : 1.f};
+              ottsel_metal_set_direct_fixture(g_metal, direct_ir_image.data(), direct_texture_width,
+                                              direct_texture_height, texture_key, x, y,
+                                              std::max(0.01f, right - x),
+                                              std::max(0.01f, bottom - y), decoder.direct_min_s,
+                                              decoder.direct_min_t, decoder.direct_max_s,
+                                              decoder.direct_max_t, direct_color);
+              if (decoder.have_direct_snapshot) {
+                const GsScissor sc(decoder.last_direct_snapshot.scissor);
+                const bool scissor_seen = (decoder.last_direct_snapshot.flags & 8) != 0;
+                ottsel_metal_set_direct_fixture_state(
+                    g_metal, decoder.last_direct_snapshot.prim, decoder.last_direct_snapshot.tex0,
+                    decoder.last_direct_snapshot.tex1, decoder.last_direct_snapshot.clamp,
+                    decoder.last_direct_snapshot.frame, decoder.last_direct_snapshot.alpha,
+                    decoder.last_direct_snapshot.test, decoder.last_direct_snapshot.zbuf,
+                    decoder.last_direct_snapshot.texa,
+                    scissor_seen ? sc.x0() : 0,
+                    scissor_seen ? sc.x1() : 511, scissor_seen ? sc.y0() : 0,
+                    scissor_seen ? sc.y1() : 447);
+                lg::info("OTTSEL METAL DIRECT: scissor-emitted={}", scissor_seen);
+              }
+              lg::info("OTTSEL METAL DIRECT: IR geometry accepted x={} y={} right={} bottom={} "
+                       "st=({:.3f},{:.3f})..({:.3f},{:.3f}) rgba=({},{},{},{}) cpu-raster=0",
+                       decoder.direct_min_x, decoder.direct_min_y, decoder.direct_max_x,
+                       decoder.direct_max_y, decoder.direct_min_s, decoder.direct_min_t,
+                       decoder.direct_max_s, decoder.direct_max_t,
+                       decoder.have_direct_snapshot ? decoder.last_direct_snapshot.rgba[0] : 0,
+                       decoder.have_direct_snapshot ? decoder.last_direct_snapshot.rgba[1] : 0,
+                       decoder.have_direct_snapshot ? decoder.last_direct_snapshot.rgba[2] : 0,
+                       decoder.have_direct_snapshot ? decoder.last_direct_snapshot.rgba[3] : 0);
+            }
+          }
+        }
+      }
+    }
+  }
+  decoder.rst = old_raster;
+  if (trace_calls < 2) {
+    lg::info("OTTSEL MOBILE DIRECT: bucket trace end transfers={} glyphs={}",
+             transfers, glyphs);
+    ++trace_calls;
+  }
 }
 
 // Bucket 67 also contains title/progress text as standalone VIF DIRECT GIF
@@ -1996,6 +3214,17 @@ void gfx_send_chain(const void* data, u32 offset) {
   if (!data) {
     return;
   }
+  // The native Metal path owns TIE/TFRAG/Sprite3 composition. The VU1/GIF
+  // interpreter below is retained for SDL-only renderer diagnostics, but it
+  // must not consume the game thread in the product path when an empty or
+  // incomplete fragment list makes the microcode loop to its safety cap.
+  const bool run_cpu_vu_diagnostics =
+      !g_metal || std::getenv("OTTSEL_ENABLE_CPU_VU_DIAGNOSTICS") != nullptr;
+  static bool cpu_vu_policy_logged = false;
+  if (!cpu_vu_policy_logged) {
+    cpu_vu_policy_logged = true;
+    lg::info("OTTSEL VU1: cpu-diagnostic-path={}", run_cpu_vu_diagnostics ? "enabled" : "disabled");
+  }
   static bool bucket_trace_consumed = false;
   if (!bucket_trace_consumed) {
     const std::string bucket_trace_path = ottsel_ios_writable_dir() + "ottsel-trace-mobile-buckets";
@@ -2006,15 +3235,16 @@ void gfx_send_chain(const void* data, u32 offset) {
         DmaTag tag(*(const u64*)((const u8*)data + offset + index * 16));
         lg::info("OTTSEL BUCKET: index={} chain=0x{:x} qwc={} kind={} addr=0x{:x}", index,
                  offset, tag.qwc, (u32)tag.kind, tag.addr);
-        if (index == 67 && tag.addr) {
+        if ((index == 66 || index == 67) && tag.addr) {
           DmaFollower debug_dma(data, tag.addr);
           for (u32 transfer_index = 0; transfer_index < 64 && !debug_dma.ended(); ++transfer_index) {
             DmaTransfer transfer = debug_dma.read_and_advance();
             u32 w0 = transfer.size_bytes >= 4 ? *(const u32*)transfer.data : 0;
             u32 w1 = transfer.size_bytes >= 8 ? *(const u32*)(transfer.data + 4) : 0;
-            lg::info("OTTSEL BUCKET67: transfer={} size={} vif0=0x{:08x} vif1=0x{:08x} "
+            lg::info("OTTSEL BUCKET{}: transfer={} size={} vif0=0x{:08x} vif1=0x{:08x} "
                      "data={:08x}/{:08x}",
-                     transfer_index, transfer.size_bytes, transfer.vif0(), transfer.vif1(), w0, w1);
+                     index, transfer_index, transfer.size_bytes, transfer.vif0(), transfer.vif1(), w0,
+                     w1);
           }
         }
       }
@@ -2026,18 +3256,35 @@ void gfx_send_chain(const void* data, u32 offset) {
     g_raster.fb.assign((size_t)g_raster.fb_w * g_raster.fb_h * 4, 0);
   }
   g_dec.rst = &g_raster;
-  static u32 g_chain_no = 0;
-  g_chain_no++;
-  g_dec.chain_no = g_chain_no;
+  g_mobile_chain_no++;
+  g_dec.chain_no = g_mobile_chain_no;
   const std::string direct_trace_path = ottsel_ios_writable_dir() + "ottsel-trace-mobile-direct";
   if (!g_mobile_direct_trace.active && access(direct_trace_path.c_str(), F_OK) == 0) {
     unlink(direct_trace_path.c_str());
     g_mobile_direct_trace = {};
     g_mobile_direct_trace.active = true;
-    g_mobile_direct_trace.start_chain = g_chain_no;
+    g_mobile_direct_trace.start_chain = g_mobile_chain_no;
     g_mobile_direct_trace.draw_start = g_raster.draw_count;
-    lg::info("OTTSEL MOBILE DIRECT: trace accepted at chain={} draw-start={}", g_chain_no,
+    g_dec.ordered_ir.clear();
+    lg::info("OTTSEL MOBILE DIRECT: trace accepted at chain={} draw-start={}", g_mobile_chain_no,
              g_mobile_direct_trace.draw_start);
+  }
+  static bool direct_fixture_triggered = false;
+  const std::string direct_fixture_path =
+      ottsel_ios_writable_dir() + "ottsel-trace-metal-direct-fixture";
+  if (!direct_fixture_triggered && g_metal && access(direct_fixture_path.c_str(), F_OK) == 0) {
+    unlink(direct_fixture_path.c_str());
+    direct_fixture_triggered = true;
+    // Generated 2x2 red/transparent checkerboard; no protected texels or
+    // CPU-raster output enter this native Metal fixture path.
+    static constexpr unsigned char kDirectFixtureImage[16] = {
+        255, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0, 255, 0, 0, 255};
+    static constexpr float kDirectFixtureColor[4] = {1.f, 1.f, 1.f, 1.f};
+    ottsel_metal_set_direct_fixture(g_metal, kDirectFixtureImage, 2, 2, 0, 0.375f, 0.375f,
+                                    0.25f, 0.25f, 0.f, 0.f, 1.f, 1.f,
+                                    kDirectFixtureColor);
+    lg::info("OTTSEL METAL DIRECT: fixture accepted image=2x2 rect=0.375,0.375,0.25,0.25 "
+             "cpu-raster=0");
   }
   const std::string generic_probe_path = ottsel_ios_writable_dir() + "ottsel-probe-generic-vu";
   if (!g_mobile_generic_probe_pending && access(generic_probe_path.c_str(), F_OK) == 0) {
@@ -2045,18 +3292,10 @@ void gfx_send_chain(const void* data, u32 offset) {
     g_mobile_generic_probe_pending = true;
     lg::info("OTTSEL GENERIC VU: probe accepted; awaiting MSCAL 46");
   }
-  // Clear the composed frame once per ~90 chains (a coarse frame boundary)
-  // and present it periodically so the rasterizer output is visible.
+  // Keep the CPU rasterizer available only for bounded diagnostics while the
+  // native Metal scene owns presentation.
   if (g_chain_no % 90 == 1) {
     g_raster.clear(0);
-  }
-  if (g_chain_no % 90 == 0 && g_metal && g_raster.draw_count > 0) {
-    g_frame = g_raster.fb;
-    g_fw = g_raster.fb_w;
-    g_fh = g_raster.fb_h;
-    g_frame_pending = true;
-    lg::info("OTTSEL RASTER: published composed {}x{} (draws={})", g_raster.fb_w,
-             g_raster.fb_h, g_raster.draw_count);
   }
   if (g_chain_no % 45 == 0) {
     static u32 ottsel_dc_logged = 0;
@@ -2086,10 +3325,12 @@ void gfx_send_chain(const void* data, u32 offset) {
     g_vu1_gifwords_period = 0;
     g_dec.prims_logged = g_dec.prims_logged > 8 ? g_dec.prims_logged - 8 : 0u;
   }
-  if (g_mobile_direct_trace.active && g_chain_no - g_mobile_direct_trace.start_chain >= 180) {
-    lg::info("OTTSEL MOBILE DIRECT: summary chains=180 transfers={} bytes={} gif-tags={} "
+  if (g_mobile_direct_trace.active &&
+      g_chain_no - g_mobile_direct_trace.start_chain >= kMobileDirectTraceChains) {
+    lg::info("OTTSEL MOBILE DIRECT: summary chains={} transfers={} bytes={} gif-tags={} "
              "packed={} reglist={} image={} sprites={} triangles={} strips={} "
              "sprite-mscal(init={} world={} hud={} 3d={} other={}) raster-draws={}→{}",
+             kMobileDirectTraceChains,
              g_mobile_direct_trace.direct_transfers, g_mobile_direct_trace.direct_bytes,
              g_mobile_direct_trace.gif_tags, g_mobile_direct_trace.packed_tags,
              g_mobile_direct_trace.reglist_tags, g_mobile_direct_trace.image_tags,
@@ -2310,7 +3551,14 @@ void gfx_send_chain(const void* data, u32 offset) {
         // BOT21d: the far path's output loop needs more than the 50k cap
         // (it reaches the strip-output phase at pc~1687 but hits the cap
         // before the XGKICK).  Use the original cap for tfrag runs.
-        ottsel_vu1::execute(g_vu, g_ottsel_spr_ran ? 400000 : 50000);
+        if (run_cpu_vu_diagnostics) {
+          ottsel_vu1::execute(g_vu, g_ottsel_spr_ran ? 400000 : 50000);
+        } else {
+          g_vu.executed_instructions = 0;
+          g_vu.hit_instruction_limit = false;
+          g_vu.xgkick_count = 0;
+          g_vu.gif_out.clear();
+        }
         ottsel_vu1::ottsel_vu1_set_readlog(0);
         if (first_nonzero_tfrag_entry) {
           lg::info("OTTSEL VU1DRAW: result executed={} capped={} pc={} xgkicks={} gif={} "
@@ -2457,6 +3705,8 @@ void gfx_send_chain(const void* data, u32 offset) {
     VifCode v0(t.vif0());
     if ((v0.kind == VifCode::Kind::PC_PORT || v1.kind == VifCode::Kind::PC_PORT) &&
         t.size_bytes == sizeof(OttselPcPortData)) {
+      g_mobile_camera_last_chain = g_chain_no;
+      g_mobile_camera_last_transfer = count;
       capture_mobile_camera(t.data, t.size_bytes);
     }
     // Full-transfer capture of the first tfrag-bearing chain (all vif kinds,
@@ -2923,14 +4173,97 @@ void gfx_send_chain(const void* data, u32 offset) {
     }
     decode_transfer(t, g_dec);
   }
-  // Bucket 67 is the Jak 1 debug/Sprite3 stream used by title and progress
-  // text.  Its PC-port representation has no VU program to execute, so
-  // consume the group-0 blocks directly after the normal chain walk.
+  // Jak 1's bucket-66 table entry carries Sprite3 setup; the populated
+  // Sprite3 payload begins at the bucket-67 data address and the retained
+  // product walk spans through bucket 68. Keep that walk distinct from the
+  // bucket-67 Direct packet decoder; classify packet ownership before any
+  // Direct consumer is allowed to act.
+  const DmaTag setup_bucket(*(const u64*)((const u8*)data + offset + 65 * 16));
+  const DmaTag sprite_bucket(*(const u64*)((const u8*)data + offset + 66 * 16));
   const DmaTag debug_bucket(*(const u64*)((const u8*)data + offset + 67 * 16));
   const DmaTag next_bucket(*(const u64*)((const u8*)data + offset + 68 * 16));
-  if (debug_bucket.addr && next_bucket.addr) {
+  struct SpriteFrameAggregate {
+    bool active = false;
+    u32 vsync = 0;
+    u32 chains = 0;
+    MobileSpritePhaseSummary sum{};
+  };
+  static SpriteFrameAggregate sprite_frame_aggregate;
+  const std::string frame_aggregate_path =
+      ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite-frame-aggregate";
+  if (!sprite_frame_aggregate.active && access(frame_aggregate_path.c_str(), F_OK) == 0) {
+    unlink(frame_aggregate_path.c_str());
+    sprite_frame_aggregate = {};
+    sprite_frame_aggregate.active = true;
+    sprite_frame_aggregate.vsync = g_ottsel_ios_vsync_count;
+    lg::info("OTTSEL SPRITE FRAME AGG: accepted vsync={} chain={}",
+             sprite_frame_aggregate.vsync, g_chain_no);
+  }
+  if (sprite_frame_aggregate.active && sprite_frame_aggregate.chains > 0 &&
+      g_ottsel_ios_vsync_count != sprite_frame_aggregate.vsync) {
+    lg::info("OTTSEL SPRITE FRAME AGG: complete vsync={} chains={} groups={} sprites={} "
+             "world={} hud={} 3d={} other={}",
+             sprite_frame_aggregate.vsync, sprite_frame_aggregate.chains,
+             sprite_frame_aggregate.sum.groups, sprite_frame_aggregate.sum.sprites,
+             sprite_frame_aggregate.sum.world, sprite_frame_aggregate.sum.hud,
+             sprite_frame_aggregate.sum.three_d, sprite_frame_aggregate.sum.other);
+    for (u32 item = 0; item < sprite_frame_aggregate.sum.item_count; ++item) {
+      const auto& entry = sprite_frame_aggregate.sum.items[item];
+      const char* phase_name = "other";
+      switch (entry.phase) {
+        case ottsel::Jak1SpritePhase::World2D:
+          phase_name = "world";
+          break;
+        case ottsel::Jak1SpritePhase::Hud2D:
+          phase_name = "hud";
+          break;
+        case ottsel::Jak1SpritePhase::ThreeD:
+          phase_name = "3d";
+          break;
+        case ottsel::Jak1SpritePhase::Other:
+          break;
+      }
+      lg::info("OTTSEL SPRITE FRAME AGG ITEM: vsync={} item={} phase={} count={} tbp=0x{:x} "
+               "psm={} tw={} th={}",
+               sprite_frame_aggregate.vsync, item, phase_name, entry.count, entry.tbp,
+               entry.psm, entry.tw, entry.th);
+    }
+    sprite_frame_aggregate.active = false;
+  }
+  if (sprite_bucket.addr && debug_bucket.addr) {
+    if (sprite_frame_aggregate.active && next_bucket.addr &&
+        g_ottsel_ios_vsync_count == sprite_frame_aggregate.vsync) {
+      MobileSpritePhaseSummary current{};
+      trace_mobile_sprite_phase_bucket(data, sprite_bucket.addr, next_bucket.addr, g_chain_no,
+                                       "frame-aggregate", &current, false);
+      sprite_frame_aggregate.sum.groups += current.groups;
+      sprite_frame_aggregate.sum.sprites += current.sprites;
+      sprite_frame_aggregate.sum.world += current.world;
+      sprite_frame_aggregate.sum.hud += current.hud;
+      sprite_frame_aggregate.sum.three_d += current.three_d;
+      sprite_frame_aggregate.sum.other += current.other;
+      for (u32 item = 0; item < current.item_count &&
+                         sprite_frame_aggregate.sum.item_count <
+                             sprite_frame_aggregate.sum.items.size();
+           ++item) {
+        sprite_frame_aggregate.sum.items[sprite_frame_aggregate.sum.item_count++] =
+            current.items[item];
+      }
+      ++sprite_frame_aggregate.chains;
+    }
+    static bool sprite_product_window_consumed = false;
+    const std::string product_window_path =
+        ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite-product-window";
+    if (!sprite_product_window_consumed && mobile_sprite_village1_phase() && next_bucket.addr &&
+        access(product_window_path.c_str(), F_OK) == 0) {
+      unlink(product_window_path.c_str());
+      sprite_product_window_consumed = true;
+      trace_mobile_sprite_phase_bucket(data, sprite_bucket.addr, next_bucket.addr, g_chain_no,
+                                       "product-66-to-68");
+    }
     const u32 sprite_drawn =
-        render_mobile_sprite_bucket(data, debug_bucket.addr, next_bucket.addr, g_raster);
+        render_mobile_sprite_bucket(data, sprite_bucket.addr, next_bucket.addr, g_raster,
+                                    g_chain_no);
     static bool sprite_trace_requested = false;
     if (!sprite_trace_requested) {
       const std::string sprite_trace_path = ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite";
@@ -2939,11 +4272,78 @@ void gfx_send_chain(const void* data, u32 offset) {
         sprite_trace_requested = true;
       }
     }
-    if (sprite_trace_requested) {
-      lg::info("OTTSEL SPRITE: group-0 sprites={} debug=0x{:x} next=0x{:x}", sprite_drawn,
-               debug_bucket.addr, next_bucket.addr);
+    if (sprite_trace_requested && sprite_drawn > 0) {
+      lg::info("OTTSEL SPRITE: chain={} vsync={} group-0 sprites={} debug=0x{:x} next=0x{:x}",
+               g_chain_no, g_ottsel_ios_vsync_count, sprite_drawn, sprite_bucket.addr,
+               debug_bucket.addr);
       sprite_trace_requested = false;
     }
+  }
+  if (debug_bucket.addr && next_bucket.addr) {
+    static bool sprite_phase_bucket65_consumed = false;
+    const std::string phase_bucket65_path =
+        ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite-bucket65";
+    if (!sprite_phase_bucket65_consumed && mobile_sprite_village1_phase() &&
+        setup_bucket.addr && sprite_bucket.addr && access(phase_bucket65_path.c_str(), F_OK) == 0) {
+      unlink(phase_bucket65_path.c_str());
+      sprite_phase_bucket65_consumed = true;
+      lg::info("OTTSEL SPRITE PHASE WINDOW: chain={} vsync={} bucket65=0x{:x} bucket66=0x{:x}",
+               g_chain_no, g_ottsel_ios_vsync_count, setup_bucket.addr, sprite_bucket.addr);
+      trace_mobile_sprite_phase_bucket(data, setup_bucket.addr, sprite_bucket.addr, g_chain_no,
+                                       "bucket65-window");
+    }
+    static bool sprite_phase_window_consumed = false;
+    const std::string phase_window_path =
+        ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite-phase-window";
+    if (!sprite_phase_window_consumed && mobile_sprite_village1_phase() &&
+        access(phase_window_path.c_str(), F_OK) == 0) {
+      unlink(phase_window_path.c_str());
+      sprite_phase_window_consumed = true;
+      lg::info("OTTSEL SPRITE PHASE WINDOW: chain={} vsync={} bucket66=0x{:x} bucket67=0x{:x} "
+               "bucket68=0x{:x}",
+               g_chain_no, g_ottsel_ios_vsync_count, sprite_bucket.addr, debug_bucket.addr,
+               next_bucket.addr);
+      trace_mobile_sprite_phase_bucket(data, sprite_bucket.addr, debug_bucket.addr, g_chain_no,
+                                       "bucket66-window");
+      trace_mobile_sprite_phase_bucket(data, debug_bucket.addr, next_bucket.addr, g_chain_no,
+                                       "bucket67-window");
+    }
+    static bool sprite_phase_bucket67_consumed = false;
+    const std::string phase_bucket67_path =
+        ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite-bucket67";
+    if (!sprite_phase_bucket67_consumed && mobile_sprite_village1_phase() &&
+        access(phase_bucket67_path.c_str(), F_OK) == 0) {
+      unlink(phase_bucket67_path.c_str());
+      sprite_phase_bucket67_consumed = true;
+      trace_mobile_sprite_phase_bucket(data, debug_bucket.addr, next_bucket.addr, g_chain_no,
+                                       "bucket67");
+    }
+    static bool bucket67_world_probe_consumed = false;
+    const std::string bucket67_world_probe_path =
+        ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite-bucket67-world-metal";
+    if (!bucket67_world_probe_consumed && access(bucket67_world_probe_path.c_str(), F_OK) == 0) {
+      unlink(bucket67_world_probe_path.c_str());
+      bucket67_world_probe_consumed = true;
+      const bool old_probe_requested = g_mobile_native_sprite_probe_requested;
+      const bool old_uploaded = g_mobile_native_sprite_uploaded;
+      const u32 old_candidates = g_mobile_native_sprite_candidates;
+      g_mobile_bucket67_world_probe_active = true;
+      g_mobile_native_sprite_probe_requested = true;
+      g_mobile_native_sprite_uploaded = false;
+      g_mobile_native_sprite_candidates = 0;
+      const u32 drawn = render_mobile_sprite_bucket(data, debug_bucket.addr, next_bucket.addr,
+                                                    g_raster, g_chain_no);
+      const bool uploaded = g_mobile_native_sprite_uploaded;
+      const u32 candidates = g_mobile_native_sprite_candidates;
+      g_mobile_bucket67_world_probe_active = false;
+      g_mobile_native_sprite_probe_requested = old_probe_requested;
+      g_mobile_native_sprite_uploaded = old_uploaded;
+      g_mobile_native_sprite_candidates = old_candidates;
+      lg::info("OTTSEL SPRITE METAL BUCKET67: chain={} vsync={} drawn={} candidates={} "
+               "fixture-uploaded={} cpu-product-frame=0",
+               g_chain_no, g_ottsel_ios_vsync_count, drawn, candidates, uploaded);
+    }
+    trace_mobile_direct_bucket(data, debug_bucket.addr, next_bucket.addr, g_dec);
   }
 }
 // Read the tpage id back out of the header (offset 8).
@@ -3298,7 +4698,48 @@ void gfx_texture_upload_now(const u8* tpage, int mode, u32 s7_ptr) {
   std::vector<unsigned char> rgba;
   rgba.resize(4096 * 4096 * 4);
   u32 tex_idx = 0;
-  if (decode_largest_texture(tpage, mode, s7_ptr, rgba.data(), w, h, &tex_idx)) {
+  const bool decoded_page = decode_largest_texture(tpage, mode, s7_ptr, rgba.data(), w, h,
+                                                    &tex_idx);
+  if (decoded_page) {
+    // Retain every decoded texture in the native keyed cache. The existing
+    // largest-texture decode remains the CPU-raster diagnostic, but Direct
+    // resolution must be able to select the exact TEX0/TBP upload later.
+    OttselGoalTexturePage upload_page;
+    memcpy(&upload_page, tpage, sizeof(upload_page));
+    u32 direct_uploads = 0;
+    for (s32 index = 0; index < upload_page.length; ++index) {
+      u32 desc_ptr = 0;
+      memcpy(&desc_ptr, tpage + sizeof(OttselGoalTexturePage) + 4 * index, sizeof(desc_ptr));
+      if (!desc_ptr || desc_ptr >= 0x08000000) {
+        continue;
+      }
+      OttselGoalTexture tex;
+      memcpy(&tex, g_ee_main_mem + desc_ptr, sizeof(tex));
+      const u32 tex_width = (u32)std::max<s16>(0, tex.w);
+      const u32 tex_height = (u32)std::max<s16>(0, tex.h);
+      if (!tex_width || !tex_height || tex_width > 2048 || tex_height > 2048 || !tex.dest[0]) {
+        continue;
+      }
+      std::vector<u8> direct_rgba((size_t)tex_width * tex_height * 4, 0);
+      const bool texture_decoded = download_texture_rgba8888(
+          direct_rgba.data(), tex.dest[0], std::max(1u, (u32)tex.width[0]), tex_width,
+          tex_height, tex.psm, tex.clutpsm, tex.clut_dest);
+      if (!texture_decoded) {
+        continue;
+      }
+      g_direct_texture_metadata[tex.dest[0]] = {
+          tex_width, tex_height, tex.psm, tex.clutpsm, tex.clut_dest};
+      ottsel_metal_upload_direct_texture(g_metal, direct_rgba.data(), tex_width, tex_height,
+                                         direct_texture_cache_key(tex.dest[0], tex.psm));
+      ++direct_uploads;
+    }
+    if (direct_uploads) {
+      static u32 direct_page_upload_logs = 0;
+      if (direct_page_upload_logs++ < 12) {
+        lg::info("OTTSEL METAL TEXPAGE: id=0x{:x} keyed-direct-textures={}", upload_page.id,
+                 direct_uploads);
+      }
+    }
     // Decode uploaded textures into fake VRAM for the debug rasterizer, but
     // never present a page directly: it is asset data, not composed graphics.
     // The village boot uploads small all-black/all-gray tpage regions
@@ -3354,7 +4795,35 @@ void gfx_texture_upload_now(const u8* tpage, int mode, u32 s7_ptr) {
     }
   }
 }
-void gfx_texture_relocate(u32, u32, u32) {}
+void gfx_texture_relocate(u32 destination, u32 source, u32 format) {
+  const auto source_it = g_direct_texture_metadata.find(source);
+  if (source_it == g_direct_texture_metadata.end()) {
+    lg::info("OTTSEL METAL RELOCATE: source-miss dst=0x{:x} src=0x{:x} format=0x{:x}",
+             destination, source, format);
+    return;
+  }
+  const DirectTextureMetadata& metadata = source_it->second;
+  DirectRelocatedTexture relocated;
+  relocated.width = metadata.width;
+  relocated.height = metadata.height;
+  relocated.rgba.assign((size_t)relocated.width * relocated.height * 4, 0);
+  if (!download_texture_rgba8888(relocated.rgba.data(), source,
+                                  std::max(1u, metadata.width / 64), relocated.width,
+                                  relocated.height, metadata.psm, metadata.clut_psm,
+                                  metadata.clut_addr)) {
+    lg::info("OTTSEL METAL RELOCATE: decode-failed dst=0x{:x} src=0x{:x} format=0x{:x}",
+             destination, source, format);
+    return;
+  }
+  const u64 cache_key = direct_texture_cache_key(destination, format);
+  g_direct_relocated_textures[cache_key] = relocated;
+  if (g_metal) {
+    ottsel_metal_upload_direct_texture(g_metal, relocated.rgba.data(), relocated.width,
+                                       relocated.height, cache_key);
+  }
+  lg::info("OTTSEL METAL RELOCATE: source=0x{:x} destination=0x{:x} format=0x{:x} size={}x{}",
+           source, destination, format, relocated.width, relocated.height);
+}
 void gfx_set_levels(const std::vector<std::string>& levels) {
   request_mobile_levels(levels, "want");
 }
@@ -3395,13 +4864,9 @@ const void* ottsel_metal_gfx_register(void* metal) {
 }
 
 int ottsel_metal_gfx_game_frame(const unsigned char** rgba, int* w, int* h) {
-  if (g_frame_pending && g_fw > 0 && g_fh > 0 && !g_frame.empty()) {
-    *rgba = g_frame.data();
-    *w = g_fw;
-    *h = g_fh;
-    g_frame_pending = false;
-    return 1;
-  }
+  (void)rgba;
+  (void)w;
+  (void)h;
   return 0;
 }
 
