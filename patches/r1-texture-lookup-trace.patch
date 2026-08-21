@@ -1,0 +1,41 @@
+diff --git a/goal_src/jak1/engine/gfx/texture/texture.gc b/goal_src/jak1/engine/gfx/texture/texture.gc
+index ca5c19002..e0099cf82 100644
+--- a/goal_src/jak1/engine/gfx/texture/texture.gc
++++ b/goal_src/jak1/engine/gfx/texture/texture.gc
+@@ -1827,14 +1827,34 @@
+           (set! (-> *texture-pool* allocate-func) old-alloc-func)))
+       dir-entry)))
+
++(define *ottsel-texture-lookup-trace-count* 0)
++
+ (defun lookup-texture-by-id ((arg0 texture-id))
+   "Look up a texture by ID, loading it from debug network if its not loaded.
+    Default allocates if it has to load, so it will permanently use VRAM"
+-  (let ((v1-0 (texture-page-login arg0 texture-page-default-allocate loading-level)))
++  (let ((v1-0 (texture-page-login arg0 texture-page-default-allocate loading-level))
++        (v1-1 (the-as texture #f)))
+     (when (and v1-0 (< (-> arg0 index) (the-as uint (-> v1-0 page length))))
+       ;;(format #t "texture:~%")
+       ;;(inspect (-> v1-0 page data (-> arg0 index)))
+-      (-> v1-0 page data (-> arg0 index)))))
++      (set! v1-1 (-> v1-0 page data (-> arg0 index))))
++    ;; Bounded producer-side lookup trace. Numeric values use the GOAL float
++    ;; formatter because the iOS formatter leaves integer directives blank.
++    (when (and (= (-> arg0 page) 2)
++               (< *ottsel-texture-lookup-trace-count* 128))
++      (format 0 "OTTSEL TEX LOOKUP: page=~f index=~f result=~A"
++              (the float (-> arg0 page))
++              (the float (-> arg0 index))
++              (if v1-1 "hit" "miss"))
++      (when v1-1
++        (format 0 " dest=~f size=~fx~f psm=~f~%"
++                (the float (-> v1-1 dest))
++                (the float (-> v1-1 w))
++                (the float (-> v1-1 h))
++                (the float (-> v1-1 psm))))
++      (unless v1-1 (format 0 "~%"))
++      (+! *ottsel-texture-lookup-trace-count* 1))
++    v1-1))
+
+ (defmethod unload! ((this texture-pool) (arg0 texture-page))
+   "Unload the texture from the directory"

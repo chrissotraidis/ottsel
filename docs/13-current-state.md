@@ -916,3 +916,13 @@ model.
   and GAME.CGO 3,829,760 code words PASS.
 - **Next: A1.1** — real KERNEL.CGO dispatcher slice in signed Mach-O
   `__TEXT` via the proven H2.5 `.word`->clang route.
+
+## 2026-08-21 handoff note
+
+The current stop is an R1 source/resource parity investigation, not a
+renderer-policy decision. macOS has the stronger partial behavioral reference
+and iPad has only signed boot/progress plus blank or corrupted partial Metal
+output. The new page-2 texture lookup trace is proven on macOS only; the iOS
+rebuild was stopped before capture. Preserve the dirty maintained upstream
+worktree and continue with the exact next experiment in
+`docs/BOT34_HANDOFF.md`.

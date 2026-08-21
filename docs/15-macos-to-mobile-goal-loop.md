@@ -281,3 +281,13 @@ does not establish physical-device acceptance.
 4. Rebuild, run only that platform, and capture the exact new behavior.
 5. Mark the gate verified, still-open, or blocked with evidence paths in
    `docs/13-current-state.md`; never promote a platform from inference.
+
+### Handoff update — 2026-08-21
+
+The current first open dependency is a source-side texture lookup comparison,
+not a TBP remap. The bounded `lookup-texture-by-id` trace has a completed
+macOS capture but no completed iPad capture because the intended iOS rebuild
+was stopped. Compare raw page/index, particle ID, AdGif TEX0, and native
+`first-tex0`/TBP on one fresh validated-pack boot. Keep the blank/partially
+corrupted Simulator result outside the playability bar. Detailed stop state,
+technical debt, and commands are in `docs/BOT34_HANDOFF.md`.

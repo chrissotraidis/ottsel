@@ -1841,3 +1841,18 @@ and corrupted. This rules out a native TBP remap as the first mismatch. The
 next experiment is the same producer-ID/TEX0 trace on macOS at the matching
 Village1 transition, followed by source/data-family reconciliation. See
 `docs/evidence/R1/r1-particle-adgif-output-mapping-2026-08-21.md`.
+
+## 2026-08-21 — handoff at the texture lookup gate
+
+The next bounded producer slice retains the result of
+`lookup-texture-by-id` and records page-2 page/index hits. The completed
+macOS arm64 capture includes hits for indices `0x12`, `0xf`, `0x1e`, `0x0`,
+`0x1c`, and `0x3`; the stable corresponding AdGif/native phase remains
+`TBP=0x24f2`. The iOS rebuild intended to carry this trace was stopped at the
+user's request, so there is no iPad lookup-trace proof yet. `dest=0` in this
+diagnostic output is not authoritative. The first open product dependency is
+now the same raw lookup/page-directory/allocation comparison on iPad, before
+any TBP, camera, shader, or Metal remap. The Simulator remains blank or
+partially corrupted and is not playable proof. See
+`docs/evidence/R1/r1-texture-lookup-page-directory-trace-2026-08-21.md` and
+`docs/BOT34_HANDOFF.md`.
