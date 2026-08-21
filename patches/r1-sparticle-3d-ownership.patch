@@ -11,7 +11,7 @@ index 963ed7449..53680239a 100644
  (defun process-particles ()
    "main particle system update."
    (local-vars (v1-29 int) (gp-0 int))
-@@ -459,6 +461,18 @@
+@@ -459,6 +461,26 @@
      (sp-process-particle-system *sp-particle-system-2d* 0 *sprite-array-2d*)
      (sp-process-particle-system *sp-particle-system-2d* 1 *sprite-array-2d*)
      (sp-process-particle-system *sp-particle-system-3d* 0 (the-as sprite-array-2d *sprite-array-3d*))
@@ -22,10 +22,18 @@ index 963ed7449..53680239a 100644
 +          (ottsel-3d-valid (-> *sprite-array-3d* num-valid 0)))
 +      (when (and (or (> ottsel-3d-alloc 0) (> ottsel-3d-valid 0))
 +                 (< *ottsel-sparticle-3d-trace-count* 32))
-+        (format 0 "OTTSEL SPARTICLE 3D: alloc-state=~A valid-state=~A blocks-state=~A~%"
++        (let ((ottsel-first-adgif (-> *sprite-array-3d* adgif-data 0)))
++          (format 0 "OTTSEL SPARTICLE 3D: alloc-state=~A valid-state=~A blocks-state=~A "
 +                (if (> ottsel-3d-alloc 0) "nonzero" "zero")
 +                (if (> ottsel-3d-valid 0) "nonzero" "zero")
 +                (if (> (-> *sp-particle-system-3d* blocks 0) 0) "nonzero" "zero"))
++          (format 0 "valid=~f first-prims3-reg=~f first-tbp=~f first-size=~fx~f~%"
++                  (the float ottsel-3d-valid)
++                  (the float (-> ottsel-first-adgif texture-id))
++                  (the float (-> ottsel-first-adgif tex0 tbp0))
++                  (the float (ash 1 (-> ottsel-first-adgif tex0 tw)))
++                  (the float (ash 1 (-> ottsel-first-adgif tex0 th))))
++          )
 +        (+! *ottsel-sparticle-3d-trace-count* 1)))
      (if *debug-segment*
        (add-frame (-> *display* frames (-> *display* on-screen) frame profile-bar 0)

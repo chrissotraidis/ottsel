@@ -132,6 +132,13 @@ Target tree: `open-goal/jak-project` pinned at
   setup. They are diagnostic-only and do not remap textures or alter
   rendering.
 
+- **`r1-texture-lookup-trace.patch`** — bounded GOAL-side page-2
+  `lookup-texture-by-id` tracing, retaining the resolved texture only for
+  diagnostics. It does not change lookup behavior or rendering. The printed
+  `dest` field is not authoritative; correlate raw page/index with AdGif TEX0
+  and native `first-tex0`/TBP. See
+  `docs/evidence/R1/r1-texture-lookup-page-directory-trace-2026-08-21.md`.
+
 ## Superseded / historical (do not apply)
 
 - `h1-arm64-goal-function-codegen.patch` — H1 slice only (subset of the
