@@ -1,0 +1,15 @@
+diff --git a/common/dma/ottsel_sprite_math.h b/common/dma/ottsel_sprite_math.h
+--- a/common/dma/ottsel_sprite_math.h
++++ b/common/dma/ottsel_sprite_math.h
+@@ -20,6 +20,14 @@
+ constexpr unsigned int sprite3_primary_alpha_ref() {
+   return 2;  // 2 / 128 = 0.015625, the Metal state equivalent of 0.016.
+ }
++
++inline bool sprite3_primary_alpha_pass(float alpha) {
++  return alpha >= static_cast<float>(sprite3_primary_alpha_ref()) / 128.f;
++}
++
++inline float sprite3_source_over_rgb(float source, float destination, float alpha) {
++  return source * alpha + destination * (1.f - alpha);
++}

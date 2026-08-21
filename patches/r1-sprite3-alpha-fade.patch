@@ -1,0 +1,49 @@
+diff --git a/common/dma/ottsel_sprite_math.h b/common/dma/ottsel_sprite_math.h
+new file mode 100644
+index 00000000..a6d4d5b
+--- /dev/null
++++ b/common/dma/ottsel_sprite_math.h
+@@ -0,0 +1,16 @@
++#pragma once
++
++#include <algorithm>
++
++namespace ottsel {
++
++// Jak 1's Sprite3 shader fades a sprite by its projected area before the
++// final color multiplier. Keep this shared so native Metal and its fixture
++// regression use the same bounded arithmetic.
++inline float sprite3_faded_alpha(float alpha, float sx, float sy, float inv_area) {
++  const float area_fade = std::clamp(sx * sy * inv_area, 0.f, 1.f);
++  return std::clamp(alpha * area_fade, 0.f, 255.f);
++}
++
++}  // namespace ottsel
+diff --git a/test/CMakeLists.txt b/test/CMakeLists.txt
+index 991fb4132..f4b6f7b 100644
+--- a/test/CMakeLists.txt
++++ b/test/CMakeLists.txt
+@@ -16,6 +16,7 @@ add_executable(goalc-test
+         ${CMAKE_CURRENT_LIST_DIR}/test_common_util.cpp
+         ${CMAKE_CURRENT_LIST_DIR}/test_pretty_print.cpp
+         ${CMAKE_CURRENT_LIST_DIR}/test_math.cpp
++        ${CMAKE_CURRENT_LIST_DIR}/test_sprite3_native.cpp
+         ${CMAKE_CURRENT_LIST_DIR}/test_zstd.cpp
+diff --git a/test/test_sprite3_native.cpp b/test/test_sprite3_native.cpp
+new file mode 100644
+index 00000000..c6a6e8b
+--- /dev/null
++++ b/test/test_sprite3_native.cpp
+@@ -0,0 +1,13 @@
++#include "common/dma/ottsel_sprite_math.h"
++
++#include "gtest/gtest.h"
++
++TEST(Sprite3Native, AppliesProjectedAreaFadeBeforeMetalUpload) {
++  EXPECT_FLOAT_EQ(64.f, ottsel::sprite3_faded_alpha(128.f, 0.5f, 0.5f, 2.f));
++}
++
++TEST(Sprite3Native, ClampsAreaFadeAndAlpha) {
++  EXPECT_FLOAT_EQ(255.f, ottsel::sprite3_faded_alpha(300.f, 4.f, 4.f, 2.f));
++  EXPECT_FLOAT_EQ(0.f, ottsel::sprite3_faded_alpha(200.f, -1.f, 1.f, 2.f));
++}

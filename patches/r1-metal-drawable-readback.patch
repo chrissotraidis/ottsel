@@ -1,0 +1,54 @@
+diff --git a/src/shell/metal_shell.mm b/src/shell/metal_shell.mm
+--- a/src/shell/metal_shell.mm
++++ b/src/shell/metal_shell.mm
+@@ -17,6 +17,8 @@
+ #include <deque>
+ #include <mutex>
+ #include <unordered_set>
++#include <cstdio>
++#include <string>
+@@ -24,6 +26,7 @@
+ #include "metal_shell.h"
+ #include "common/dma/ottsel_sprite_math.h"
++#include "ios_boot.h"
+@@ -668,6 +671,45 @@
+   }
+   [enc endEncoding];
++  // One-shot diagnostic readback only; never feeds the product frame path.
++  static bool native_readback_consumed = false;
++  const std::string readback_trigger = ottsel_ios_writable_dir() +
++                                        "ottsel-dump-native-sprite-metal";
++  if (!native_readback_consumed && self.spriteActive &&
++      access(readback_trigger.c_str(), F_OK) == 0) {
++    unlink(readback_trigger.c_str());
++    native_readback_consumed = true;
++    const NSUInteger width = drawable.texture.width;
++    const NSUInteger height = drawable.texture.height;
++    id<MTLBuffer> readback = [self.device newBufferWithLength:width * height * 4
++                                                         options:MTLResourceStorageModeShared];
++    if (readback) {
++      id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
++      [blit copyFromTexture:drawable.texture sourceSlice:0 sourceLevel:0
++               sourceOrigin:MTLOriginMake(0, 0, 0)
++                 sourceSize:MTLSizeMake(width, height, 1) toBuffer:readback
++          destinationOffset:0 destinationBytesPerRow:width * 4
++          destinationBytesPerImage:width * height * 4];
++      [blit endEncoding];
++      const std::string output_path = ottsel_ios_writable_dir() +
++                                      "ottsel-native-sprite-metal.ppm";
++      [cb addCompletedHandler:^(id<MTLCommandBuffer> completed) {
++        if (completed.status != MTLCommandBufferStatusCompleted) return;
++        const unsigned char* pixels = (const unsigned char*)readback.contents;
++        FILE* file = fopen(output_path.c_str(), "wb");
++        if (!file) return;
++        fprintf(file, "P6\n%lu %lu\n255\n", (unsigned long)width, (unsigned long)height);
++        for (NSUInteger y = 0; y < height; ++y)
++          for (NSUInteger x = 0; x < width; ++x) {
++            const unsigned char* pixel = pixels + (y * width + x) * 4;
++            fputc(pixel[2], file); fputc(pixel[1], file); fputc(pixel[0], file);
++          }
++        fclose(file);
++      }];
++    }
++  }
+   [cb presentDrawable:drawable];

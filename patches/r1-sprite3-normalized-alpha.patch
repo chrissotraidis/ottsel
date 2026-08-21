@@ -1,0 +1,47 @@
+diff --git a/common/dma/ottsel_sprite_math.h b/common/dma/ottsel_sprite_math.h
+--- a/common/dma/ottsel_sprite_math.h
++++ b/common/dma/ottsel_sprite_math.h
+@@ -16,6 +16,17 @@
+ inline float sprite3_faded_alpha(float alpha, float sx, float sy, float inv_area) {
+   const float area_fade = std::clamp(sx * sy * inv_area, 0.f, 1.f);
+   return std::clamp(alpha * area_fade, 0.f, 255.f);
+ }
++
++// Sprite3's decoded vector color is already normalized when it crosses the
++// mobile VIF boundary, matching the desktop shader input. Keep this helper
++// separate from the byte-domain fixture helper above.
++inline float sprite3_faded_alpha_normalized(float alpha,
++                                            float sx,
++                                            float sy,
++                                            float inv_area) {
++  const float area_fade = std::clamp(sx * sy * inv_area, 0.f, 1.f);
++  return std::clamp(alpha * area_fade, 0.f, 1.f);
++}
+diff --git a/test/test_sprite3_native.cpp b/test/test_sprite3_native.cpp
+--- a/test/test_sprite3_native.cpp
++++ b/test/test_sprite3_native.cpp
+@@ -9,6 +9,12 @@
+ TEST(Sprite3Native, ClampsAreaFadeAndAlpha) {
+   EXPECT_FLOAT_EQ(255.f, ottsel::sprite3_faded_alpha(300.f, 4.f, 4.f, 2.f));
+   EXPECT_FLOAT_EQ(0.f, ottsel::sprite3_faded_alpha(200.f, -1.f, 1.f, 2.f));
+ }
++
++TEST(Sprite3Native, PreservesNormalizedVectorAlphaDuringAreaFade) {
++  EXPECT_FLOAT_EQ(0.8448f,
++                  ottsel::sprite3_faded_alpha_normalized(0.8448f, 1.f, 1.f, 2.f));
++  EXPECT_FLOAT_EQ(0.2112f,
++                  ottsel::sprite3_faded_alpha_normalized(0.8448f, 0.5f, 0.5f, 1.f));
++}
+diff --git a/src/shell/metal_gfx.mm b/src/shell/metal_gfx.mm
+--- a/src/shell/metal_gfx.mm
++++ b/src/shell/metal_gfx.mm
+@@ -2311,10 +2311,9 @@
+             const float faded_alpha = ottsel::sprite3_faded_alpha(
+                 vector.rgba.w, sx, sy, frame.inv_area);
+-            const float color[4] = {std::clamp(vector.rgba.x / 255.f, 0.f, 1.f),
+-                                    std::clamp(vector.rgba.y / 255.f, 0.f, 1.f),
+-                                    std::clamp(vector.rgba.z / 255.f, 0.f, 1.f),
+-                                    faded_alpha / 255.f};
++            const float color[4] = {std::clamp(vector.rgba.x, 0.f, 1.f),
++                                    std::clamp(vector.rgba.y, 0.f, 1.f),
++                                    std::clamp(vector.rgba.z, 0.f, 1.f), faded_alpha};

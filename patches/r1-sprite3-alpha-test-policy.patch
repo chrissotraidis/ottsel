@@ -1,0 +1,19 @@
+diff --git a/common/dma/ottsel_sprite_math.h b/common/dma/ottsel_sprite_math.h
+--- a/common/dma/ottsel_sprite_math.h
++++ b/common/dma/ottsel_sprite_math.h
+@@ -8,6 +8,18 @@
+ constexpr bool sprite3_depth_write_enabled() {
+   return false;
+ }
++
++constexpr unsigned int sprite3_alpha_test_enabled() {
++  return 1;
++}
++
++constexpr unsigned int sprite3_alpha_test_gequal() {
++  return 5;
++}
++
++constexpr unsigned int sprite3_primary_alpha_ref() {
++  return 2;
++}

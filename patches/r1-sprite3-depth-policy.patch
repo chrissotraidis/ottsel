@@ -1,0 +1,50 @@
+diff --git a/common/dma/ottsel_sprite_math.h b/common/dma/ottsel_sprite_math.h
+--- a/common/dma/ottsel_sprite_math.h
++++ b/common/dma/ottsel_sprite_math.h
+@@ -5,3 +5,9 @@ namespace ottsel {
+ namespace ottsel {
++
++// Jak 1 Sprite3's default DrawMode uses GEQUAL depth testing but leaves the
++// depth buffer unchanged while translucent sprites are drawn.
++constexpr bool sprite3_depth_write_enabled() {
++  return false;
++}
+ 
+ // Jak 1's Sprite3 shader fades a sprite by its projected area before the
+diff --git a/test/test_sprite3_native.cpp b/test/test_sprite3_native.cpp
+--- a/test/test_sprite3_native.cpp
++++ b/test/test_sprite3_native.cpp
+@@ -9,4 +9,8 @@ TEST(Sprite3Native, ClampsAreaFadeAndAlpha) {
+ TEST(Sprite3Native, ClampsAreaFadeAndAlpha) {
+   EXPECT_FLOAT_EQ(255.f, ottsel::sprite3_faded_alpha(300.f, 4.f, 4.f, 2.f));
+   EXPECT_FLOAT_EQ(0.f, ottsel::sprite3_faded_alpha(200.f, -1.f, 1.f, 2.f));
+ }
++
++TEST(Sprite3Native, PreservesJak1DefaultDepthWritePolicy) {
++  EXPECT_FALSE(ottsel::sprite3_depth_write_enabled());
++}
+diff --git a/src/shell/metal_shell.mm b/src/shell/metal_shell.mm
+--- a/src/shell/metal_shell.mm
++++ b/src/shell/metal_shell.mm
+@@ -19,1 +19,2 @@
+ #include "metal_shell.h"
++#include "common/dma/ottsel_sprite_math.h"
+@@ -218,2 +218,3 @@
+ @property (nonatomic, strong) id<MTLDepthStencilState> tieDepthState;
+ @property (nonatomic, strong) id<MTLDepthStencilState> directDepthState;
++@property (nonatomic, strong) id<MTLDepthStencilState> spriteDepthState;
+@@ -426,2 +427,4 @@
+   self.tieDepthState = [device newDepthStencilStateWithDescriptor:depthDesc];
+   self.directDepthState = self.tieDepthState;
++  depthDesc.depthWriteEnabled = ottsel::sprite3_depth_write_enabled();
++  self.spriteDepthState = [device newDepthStencilStateWithDescriptor:depthDesc];
+@@ -598,4 +602,4 @@
+   if (self.spriteActive) {
+     [enc setRenderPipelineState:self.spriteBlendEnabled ? self.directBlendPipeline
+                                                         : self.directPipeline];
+-    [enc setDepthStencilState:self.directDepthState];
++    [enc setDepthStencilState:self.spriteDepthState];
+@@ -607,2 +611,2 @@
+-    NSLog(@"ottsel metal: Sprite3 native draw vertices=6 blend=%s texture=hit",
++    NSLog(@"ottsel metal: Sprite3 native draw vertices=6 blend=%s depth=gequal/no-write texture=hit",
+           self.spriteBlendEnabled ? "enabled" : "disabled");

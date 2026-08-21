@@ -43,6 +43,8 @@ INCS=(-I"$WORKTREE" \
   -I"$WORKTREE/third-party/zstd/lib" \
   -I"$WORKTREE/third-party/tree-sitter/lib/include" \
   -I"$WORKTREE/third-party/tinyfiledialogs" \
+  -I"$WORKTREE/third-party/cubeb/cubeb/include" \
+  -I"$WORKTREE/third-party/cubeb/include" \
   -I"$SDL_SRC/include" \
   -I"$REPO_DIR/tools/ottsel_vu1")
 FRAMEWORKS=(-framework UIKit -framework Foundation -framework CoreGraphics \
@@ -179,6 +181,28 @@ KERNEL_SRC="
   game/sce/sif_ee.cpp
   game/sce/sif_ee_memcard.cpp
   game/sce/stubs.cpp
+  game/sound/989snd/player.cpp
+  game/sound/989snd/midi_handler.cpp
+  game/sound/989snd/ame_handler.cpp
+  game/sound/989snd/blocksound_handler.cpp
+  game/sound/989snd/musicbank.cpp
+  game/sound/989snd/sfxblock.cpp
+  game/sound/989snd/sfxgrain.cpp
+  game/sound/989snd/plugin.cpp
+  game/sound/989snd/loader.cpp
+  game/sound/989snd/vagvoice.cpp
+  game/sound/989snd/lfo.cpp
+  game/sound/989snd/util.cpp
+  game/sound/common/synth.cpp
+  game/sound/common/voice.cpp
+  game/sound/common/envelope.cpp
+  game/sound/sndshim.cpp
+  game/sound/sdshim.cpp
+  game/overlord/common/fake_iso.cpp
+  game/overlord/common/isocommon.cpp
+  game/overlord/common/soundcommon.cpp
+  game/overlord/common/srpc.cpp
+  game/overlord/jak1/fake_iso.cpp
   game/system/Deci2Server.cpp
   game/ios_stubs.cpp
   third-party/fmt/src/format.cc
@@ -227,46 +251,27 @@ cp "$APP_BUILD/OttselShell" "$APP/"
 cp "$REPO_DIR/src/shell/Info.plist" "$APP/"
 cp "$WORKTREE/out/jak1/iso/KERNEL.CGO" "$APP/KERNEL.CGO"
 cp "$WORKTREE/out/jak1/iso/GAME.CGO" "$APP/GAME.CGO"
-# Ottsel S2.1+ (BOT11/BOT18): the iOS RPC emulation serves the user's local
-# game data from inside the Simulator sandbox.  Keep these assets local to the
-# bundle; they are not repository inputs.  STR and TEXT are required by the
-# title's external-art-buffer, text, and visibility loaders, respectively.
-mkdir -p "$APP/iso_data/DGO" "$APP/iso_data/CGO" "$APP/iso_data/STR" "$APP/iso_data/TEXT" "$APP/iso_data/VIS" "$APP/iso_data/fr3"
-for f in "$WORKTREE"/iso_data/jak1/CGO/*.CGO; do
-  cp "$f" "$APP/iso_data/CGO/" 2>/dev/null || true
-done
-for f in "$WORKTREE"/iso_data/jak1/DGO/*.DGO; do
-  base=$(basename "$f")
-  # BOT18 regression (2026-08-15): the retail iso_data DGOs use the PS2 v3
-  # object format (first word 0x0), which the no-emit linker cannot process.
-  # TIT.DGO and VI1.DGO must stay the RECOMPILED versions copied after this
-  # loop; skip their retail inputs so they cannot overwrite ARM64 GOAL code.
-  if [ "$base" = "TIT.DGO" ] || [ "$base" = "VI1.DGO" ]; then
-    continue
-  fi
-  cp "$f" "$APP/iso_data/DGO/" 2>/dev/null || true
-done
-# Ship recompiled DGOs LAST so their ARM64 GOAL objects win over retail PS2
-# v3 code. TIT defines title symbols; VI1 defines start-sequence-a for New Game.
+# F1: keep a fresh build free of user-owned game data. A validated pack is imported
+# through Files into Documents/OttselUserData and promoted to the durable data
+# root at runtime. The empty directory is only a diagnostic fallback for clean
+# installs; never copy local extracted or derived data here.
+rm -rf "$APP/iso_data"
+mkdir -p "$APP/iso_data"
+# These two containers are generated from the open-source GOAL sources, not
+# extracted retail data. They carry the recompiled title/start-sequence code
+# required by the no-emit runtime; all user-owned renderer/audio data remains
+# outside the bundle and arrives through F1 import.
+mkdir -p "$APP/iso_data/DGO"
 for dgo in TIT.DGO VI1.DGO; do
   if [ -f "$WORKTREE/out/jak1/iso/$dgo" ]; then
-    cp "$WORKTREE/out/jak1/iso/$dgo" "$APP/iso_data/DGO/$dgo" 2>/dev/null || true
+    cp "$WORKTREE/out/jak1/iso/$dgo" "$APP/iso_data/DGO/$dgo"
   fi
 done
-for f in "$WORKTREE"/iso_data/jak1/VIS/*.VIS; do
-  cp "$f" "$APP/iso_data/VIS/" 2>/dev/null || true
-done
-for f in "$WORKTREE"/out/jak1/fr3/*.fr3; do
-  cp "$f" "$APP/iso_data/fr3/" 2>/dev/null || true
-done
-for f in "$WORKTREE"/iso_data/jak1/STR/*.STR; do
-  cp "$f" "$APP/iso_data/STR/" 2>/dev/null || true
-done
-for f in "$WORKTREE"/iso_data/jak1/TEXT/*.TXT; do
-  cp "$f" "$APP/iso_data/TEXT/" 2>/dev/null || true
-done
-for f in "$WORKTREE"/out/jak1/iso/*.TXT; do
-  cp "$f" "$APP/iso_data/TEXT/" 2>/dev/null || true
+mkdir -p "$APP/iso_data/TEXT"
+for text in "$WORKTREE"/out/jak1/iso/*.TXT; do
+  if [ -f "$text" ]; then
+    cp "$text" "$APP/iso_data/TEXT/"
+  fi
 done
 plutil -lint "$APP/Info.plist" >/dev/null
 codesign --force --sign - "$APP"

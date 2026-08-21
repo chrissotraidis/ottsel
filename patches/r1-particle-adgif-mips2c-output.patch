@@ -1,0 +1,78 @@
+diff --git a/game/mips2c/jak1_functions/sparticle_launcher.cpp b/game/mips2c/jak1_functions/sparticle_launcher.cpp
+index d6f0d33d3..defa962f5 100644
+--- a/game/mips2c/jak1_functions/sparticle_launcher.cpp
++++ b/game/mips2c/jak1_functions/sparticle_launcher.cpp
+@@ -2,6 +2,8 @@
+ // clang-format off
+ #include "game/mips2c/mips2c_private.h"
+ #include "game/kernel/jak1/kscheme.h"
++#include "common/log/log.h"
++#include <unistd.h>
+ using namespace jak1;
+ 
+ namespace Mips2C::jak1 {
+@@ -11,8 +13,48 @@ struct Cache {
+   void* particle_setup_adgif; // particle-setup-adgif
+ } cache;
+ 
++static bool ottsel_particle_adgif_trace_active = false;
++static u32 ottsel_particle_adgif_trace_count = 0;
++static u32 ottsel_particle_adgif_output_count = 0;
++
++static void ottsel_trace_particle_adgif_output(ExecutionContext* c, u32 raw_texture_id, u32 adgif_addr) {
++  if (!ottsel_particle_adgif_trace_active || ottsel_particle_adgif_output_count >= 32 || adgif_addr == 0) {
++    return;
++  }
++  u64 tex0 = 0;
++  u64 tex1 = 0;
++  u64 clamp = 0;
++  u64 alpha = 0;
++  memcpy(&tex0, g_ee_main_mem + adgif_addr, sizeof(tex0));
++  memcpy(&tex1, g_ee_main_mem + adgif_addr + 16, sizeof(tex1));
++  memcpy(&clamp, g_ee_main_mem + adgif_addr + 48, sizeof(clamp));
++  memcpy(&alpha, g_ee_main_mem + adgif_addr + 64, sizeof(alpha));
++  lg::info("OTTSEL PARTICLE ADGIF OUT: raw=0x{:08x} page=0x{:x} index=0x{:x} adgif=0x{:x} "
++           "tex0=0x{:016x} tex1=0x{:016x} clamp=0x{:016x} alpha=0x{:016x}",
++           raw_texture_id, (raw_texture_id >> 20) & 0xfff, (raw_texture_id >> 8) & 0xfff, adgif_addr,
++           tex0, tex1, clamp, alpha);
++  ++ottsel_particle_adgif_output_count;
++  if (ottsel_particle_adgif_trace_count >= 32 && ottsel_particle_adgif_output_count >= 32) {
++    ottsel_particle_adgif_trace_active = false;
++    lg::info("OTTSEL PARTICLE ADGIF OUT: complete");
++  }
++}
++
+ u64 execute(void* ctxt) {
+   auto* c = (ExecutionContext*)ctxt;
++  if (!ottsel_particle_adgif_trace_active && access("/tmp/ottsel-trace-particle-adgif", F_OK) == 0) {
++    unlink("/tmp/ottsel-trace-particle-adgif");
++    ottsel_particle_adgif_trace_active = true;
++    ottsel_particle_adgif_trace_count = 0;
++    ottsel_particle_adgif_output_count = 0;
++    lg::info("OTTSEL PARTICLE ADGIF MIPS2C: armed");
++  }
++  if (ottsel_particle_adgif_trace_active && ottsel_particle_adgif_trace_count < 32) {
++    const u32 raw_texture_id = c->gprs[a1].du32[0];
++    lg::info("OTTSEL PARTICLE ADGIF MIPS2C: raw=0x{:08x} page=0x{:x} index=0x{:x}",
++             raw_texture_id, (raw_texture_id >> 20) & 0xfff, (raw_texture_id >> 8) & 0xfff);
++    ++ottsel_particle_adgif_trace_count;
++  }
+   bool bc = false;
+   u32 call_addr = 0;
+   c->mov64(v1, a0);                                 // or v1, a0, r0
+@@ -76,6 +118,7 @@ u64 execute(void* ctxt) {
+   c->sw(v1, 0, t1);                                 // sw v1, 0(t1)
+   c->jalr(call_addr);                               // jalr ra, t9
+   c->lw(a0, 0, sp);                                 // lw a0, 0(sp)
++  ottsel_trace_particle_adgif_output(c, c->gprs[a1].du32[0], c->gprs[a0].du32[0]);
+   // nop                                            // sll r0, r0, 0
+   c->lw(t4, 4, sp);                                 // lw t4, 4(sp)
+   // nop                                            // sll r0, r0, 0
+@@ -110,6 +153,7 @@ u64 execute(void* ctxt) {
+   call_addr = c->gprs[t9].du32[0];                  // function call:
+   // nop                                            // sll r0, r0, 0
+   c->jalr(call_addr);                               // jalr ra, t9
++  ottsel_trace_particle_adgif_output(c, c->gprs[a1].du32[0], c->gprs[a0].du32[0]);
+   c->lw(t4, 4, sp);                                 // lw t4, 4(sp)
+   // nop                                            // sll r0, r0, 0
+   c->lw(ra, 8, sp);                                 // lw ra, 8(sp)

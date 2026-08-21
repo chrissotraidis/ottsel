@@ -201,9 +201,10 @@ a visible touch-control or controller-acceptance result.
 The live Direct/GIF discriminator rules out a shortcut through the generic
 VU interpreter: 5,149 Direct transfers / 24,883 packed GIF tags yielded no
 diagnostic primitives, and a one-shot retail generic-VU run at the observed
-`MSCAL 46` capped at 50,000 instructions with zero GIF output. Treat Direct
-as the next native Metal render-target/composition bucket; do not lift the VU
-limit or route arbitrary MSCAL traffic through the TFRAG program.
+`MSCAL 46` capped at 50,000 instructions with zero GIF output. Treat Direct as
+the next native Metal consumer, but attribute its desktop target and visibility
+path before choosing a normal-target or offscreen-target implementation. Do not
+lift the VU limit or route arbitrary MSCAL traffic through the TFRAG program.
 
 ### New Game script-link checkpoint — 2026-08-18
 
@@ -232,19 +233,36 @@ continue visual work through the explicit Direct/Sprite and remaining bucket
 gates above. Do not restore the retail DGO or re-open ARM64 return-path work
 unless a new fault contradicts the linked-symbol evidence.
 
-### Direct/Sprite decision — 2026-08-18
+### Direct/Sprite decision — corrected 2026-08-19
 
 A bounded live trace confirmed that the title/progress stream supplies real
-14-qword packed GIF strips, but they target an offscreen GS rectangle
-(`SCISSOR 0..127`, with positions around `2430,4040`). The desktop
-`DirectRenderer` handles this through its explicit offscreen-target state.
-The old iOS CPU raster diagnostic has no equivalent target/composition model:
-it decoded thousands of strips but produced no foreground pixels. Do not add
-more coordinate or scissor guesses to that diagnostic. The next renderer work
-is a native Metal Direct pass with explicit GS FRAME/scissor/offscreen-target
-state, then composition into the final Metal drawable. Its first proof is one
-title/menu packet that produces a nonzero offscreen draw plus a visible
-composed title frame; only then expand to the remaining Direct/Sprite stream.
+14-qword packed GIF strips. Source inspection now identifies that fingerprint
+as the Jak 1 font-glyph template: one `A+D(TEX0)` record followed by four
+`ST/RGBAQ/XYZF2` triplets. The earlier conclusion that positions around
+`2430,4040` plus `SCISSOR 0..127` prove an offscreen target was too strong. Jak
+1 registers plain `DirectRenderer("debug")` in bucket 67, whose base
+`handle_frame` is a no-op; the explicit 128x128 `ProgressRenderer` target model
+is wired into Jak 2, not this Jak 1 bucket.
+
+The next renderer gate is therefore attribution before implementation.
+Fingerprint one glyph on desktop and record renderer/bucket, `FRAME.fbp`, bound
+FBO and viewport, offscreen flag, scissor/XY offset, texture hit, pre/post-shader
+bounds, flush/draw counts, and the first later draw that makes it visible. If
+that proves plain Direct, implement the normal final-target Metal slice first.
+If it proves a target store and later sample, implement only that observed
+target alias and composition lifetime. In either branch, use a ROM-safe
+synthetic red fixture and retire the CPU rasterizer after it supplies the
+fixture; do not add more coordinate guesses or a generic VU path. See
+`docs/reports/2026-08-19-ipad-iphone-blocker-investigation.md` and
+`docs/BOT33_PROMPT.md` for the exact exit bars.
+
+The 2026-08-20 macOS trace establishes the D0-NORMAL branch for the matching
+Jak 1 glyph: bucket `[67] debug` is plain DirectRenderer with `offscreen=false`,
+FBO 65, a real texture hit, and one post-flush draw. The title capture is
+same-phase evidence, but the individual glyph's later composition event is
+still not separately isolated; carry the ordered desktop state into D1/D2 and
+compare it with the ROM-safe mobile fixture before widening the native Metal
+consumer.
 
 ## Gate P3 — iPhone parity
 

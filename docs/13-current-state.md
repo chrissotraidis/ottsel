@@ -1,3 +1,22 @@
+## 2026-08-19 investigation correction
+
+The next Direct gate is attribution-first. The captured 14-qword packet exactly
+matches the Jak 1 font-glyph template, but its earlier classification as an
+offscreen packet is not proven: Jak 1 bucket 67 uses plain `DirectRenderer`,
+while the explicit `ProgressRenderer` 128x128 target behavior is registered on
+the Jak 2 path. The builder must fingerprint the packet on desktop and record
+its framebuffer/FBO, offscreen flag, transform, texture, draw, and first
+visibility consumer before choosing normal Direct or target-backed Direct.
+
+The mobile input seam is also narrower than “controller accepted.” Keyboard and
+the temporary touch bridge produce canonical `PadState` and lifecycle neutral,
+but `src/shell/main.cpp` does not yet enumerate/open/retain SDL gamepads or
+handle device add/remove. Likewise, mobile initializes video/gamepad only and
+the iOS stubs leave IOP/sound inert. These are dependency-ordered product gates,
+not causes of the current missing render composition. See
+`docs/reports/2026-08-19-ipad-iphone-blocker-investigation.md` and
+`docs/BOT33_PROMPT.md`.
+
 ## 2026-08-18 update — cross-platform loop resumed; iPad input seam verified
 
 The product is now tracked as one macOS/iPadOS/iOS loop. macOS remains the

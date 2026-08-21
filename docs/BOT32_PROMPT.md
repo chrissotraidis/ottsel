@@ -1,5 +1,11 @@
 # BOT32 Goal-Based Loop — make Jak actually playable on macOS, then promote the proven stack to iPad and iPhone
 
+> **Historical handoff (2026-08-17).** This prompt captures the then-current
+> macOS-first investigation. It is not the current stage board: newer macOS
+> and iPad evidence changed the active renderer plan. Start with
+> `docs/STATUS.md` and `docs/15-macos-to-mobile-goal-loop.md` instead; consult
+> this file only for its retained probes and reproduction detail.
+
 Date: 2026-08-17.  Starting commit: `6ef5c77`.
 
 ## Fixed goal

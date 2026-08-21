@@ -1,0 +1,32 @@
+diff --git a/goal_src/jak1/engine/gfx/sprite/sparticle/sparticle.gc b/goal_src/jak1/engine/gfx/sprite/sparticle/sparticle.gc
+index 963ed7449..53680239a 100644
+--- a/goal_src/jak1/engine/gfx/sprite/sparticle/sparticle.gc
++++ b/goal_src/jak1/engine/gfx/sprite/sparticle/sparticle.gc
+@@ -433,6 +433,8 @@
+                (* 0.2 scaled-seconds))
+   (none))
+ 
++(define *ottsel-sparticle-3d-trace-count* 0)
++
+ (defun process-particles ()
+   "main particle system update."
+   (local-vars (v1-29 int) (gp-0 int))
+@@ -459,6 +461,18 @@
+     (sp-process-particle-system *sp-particle-system-2d* 0 *sprite-array-2d*)
+     (sp-process-particle-system *sp-particle-system-2d* 1 *sprite-array-2d*)
+     (sp-process-particle-system *sp-particle-system-3d* 0 (the-as sprite-array-2d *sprite-array-3d*))
++    ;; Diagnostic-only producer ownership trace.  The cap keeps the live log
++    ;; bounded while distinguishing an empty 3D particle source from a later
++    ;; Sprite3/DMA phase handoff.  It does not alter particle or draw state.
++    (let ((ottsel-3d-alloc (-> *sp-particle-system-3d* num-alloc 0))
++          (ottsel-3d-valid (-> *sprite-array-3d* num-valid 0)))
++      (when (and (or (> ottsel-3d-alloc 0) (> ottsel-3d-valid 0))
++                 (< *ottsel-sparticle-3d-trace-count* 32))
++        (format 0 "OTTSEL SPARTICLE 3D: alloc-state=~A valid-state=~A blocks-state=~A~%"
++                (if (> ottsel-3d-alloc 0) "nonzero" "zero")
++                (if (> ottsel-3d-valid 0) "nonzero" "zero")
++                (if (> (-> *sp-particle-system-3d* blocks 0) 0) "nonzero" "zero"))
++        (+! *ottsel-sparticle-3d-trace-count* 1)))
+     (if *debug-segment*
+       (add-frame (-> *display* frames (-> *display* on-screen) frame profile-bar 0)
+                  'draw

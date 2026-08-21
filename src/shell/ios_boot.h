@@ -15,6 +15,15 @@ std::string ottsel_ios_bundle_dir();
 void ottsel_ios_set_writable_dir(const std::string& dir);
 std::string ottsel_ios_writable_dir();
 
+// Diagnostic startup seam: prepare and cache the validated user-data root
+// before a caller creates native Metal resources.
+void ottsel_ios_prepare_user_data();
+
+// True only after a validated user-owned pack has been selected or promoted.
+// A clean install deliberately returns false so the shell can provide a
+// remediation message instead of making the diagnostic bundle look complete.
+bool ottsel_ios_has_user_data();
+
 // Runs the runtime boot (EE memory map, kernel link, dispatcher loop).
 // Returns when MasterExit stops the dispatcher. Never returns on fatal boot
 // failure (the gated-error path logs and aborts instead of crash-looping).

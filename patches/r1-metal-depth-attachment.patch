@@ -1,0 +1,12 @@
+diff --git a/src/shell/metal_shell.mm b/src/shell/metal_shell.mm
+--- a/src/shell/metal_shell.mm
++++ b/src/shell/metal_shell.mm
+@@ -362,6 +362,11 @@
+   directPd.vertexDescriptor = directLayout;
+   directPd.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
++  // Sprite3 and Direct share this pipeline and render into the same pass as
++  // TIE/TFRAG. Declare the pass depth format explicitly; leaving it implicit
++  // while binding a depth state/attachment produces invalid Simulator command
++  // buffers during native composition.
++  directPd.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+   self.directPipeline = [device newRenderPipelineStateWithDescriptor:directPd error:&err];

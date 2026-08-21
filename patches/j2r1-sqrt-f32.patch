@@ -1,0 +1,49 @@
+diff --git a/goalc/emitter/IGenARM64.cpp b/goalc/emitter/IGenARM64.cpp
+index 1180f722d..d5d8f0c3a 100644
+--- a/goalc/emitter/IGenARM64.cpp
++++ b/goalc/emitter/IGenARM64.cpp
+@@ -2527,6 +2527,6 @@ InstructionARM64 cmp_f32_f32(Register a, Register b) {
+ InstructionARM64 sqrt_f32(Register dst, Register src) {
+   // https://www.scs.stanford.edu/~zyedidia/arm64/fsqrt_float.html
+   // Single-precision (ftype == 00)
+   // FSQRT <Sd>, <Sn>
+-  return InstructionARM64(Base(0b0001111000100001110000, 22), Rn(src.id()), Rm(dst.id()));
++  return InstructionARM64(Base(0b0001111000100001110000, 22), Rn(src.id()), Rd(dst.id()));
+ }
+diff --git a/test/CMakeLists.txt b/test/CMakeLists.txt
+index 991fb4132..41c88d3a5 100644
+--- a/test/CMakeLists.txt
++++ b/test/CMakeLists.txt
+@@ -16,4 +16,5 @@ add_executable(goalc-test
+         ${CMAKE_CURRENT_LIST_DIR}/test_common_util.cpp
+         ${CMAKE_CURRENT_LIST_DIR}/test_pretty_print.cpp
+         ${CMAKE_CURRENT_LIST_DIR}/test_math.cpp
++        ${CMAKE_CURRENT_LIST_DIR}/test_arm64_sqrt.cpp
+         ${CMAKE_CURRENT_LIST_DIR}/test_zstd.cpp
+diff --git a/test/test_arm64_sqrt.cpp b/test/test_arm64_sqrt.cpp
+new file mode 100644
+index 00000000..4a3e79c
+--- /dev/null
++++ b/test/test_arm64_sqrt.cpp
+@@ -0,0 +1,20 @@
++#include "emitter_util.h"
++
++#include "goalc/emitter/CodeTester.h"
++#include "goalc/emitter/IGen.h"
++#include "gtest/gtest.h"
++
++using namespace emitter;
++
++TEST(ARM64EmitterFloatMath, sqrt_f32UsesDistinctDestinationRegister) {
++  CodeTester tester(InstructionSet::ARM64);
++  tester.init_code_buffer(256);
++
++  const auto gen = tester.generator();
++  tester.emit(IGen::mov_gpr64_u64(gen, X0, 0x40800000ull));
++  tester.emit(IGen::movd_f32_gpr32(gen, V3, X0));
++  tester.emit(IGen::sqrt_f32(gen, V7, V3));
++  tester.emit(IGen::movd_gpr32_f32(gen, X0, V7));
++  tester.emit_return();
++
++  execute_ret_tester(tester, 0, 0, 0, 0, 2.0f);
++}

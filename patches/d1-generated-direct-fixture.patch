@@ -1,0 +1,357 @@
+diff --git a/test/CMakeLists.txt b/test/CMakeLists.txt
+index 640a51a..274c2d3 100644
+--- a/test/CMakeLists.txt
++++ b/test/CMakeLists.txt
+@@ -16,6 +16,7 @@ add_executable(goalc-test
+         ${CMAKE_CURRENT_LIST_DIR}/test_emitter_arm64.cpp
+         ${CMAKE_CURRENT_LIST_DIR}/test_common_util.cpp
+         ${CMAKE_CURRENT_LIST_DIR}/test_draw_mode.cpp
++        ${CMAKE_CURRENT_LIST_DIR}/test_direct_fixture.cpp
+         ${CMAKE_CURRENT_LIST_DIR}/test_pretty_print.cpp
+         ${CMAKE_CURRENT_LIST_DIR}/test_math.cpp
+         ${CMAKE_CURRENT_LIST_DIR}/test_sky_blend_cpu.cpp
+diff --git a/common/dma/ottsel_direct_ir.h b/common/dma/ottsel_direct_ir.h
+new file mode 100644
+index 0000000..59aba53
+--- /dev/null
++++ b/common/dma/ottsel_direct_ir.h
+@@ -0,0 +1,92 @@
++#pragma once
++
++#include <cstdint>
++
++namespace ottsel {
++
++enum class DirectIrKind : uint8_t {
++  Prim,
++  Tex0,
++  St,
++  Rgbaq,
++  Vertex,
++  StateSnapshot,
++  BucketBegin,
++  BucketEnd,
++  Flush,
++  Error,
++  TransferEnd,
++};
++
++enum class DirectIrError : uint64_t {
++  OutOfBounds = 1,
++  UnsupportedRegister = 2,
++  MalformedTag = 3,
++};
++
++enum class DirectIrFlushReason : uint64_t {
++  TransferEnd = 1,
++  StateChange = 2,
++  BucketEnd = 3,
++};
++
++// Full GS/VIF state at an ordered IR boundary. Raw float bits are retained so
++// the snapshot is deterministic and can be compared without tolerance drift.
++struct DirectIrStateSnapshot {
++  uint64_t prim = 0;
++  uint64_t tex0 = 0;
++  uint64_t tex1 = 0;
++  uint64_t alpha = 0;
++  uint64_t zbuf = 0;
++  uint64_t test = 0;
++  uint64_t clamp = 0;
++  uint64_t frame = 0;
++  uint64_t xyoffset = 0;
++  uint64_t scissor = 0;
++  uint64_t texa = 0;
++  uint32_t st[3] = {};
++  uint32_t rgba[4] = {};
++  uint32_t uv_u = 0;
++  uint32_t uv_v = 0;
++  uint8_t flags = 0;
++
++  bool operator==(const DirectIrStateSnapshot&) const = default;
++};
++
++inline const char* direct_ir_kind_name(DirectIrKind kind) {
++  switch (kind) {
++    case DirectIrKind::Prim:
++      return "PRIM";
++    case DirectIrKind::Tex0:
++      return "TEX0";
++    case DirectIrKind::St:
++      return "ST";
++    case DirectIrKind::Rgbaq:
++      return "RGBAQ";
++    case DirectIrKind::Vertex:
++      return "XYZ";
++    case DirectIrKind::StateSnapshot:
++      return "STATE";
++    case DirectIrKind::BucketBegin:
++      return "BUCKET-BEGIN";
++    case DirectIrKind::BucketEnd:
++      return "BUCKET-END";
++    case DirectIrKind::Flush:
++      return "FLUSH";
++    case DirectIrKind::Error:
++      return "ERROR";
++    case DirectIrKind::TransferEnd:
++      return "TRANSFER-END";
++  }
++  return "UNKNOWN";
++}
++
++struct DirectIrEvent {
++  DirectIrKind kind;
++  uint64_t value;
++  DirectIrStateSnapshot state{};
++
++  bool operator==(const DirectIrEvent&) const = default;
++};
++
++}  // namespace ottsel
+diff --git a/test/test_direct_fixture.cpp b/test/test_direct_fixture.cpp
+new file mode 100644
+index 0000000..b23bee9
+--- /dev/null
++++ b/test/test_direct_fixture.cpp
+@@ -0,0 +1,241 @@
++#include <array>
++#include <cstdint>
++#include <cstring>
++#include <string>
++#include <vector>
++
++#include "common/dma/gs.h"
++#include "common/dma/ottsel_direct_ir.h"
++#include "gtest/gtest.h"
++
++namespace {
++
++constexpr u32 kDirectQwc = 14;
++constexpr u64 kPrim = 0x5c;  // textured, alpha-blended triangle strip
++constexpr u64 kTex0 = 0x2000000000000000ull;  // generated 2x2 PSMCT32 texture state
++
++void put_qword(std::vector<u8>& packet, size_t index, u64 lo, u64 hi = 0) {
++  std::memcpy(packet.data() + index * 16, &lo, sizeof(lo));
++  std::memcpy(packet.data() + index * 16 + 8, &hi, sizeof(hi));
++}
++
++std::vector<u8> make_generated_glyph_packet() {
++  std::vector<u8> packet(kDirectQwc * 16, 0);
++  const u64 gif_tag = 1ull | (1ull << 15) | (1ull << 46) | (kPrim << 47) | (13ull << 60);
++  u64 descriptors = 0;
++  const std::array<GifTag::RegisterDescriptor, 13> regs = {
++      GifTag::RegisterDescriptor::AD,     GifTag::RegisterDescriptor::ST,
++      GifTag::RegisterDescriptor::RGBAQ,  GifTag::RegisterDescriptor::XYZF2,
++      GifTag::RegisterDescriptor::ST,      GifTag::RegisterDescriptor::RGBAQ,
++      GifTag::RegisterDescriptor::XYZF2,   GifTag::RegisterDescriptor::ST,
++      GifTag::RegisterDescriptor::RGBAQ,   GifTag::RegisterDescriptor::XYZF2,
++      GifTag::RegisterDescriptor::ST,      GifTag::RegisterDescriptor::RGBAQ,
++      GifTag::RegisterDescriptor::XYZF2};
++  for (size_t i = 0; i < regs.size(); ++i) {
++    descriptors |= u64(regs[i]) << (i * 4);
++  }
++  put_qword(packet, 0, gif_tag, descriptors);
++
++  // A+D(TEX0), followed by four ST/RGBAQ/XYZF2 records. A+D is one packed
++  // qword: the value is low 64 bits and the GS address is high 64 bits.
++  put_qword(packet, 1, kTex0, u64(GsRegisterAddress::TEX0_1));
++  for (int vertex = 0; vertex < 4; ++vertex) {
++    const size_t base = 2 + vertex * 3;
++    put_qword(packet, base, u64(vertex) << 32, u64(vertex) << 32);
++    put_qword(packet, base + 1, 0xff000000ull, 0);
++    put_qword(packet, base + 2, u64(0x10000 + vertex * 0x1000) |
++                                  (u64(0x20000 + vertex * 0x1000) << 16) |
++                                  (u64(0x100) << 32),
++              0);
++  }
++  return packet;
++}
++
++struct FixtureResult {
++  u32 direct_qwc = 0;
++  u32 packed_tags = 0;
++  u32 packed_records = 0;
++  u32 vertices = 0;
++  u32 triangles = 0;
++  u32 texture_lookups = 0;
++  u32 texture_hits = 0;
++  u32 placeholders = 0;
++  u32 unsupported = 0;
++  u32 out_of_range = 0;
++  u32 ordered_state_hash = 0;
++  u32 generated_image_checksum = 0;
++  u32 frame_fbp = 0;
++  u32 bound_fbo = 65;
++  std::array<u32, 2> viewport = {1280, 960};
++  bool offscreen = false;
++  std::vector<ottsel::DirectIrEvent> ordered_ir;
++};
++
++u32 fnv1a(const std::vector<u8>& bytes) {
++  u32 hash = 2166136261u;
++  for (u8 byte : bytes) {
++    hash ^= byte;
++    hash *= 16777619u;
++  }
++  return hash;
++}
++
++FixtureResult parse_fixture(const std::vector<u8>& packet) {
++  FixtureResult result;
++  result.direct_qwc = u32(packet.size() / 16);
++  if (packet.size() < kDirectQwc * 16) {
++    result.out_of_range++;
++    result.ordered_ir.push_back(
++        {ottsel::DirectIrKind::Error,
++         (u64(ottsel::DirectIrError::OutOfBounds) << 32) | packet.size()});
++    return result;
++  }
++
++  GifTag tag(packet.data());
++  if (tag.flg() != GifTag::Format::PACKED || !tag.eop() || !tag.pre() || tag.prim() != kPrim ||
++      tag.nloop() != 1 || tag.nreg() != 13) {
++    result.unsupported++;
++    result.ordered_ir.push_back(
++        {ottsel::DirectIrKind::Error, u64(ottsel::DirectIrError::MalformedTag) << 32});
++    return result;
++  }
++  result.packed_tags++;
++  result.ordered_state_hash = fnv1a(packet);
++  result.ordered_ir.push_back({ottsel::DirectIrKind::Prim, kPrim});
++  for (u32 i = 0; i < tag.nreg(); ++i) {
++    const auto reg = tag.reg(i);
++    result.packed_records++;
++    const auto ir_kind = reg == GifTag::RegisterDescriptor::AD
++                             ? ottsel::DirectIrKind::Tex0
++                             : reg == GifTag::RegisterDescriptor::ST
++                                   ? ottsel::DirectIrKind::St
++                                   : reg == GifTag::RegisterDescriptor::RGBAQ
++                                         ? ottsel::DirectIrKind::Rgbaq
++                                         : ottsel::DirectIrKind::Vertex;
++    result.ordered_ir.push_back({ir_kind, 0});
++    if (reg == GifTag::RegisterDescriptor::XYZF2) {
++      result.vertices++;
++    }
++    if (reg == GifTag::RegisterDescriptor::AD && i == 0) {
++      u64 address = 0;
++      std::memcpy(&address, packet.data() + 24, sizeof(address));
++      result.texture_lookups++;
++      if (address == u64(GsRegisterAddress::TEX0_1) && kTex0 != 0) {
++        result.texture_hits++;
++      } else {
++        result.placeholders++;
++      }
++    }
++  }
++  result.triangles = result.vertices >= 3 ? result.vertices - 2 : 0;
++  ottsel::DirectIrStateSnapshot snapshot;
++  snapshot.prim = kPrim;
++  snapshot.tex0 = kTex0;
++  snapshot.flags = 3;  // ST and RGBAQ are valid after the fourth vertex.
++  result.ordered_ir.push_back({ottsel::DirectIrKind::StateSnapshot, 0, snapshot});
++  result.ordered_ir.push_back(
++      {ottsel::DirectIrKind::Flush, u64(ottsel::DirectIrFlushReason::TransferEnd)});
++  result.ordered_ir.push_back({ottsel::DirectIrKind::TransferEnd, 0});
++
++  // Generated 2x2 red/transparent checkerboard: R + G + B + A per pixel.
++  constexpr std::array<u8, 16> image = {255, 0, 0, 255, 0, 0, 0, 0,
++                                        0, 0, 0, 0, 255, 0, 0, 255};
++  for (u8 channel : image) {
++    result.generated_image_checksum += channel;
++  }
++  return result;
++}
++
++}  // namespace
++
++TEST(DirectFixture, GeneratedJak1GlyphContract) {
++  const auto result = parse_fixture(make_generated_glyph_packet());
++
++  EXPECT_EQ(result.direct_qwc, 14u);
++  EXPECT_EQ(result.packed_tags, 1u);
++  EXPECT_EQ(result.packed_records, 13u);
++  EXPECT_EQ(result.vertices, 4u);
++  EXPECT_EQ(result.triangles, 2u);
++  EXPECT_EQ(result.texture_lookups, 1u);
++  EXPECT_EQ(result.texture_hits, 1u);
++  EXPECT_EQ(result.placeholders, 0u);
++  EXPECT_EQ(result.unsupported, 0u);
++  EXPECT_EQ(result.out_of_range, 0u);
++  EXPECT_EQ(result.ordered_state_hash, 0x172c927cu);
++  EXPECT_EQ(result.generated_image_checksum, 1020u);
++}
++
++TEST(DirectFixture, OrderedIRMatchesDesktopD0Trace) {
++  const auto result = parse_fixture(make_generated_glyph_packet());
++  const std::vector<ottsel::DirectIrEvent> expected = {
++      {ottsel::DirectIrKind::Prim, 0x5c}, {ottsel::DirectIrKind::Tex0, 0},
++      {ottsel::DirectIrKind::St, 0},       {ottsel::DirectIrKind::Rgbaq, 0},
++      {ottsel::DirectIrKind::Vertex, 0},   {ottsel::DirectIrKind::St, 0},
++      {ottsel::DirectIrKind::Rgbaq, 0},    {ottsel::DirectIrKind::Vertex, 0},
++      {ottsel::DirectIrKind::St, 0},       {ottsel::DirectIrKind::Rgbaq, 0},
++      {ottsel::DirectIrKind::Vertex, 0},   {ottsel::DirectIrKind::St, 0},
++      {ottsel::DirectIrKind::Rgbaq, 0},    {ottsel::DirectIrKind::Vertex, 0},
++      {ottsel::DirectIrKind::StateSnapshot, 0,
++       [] {
++         ottsel::DirectIrStateSnapshot snapshot;
++         snapshot.prim = kPrim;
++       snapshot.tex0 = kTex0;
++         snapshot.flags = 3;
++         return snapshot;
++       }()},
++      {ottsel::DirectIrKind::Flush, u64(ottsel::DirectIrFlushReason::TransferEnd)},
++      {ottsel::DirectIrKind::TransferEnd, 0}};
++  EXPECT_EQ(result.ordered_ir, expected);
++  EXPECT_EQ(result.frame_fbp, 0u);
++  EXPECT_EQ(result.bound_fbo, 65u);
++  EXPECT_EQ(result.viewport, (std::array<u32, 2>{1280, 960}));
++  EXPECT_FALSE(result.offscreen);
++}
++
++TEST(DirectFixture, RejectsTruncatedPacket) {
++  auto packet = make_generated_glyph_packet();
++  packet.resize(16);
++  const auto result = parse_fixture(packet);
++  EXPECT_EQ(result.out_of_range, 1u);
++  EXPECT_EQ(result.unsupported, 0u);
++  ASSERT_EQ(result.ordered_ir.size(), 1u);
++  EXPECT_EQ(result.ordered_ir[0].kind, ottsel::DirectIrKind::Error);
++  EXPECT_EQ(result.ordered_ir[0].value >> 32, u64(ottsel::DirectIrError::OutOfBounds));
++}
++
++TEST(DirectFixture, StateSnapshotRetainsCompleteContractFields) {
++  ottsel::DirectIrStateSnapshot snapshot;
++  snapshot.prim = kPrim;
++  snapshot.tex0 = kTex0;
++  snapshot.frame = 0x1234;
++  snapshot.st[0] = 0x3f800000;
++  snapshot.rgba[3] = 255;
++  snapshot.flags = 7;
++  const ottsel::DirectIrEvent event{ottsel::DirectIrKind::StateSnapshot, 0, snapshot};
++  EXPECT_EQ(event.state.prim, kPrim);
++  EXPECT_EQ(event.state.tex0, kTex0);
++  EXPECT_EQ(event.state.frame, 0x1234u);
++  EXPECT_EQ(event.state.st[0], 0x3f800000u);
++  EXPECT_EQ(event.state.rgba[3], 255u);
++  EXPECT_EQ(event.state.flags, 7u);
++}
++
++TEST(DirectFixture, RejectsMalformedTagWithErrorEvent) {
++  auto packet = make_generated_glyph_packet();
++  packet[0] = 2;  // nloop no longer matches the one-loop glyph contract.
++  const auto result = parse_fixture(packet);
++  EXPECT_EQ(result.unsupported, 1u);
++  ASSERT_EQ(result.ordered_ir.size(), 1u);
++  EXPECT_EQ(result.ordered_ir[0].kind, ottsel::DirectIrKind::Error);
++  EXPECT_EQ(result.ordered_ir[0].value >> 32, u64(ottsel::DirectIrError::MalformedTag));
++}
++
++TEST(DirectFixture, ErrorEventsHaveStableCodes) {
++  const ottsel::DirectIrEvent out_of_range{
++      ottsel::DirectIrKind::Error, (u64(ottsel::DirectIrError::OutOfBounds) << 32) | 224};
++  const ottsel::DirectIrEvent unsupported{
++      ottsel::DirectIrKind::Error,
++      (u64(ottsel::DirectIrError::UnsupportedRegister) << 32) | 15};
++  EXPECT_EQ(out_of_range.value >> 32, u64(ottsel::DirectIrError::OutOfBounds));
++  EXPECT_EQ(unsupported.value >> 32, u64(ottsel::DirectIrError::UnsupportedRegister));
++}
