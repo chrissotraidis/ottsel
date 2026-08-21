@@ -1,0 +1,2 @@
+66b4c8e1d90c79d6662c839e28168d360a80a10ccf35dd42f103387ddb805ef2  docs/evidence/M1/artifacts-2026-08-21-macos-reproducibility/current-audit/08-before-move.png
+27e005753320eba2b2d1949b535d3a3cb516148c2e0585e7b4b3a5d6b243dfdf  docs/evidence/M1/artifacts-2026-08-21-macos-reproducibility/current-audit/09-after-move.png

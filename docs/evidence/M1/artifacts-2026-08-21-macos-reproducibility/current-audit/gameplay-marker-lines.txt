@@ -1,0 +1,120 @@
+144341:OTTSEL symlink '*default-dead-pool*' at 0x1267c -> OFFSET
+144342:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x1267c (data=0x4b98000)
+144343:OTTSEL symlink '*default-dead-pool*' at 0x12808 -> OFFSET
+144344:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x12808 (data=0x4b98000)
+144345:OTTSEL symlink '*default-dead-pool*' at 0x129f4 -> OFFSET
+144346:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x129f4 (data=0x4b98000)
+144347:OTTSEL symlink '*default-dead-pool*' at 0x12a10 -> OFFSET
+144348:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x12a10 (data=0x4b98000)
+144637:OTTSEL symlink 'default-collision-reaction' at 0x1234c -> OFFSET
+144638:OTTSEL symlink 'default-collision-reaction' wrote 0xf7b0 at data+0x1234c (data=0x4b98000)
+144639:OTTSEL symlink 'default-collision-reaction' at 0x126bc -> OFFSET
+144640:OTTSEL symlink 'default-collision-reaction' wrote 0xf7b0 at data+0x126bc (data=0x4b98000)
+144641:OTTSEL symlink 'default-collision-reaction' at 0x128d0 -> OFFSET
+144642:OTTSEL symlink 'default-collision-reaction' wrote 0xf7b0 at data+0x128d0 (data=0x4b98000)
+145705:OTTSEL symlink '*default-dead-pool*' at 0x42e8 -> OFFSET
+145706:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x42e8 (data=0x4bb4000)
+145707:OTTSEL symlink '*default-dead-pool*' at 0x4318 -> OFFSET
+145708:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x4318 (data=0x4bb4000)
+147851:OTTSEL symlink '*default-dead-pool*' at 0x90b0 -> OFFSET
+147852:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x90b0 (data=0x4bcc000)
+147853:OTTSEL symlink '*default-dead-pool*' at 0x90f4 -> OFFSET
+147854:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x90f4 (data=0x4bcc000)
+148468:OTTSEL symlink '*default-dead-pool*' at 0xcdc4 -> OFFSET
+148469:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0xcdc4 (data=0x4bd8000)
+148470:OTTSEL symlink '*default-dead-pool*' at 0xcdfc -> OFFSET
+148471:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0xcdfc (data=0x4bd8000)
+148472:OTTSEL symlink '*default-dead-pool*' at 0xd058 -> OFFSET
+148473:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0xd058 (data=0x4bd8000)
+148474:OTTSEL symlink '*default-dead-pool*' at 0xd074 -> OFFSET
+148475:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0xd074 (data=0x4bd8000)
+148476:OTTSEL symlink '*default-dead-pool*' at 0xd08c -> OFFSET
+148477:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0xd08c (data=0x4bd8000)
+148478:OTTSEL symlink '*default-dead-pool*' at 0xd0e0 -> OFFSET
+148479:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0xd0e0 (data=0x4bd8000)
+148480:OTTSEL symlink '*default-dead-pool*' at 0xd180 -> OFFSET
+148481:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0xd180 (data=0x4bd8000)
+148482:OTTSEL symlink '*default-dead-pool*' at 0xd230 -> OFFSET
+148483:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0xd230 (data=0x4bd8000)
+148620:OTTSEL symlink 'default-collision-reaction' at 0xd1d0 -> OFFSET
+148621:OTTSEL symlink 'default-collision-reaction' wrote 0xf7b0 at data+0xd1d0 (data=0x4bd8000)
+149499:OTTSEL symlink 'default-collision-reaction' at 0x9000 -> OFFSET
+149500:OTTSEL symlink 'default-collision-reaction' wrote 0xf7b0 at data+0x9000 (data=0x4be8000)
+149779:OTTSEL symlink 'lurkerworm-default-event-handler' at 0x4064 -> OFFSET
+149780:OTTSEL symlink 'lurkerworm-default-event-handler' wrote 0xffff3700 at data+0x4064 (data=0x2608000)
+149781:OTTSEL symlink 'lurkerworm-default-event-handler' at 0x406c -> OFFSET
+149782:OTTSEL symlink 'lurkerworm-default-event-handler' wrote 0xffff3700 at data+0x406c (data=0x2608000)
+149783:OTTSEL symlink 'lurkerworm-default-event-handler' at 0x4078 -> OFFSET
+149784:OTTSEL symlink 'lurkerworm-default-event-handler' wrote 0xffff3700 at data+0x4078 (data=0x2608000)
+149785:OTTSEL symlink 'lurkerworm-default-event-handler' at 0x4084 -> OFFSET
+149786:OTTSEL symlink 'lurkerworm-default-event-handler' wrote 0xffff3700 at data+0x4084 (data=0x2608000)
+149787:OTTSEL symlink 'lurkerworm-default-event-handler' at 0x4090 -> OFFSET
+149788:OTTSEL symlink 'lurkerworm-default-event-handler' wrote 0xffff3700 at data+0x4090 (data=0x2608000)
+149789:OTTSEL symlink 'lurkerworm-default-event-handler' at 0x409c -> OFFSET
+149790:OTTSEL symlink 'lurkerworm-default-event-handler' wrote 0xffff3700 at data+0x409c (data=0x2608000)
+149791:OTTSEL symlink 'lurkerworm-default-event-handler' at 0x40a8 -> OFFSET
+149792:OTTSEL symlink 'lurkerworm-default-event-handler' wrote 0xffff3700 at data+0x40a8 (data=0x2608000)
+149793:OTTSEL symlink 'lurkerworm-default-event-handler' at 0x40b4 -> OFFSET
+149794:OTTSEL symlink 'lurkerworm-default-event-handler' wrote 0xffff3700 at data+0x40b4 (data=0x2608000)
+149795:OTTSEL symlink 'lurkerworm-default-post-behavior' at 0x4068 -> OFFSET
+149796:OTTSEL symlink 'lurkerworm-default-post-behavior' wrote 0x5a20 at data+0x4068 (data=0x2608000)
+149797:OTTSEL symlink 'lurkerworm-default-post-behavior' at 0x4070 -> OFFSET
+149798:OTTSEL symlink 'lurkerworm-default-post-behavior' wrote 0x5a20 at data+0x4070 (data=0x2608000)
+149799:OTTSEL symlink 'lurkerworm-default-post-behavior' at 0x4074 -> OFFSET
+149800:OTTSEL symlink 'lurkerworm-default-post-behavior' wrote 0x5a20 at data+0x4074 (data=0x2608000)
+149801:OTTSEL symlink 'lurkerworm-default-post-behavior' at 0x4080 -> OFFSET
+149802:OTTSEL symlink 'lurkerworm-default-post-behavior' wrote 0x5a20 at data+0x4080 (data=0x2608000)
+149803:OTTSEL symlink 'lurkerworm-default-post-behavior' at 0x408c -> OFFSET
+149804:OTTSEL symlink 'lurkerworm-default-post-behavior' wrote 0x5a20 at data+0x408c (data=0x2608000)
+149805:OTTSEL symlink 'lurkerworm-default-post-behavior' at 0x4098 -> OFFSET
+149806:OTTSEL symlink 'lurkerworm-default-post-behavior' wrote 0x5a20 at data+0x4098 (data=0x2608000)
+149807:OTTSEL symlink 'lurkerworm-default-post-behavior' at 0x40a4 -> OFFSET
+149808:OTTSEL symlink 'lurkerworm-default-post-behavior' wrote 0x5a20 at data+0x40a4 (data=0x2608000)
+149809:OTTSEL symlink 'lurkerworm-default-post-behavior' at 0x40b0 -> OFFSET
+149810:OTTSEL symlink 'lurkerworm-default-post-behavior' wrote 0x5a20 at data+0x40b0 (data=0x2608000)
+149811:OTTSEL symlink 'lurkerworm-default-post-behavior' at 0x40bc -> OFFSET
+149812:OTTSEL symlink 'lurkerworm-default-post-behavior' wrote 0x5a20 at data+0x40bc (data=0x2608000)
+150052:OTTSEL symlink 'default-collision-reaction' at 0x92a8 -> OFFSET
+150053:OTTSEL symlink 'default-collision-reaction' wrote 0xf7b0 at data+0x92a8 (data=0x4bf4000)
+150580:OTTSEL symlink 'nav-enemy-default-event-handler' at 0x4034 -> OFFSET
+150581:OTTSEL symlink 'nav-enemy-default-event-handler' wrote 0xffff6cf0 at data+0x4034 (data=0x2608000)
+150582:OTTSEL symlink 'nav-enemy-default-event-handler' at 0x4058 -> OFFSET
+150583:OTTSEL symlink 'nav-enemy-default-event-handler' wrote 0xffff6cf0 at data+0x4058 (data=0x2608000)
+150584:OTTSEL symlink 'nav-enemy-default-event-handler' at 0x4074 -> OFFSET
+150585:OTTSEL symlink 'nav-enemy-default-event-handler' wrote 0xffff6cf0 at data+0x4074 (data=0x2608000)
+150586:OTTSEL symlink 'nav-enemy-default-event-handler' at 0x4088 -> OFFSET
+150587:OTTSEL symlink 'nav-enemy-default-event-handler' wrote 0xffff6cf0 at data+0x4088 (data=0x2608000)
+150588:OTTSEL symlink 'nav-enemy-default-event-handler' at 0x409c -> OFFSET
+150589:OTTSEL symlink 'nav-enemy-default-event-handler' wrote 0xffff6cf0 at data+0x409c (data=0x2608000)
+150590:OTTSEL symlink 'nav-enemy-default-event-handler' at 0x40b0 -> OFFSET
+150591:OTTSEL symlink 'nav-enemy-default-event-handler' wrote 0xffff6cf0 at data+0x40b0 (data=0x2608000)
+150592:OTTSEL symlink 'nav-enemy-default-event-handler' at 0x40c4 -> OFFSET
+150593:OTTSEL symlink 'nav-enemy-default-event-handler' wrote 0xffff6cf0 at data+0x40c4 (data=0x2608000)
+150594:OTTSEL symlink 'nav-enemy-default-event-handler' at 0x40d8 -> OFFSET
+150595:OTTSEL symlink 'nav-enemy-default-event-handler' wrote 0xffff6cf0 at data+0x40d8 (data=0x2608000)
+150596:OTTSEL symlink 'nav-enemy-default-event-handler' at 0x40dc -> OFFSET
+150597:OTTSEL symlink 'nav-enemy-default-event-handler' wrote 0xffff6cf0 at data+0x40dc (data=0x2608000)
+150733:OTTSEL symlink 'default-collision-reaction' at 0x4720 -> OFFSET
+150734:OTTSEL symlink 'default-collision-reaction' wrote 0xf7b0 at data+0x4720 (data=0x4c00000)
+150979:OTTSEL symlink 'nav-enemy-default-event-handler' at 0x4018 -> OFFSET
+150980:OTTSEL symlink 'nav-enemy-default-event-handler' wrote 0xffff6cf0 at data+0x4018 (data=0x2608000)
+150981:OTTSEL symlink 'nav-enemy-default-event-handler' at 0x402c -> OFFSET
+150982:OTTSEL symlink 'nav-enemy-default-event-handler' wrote 0xffff6cf0 at data+0x402c (data=0x2608000)
+150983:OTTSEL symlink 'nav-enemy-default-event-handler' at 0x4040 -> OFFSET
+150984:OTTSEL symlink 'nav-enemy-default-event-handler' wrote 0xffff6cf0 at data+0x4040 (data=0x2608000)
+150985:OTTSEL symlink 'nav-enemy-default-event-handler' at 0x4054 -> OFFSET
+150986:OTTSEL symlink 'nav-enemy-default-event-handler' wrote 0xffff6cf0 at data+0x4054 (data=0x2608000)
+150987:OTTSEL symlink 'nav-enemy-default-event-handler' at 0x4068 -> OFFSET
+150988:OTTSEL symlink 'nav-enemy-default-event-handler' wrote 0xffff6cf0 at data+0x4068 (data=0x2608000)
+150989:OTTSEL symlink 'nav-enemy-default-event-handler' at 0x407c -> OFFSET
+150990:OTTSEL symlink 'nav-enemy-default-event-handler' wrote 0xffff6cf0 at data+0x407c (data=0x2608000)
+150991:OTTSEL symlink 'nav-enemy-default-event-handler' at 0x4094 -> OFFSET
+150992:OTTSEL symlink 'nav-enemy-default-event-handler' wrote 0xffff6cf0 at data+0x4094 (data=0x2608000)
+151068:OTTSEL symlink '*default-dead-pool*' at 0x51b8 -> OFFSET
+151069:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x51b8 (data=0x4c08000)
+151070:OTTSEL symlink '*default-dead-pool*' at 0x51d0 -> OFFSET
+151071:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0x51d0 (data=0x4c08000)
+151130:OTTSEL symlink 'default-collision-reaction' at 0x5280 -> OFFSET
+151131:OTTSEL symlink 'default-collision-reaction' wrote 0xf7b0 at data+0x5280 (data=0x4c08000)
+151441:OTTSEL symlink '*default-dead-pool*' at 0xd67c -> OFFSET
+151442:OTTSEL symlink '*default-dead-pool*' wrote 0xffff93c0 at data+0xd67c (data=0x4c10000)

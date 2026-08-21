@@ -1,0 +1,2 @@
+  PID STARTED                      ELAPSED STAT COMMAND
+46592 Fri Aug 21 14:24:47 2026       00:03 SN   /usr/bin/script -q docs/evidence/M1/artifacts-2026-08-21-macos-reproducibility/launch-transcript.log out/jak-project/build/h1/game/gk -v --game jak1 -- -boot -fakeiso

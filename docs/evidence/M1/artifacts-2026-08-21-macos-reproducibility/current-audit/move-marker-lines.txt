@@ -1,0 +1,8 @@
+[41:07] [[38;2;144;238;144minfo[0m] OTTSEL PAD: synthetic button 0x4000 injected for 12 pad0 reads
+[41:12] [[38;2;144;238;144minfo[0m] OTTSEL PAD: synthetic button 0x40 injected for 12 pad0 reads
+[41:15] [[38;2;144;238;144minfo[0m] OTTSEL PAD: synthetic button 0x40 injected for 12 pad0 reads
+[41:18] [[38;2;144;238;144minfo[0m] OTTSEL PAD: synthetic button 0x40 injected for 12 pad0 reads
+[41:21] [[38;2;144;238;144minfo[0m] OTTSEL PAD: synthetic button 0x40 injected for 12 pad0 reads
+[41:24] [[38;2;144;238;144minfo[0m] OTTSEL PAD: synthetic button 0x4000 injected for 12 pad0 reads
+[47:12] [[38;2;144;238;144minfo[0m] OTTSEL PAD: synthetic left stick accepted x=255 y=127 port0-reads=900
+[47:33] [[38;2;144;238;144minfo[0m] OTTSEL PAD: synthetic left stick released to neutral

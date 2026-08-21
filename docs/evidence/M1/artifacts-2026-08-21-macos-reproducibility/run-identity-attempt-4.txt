@@ -1,0 +1,6 @@
+2026-08-21T14:34:48-0500
+launchctl-label=ottsel-m1-repro
+runtime-pid=47438
+outer-head=d5e12ccdb21af2e3d409611648f14064379a5392
+upstream-head=641fb572e876750d8618434d9f7c1a531b43b366
+executable-sha256=26bdcbc8e2e2864adc5a2e178e55529d6d107b3a5633cf13e6825cc5e2be0b68

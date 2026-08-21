@@ -1,0 +1,2 @@
+  PID  PPID STARTED                      ELAPSED STAT COMMAND
+47045 47039 Fri Aug 21 14:29:33 2026       00:05 SN   out/jak-project/build/h1/game/gk -v --game jak1 -- -boot -fakeiso
