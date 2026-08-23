@@ -1,0 +1,359 @@
+diff --git a/game/system/hid/input_bindings.cpp b/game/system/hid/input_bindings.cpp
+index 3c7de22a4..33f2abca3 100644
+--- a/game/system/hid/input_bindings.cpp
++++ b/game/system/hid/input_bindings.cpp
+@@ -114,7 +114,15 @@ const InputBindingGroups DEFAULT_KEYBOARD_BINDS =
+                         {SDLK_PERIOD, {InputBinding(PadData::ButtonIndex::R3)}},
+                         {SDLK_APOSTROPHE, {InputBinding(PadData::ButtonIndex::SELECT)}},
+                         {SDLK_RETURN, {InputBinding(PadData::ButtonIndex::START)}},
++                        {SDLK_KP_ENTER, {InputBinding(PadData::ButtonIndex::START)}},
++                        // Standard desktop affordances: Escape pauses and Tab opens the map.
++                        {SDLK_ESCAPE, {InputBinding(PadData::ButtonIndex::START)}},
++                        {SDLK_TAB, {InputBinding(PadData::ButtonIndex::SELECT)}},
+                         {SDLK_Q, {InputBinding(PadData::ButtonIndex::L1)}},
++                        {SDLK_LSHIFT, {InputBinding(PadData::ButtonIndex::R1)}},
++                        {SDLK_RSHIFT, {InputBinding(PadData::ButtonIndex::R1)}},
++                        {SDLK_C, {InputBinding(PadData::ButtonIndex::L2)}},
++                        {SDLK_X, {InputBinding(PadData::ButtonIndex::R2)}},
+                         {SDLK_O, {InputBinding(PadData::ButtonIndex::R1)}},
+                         {SDLK_1, {InputBinding(PadData::ButtonIndex::L2)}},
+                         {SDLK_P, {InputBinding(PadData::ButtonIndex::R2)}},
+@@ -123,7 +131,12 @@ const InputBindingGroups DEFAULT_KEYBOARD_BINDS =
+                         {SDLK_LEFT, {InputBinding(PadData::ButtonIndex::DPAD_LEFT)}},
+                         {SDLK_RIGHT, {InputBinding(PadData::ButtonIndex::DPAD_RIGHT)}}});
+ 
+-const InputBindingGroups DEFAULT_MOUSE_BINDS = InputBindingGroups(MOUSE, {}, {}, {});
++const InputBindingGroups DEFAULT_MOUSE_BINDS = InputBindingGroups(
++    MOUSE, {}, {}, {{SDL_BUTTON_LEFT, {InputBinding(PadData::ButtonIndex::CROSS)}},
++                    {SDL_BUTTON_RIGHT, {InputBinding(PadData::ButtonIndex::CIRCLE)}},
++                    {SDL_BUTTON_MIDDLE, {InputBinding(PadData::ButtonIndex::SQUARE)}},
++                    {SDL_BUTTON_X1, {InputBinding(PadData::ButtonIndex::L1)}},
++                    {SDL_BUTTON_X2, {InputBinding(PadData::ButtonIndex::R1)}}});
+ 
+ std::vector<InputBindingInfo> InputBindingGroups::lookup_analog_binds(PadData::AnalogIndex idx,
+                                                                       bool only_minimum_binds) {
+diff --git a/game/system/hid/input_manager.cpp b/game/system/hid/input_manager.cpp
+index 5a74cede8..254e504d3 100644
+--- a/game/system/hid/input_manager.cpp
++++ b/game/system/hid/input_manager.cpp
+@@ -1,6 +1,7 @@
+ #include "input_manager.h"
+ 
+ #include <atomic>
++#include <cstdlib>
+ #include <cmath>
+ 
+ #include "input_manager.h"
+@@ -25,6 +26,42 @@ InputManager::InputManager(SDL_Window* window)
+   {
+     auto p = scoped_prof("input_manager::init");
+     m_settings->load_settings();
++    // Native WASD/action input is the product default.  Preserve an explicit
++    // opt-out for diagnostics or users who deliberately want keyboard input
++    // disabled, without depending on a stale profile bit.
++    if (const char* enable_keyboard = std::getenv("OTTSEL_ENABLE_KEYBOARD");
++        !enable_keyboard || enable_keyboard[0] != '0') {
++      m_settings->keyboard_enabled = true;
++      lg::info("OTTSEL INPUT: native keyboard enabled (WASD/actions)");
++    }
++    if (m_settings->mouse_binds.analog_axii.empty() &&
++        m_settings->mouse_binds.button_axii.empty() &&
++        m_settings->mouse_binds.buttons.empty()) {
++      m_settings->mouse_binds = DEFAULT_MOUSE_BINDS;
++    }
++    // Add the intuitive left-hand aliases to older profiles without
++    // overwriting any user-customized binding that is already present.
++    const auto ensure_key = [&](u32 key, PadData::ButtonIndex button) {
++      if (!m_settings->keyboard_binds.buttons.contains(key)) {
++        m_settings->keyboard_binds.buttons.emplace(key, std::vector<InputBinding>{InputBinding(button)});
++      }
++    };
++    ensure_key(SDLK_KP_ENTER, PadData::ButtonIndex::START);
++    ensure_key(SDLK_LSHIFT, PadData::ButtonIndex::R1);
++    ensure_key(SDLK_RSHIFT, PadData::ButtonIndex::R1);
++    ensure_key(SDLK_C, PadData::ButtonIndex::L2);
++    ensure_key(SDLK_X, PadData::ButtonIndex::R2);
++    const auto ensure_mouse = [&](u32 button, PadData::ButtonIndex action) {
++      if (!m_settings->mouse_binds.buttons.contains(button)) {
++        m_settings->mouse_binds.buttons.emplace(button, std::vector<InputBinding>{InputBinding(action)});
++      }
++    };
++    ensure_mouse(SDL_BUTTON_MIDDLE, PadData::ButtonIndex::SQUARE);
++    ensure_mouse(SDL_BUTTON_X1, PadData::ButtonIndex::L1);
++    ensure_mouse(SDL_BUTTON_X2, PadData::ButtonIndex::R1);
++    lg::info("OTTSEL INPUT: desktop map WASD=move mouse=camera Space/LMB=Cross E/RMB=Circle F/MMB=Square R=Triangle Q=L1 Shift=R1 C=L2 X=R2 Tab=Select Return/Escape=Start");
++    lg::info("OTTSEL INPUT: profile keyboard_enabled={} keyboard_port={}",
++             m_settings->keyboard_enabled, m_keyboard_and_mouse_port);
+ #ifdef WIN32
+     if (!SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI_PS3_SIXAXIS_DRIVER, "1")) {
+       sdl_util::log_error("Unable to set SDL_HINT_JOYSTICK_HIDAPI_PS3_SIXAXIS_DRIVER to true!");
+@@ -178,6 +215,19 @@ void InputManager::hide_cursor(const bool hide_cursor) {
+ }
+ 
+ void InputManager::process_sdl_event(const SDL_Event& event) {
++  if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST || event.type == SDL_EVENT_WINDOW_MINIMIZED) {
++    clear_inputs();
++    lg::info("OTTSEL INPUT: focus-clear event={}", event.type);
++  } else if (event.type == SDL_EVENT_WINDOW_FOCUS_GAINED ||
++             event.type == SDL_EVENT_WINDOW_RESTORED) {
++    lg::info("OTTSEL INPUT: focus-resume event={}", event.type);
++  }
++  if (const char* trace_input = std::getenv("OTTSEL_TRACE_INPUT");
++      trace_input && trace_input[0] == '1' &&
++      (event.type == SDL_EVENT_KEY_DOWN || event.type == SDL_EVENT_KEY_UP)) {
++    lg::info("OTTSEL INPUT: SDL key event type={} key={} scancode={}", event.type,
++             event.key.key, static_cast<int>(event.key.scancode));
++  }
+   // TODO - perhaps should handle `SDL_CONTROLLERDEVICEREMAPPED`?
+   // Detect controller connections and disconnects
+   if (sdl_util::is_any_event_type(event.type,
+@@ -590,6 +640,11 @@ void InputManager::enqueue_update_mouse_options(const bool enabled,
+ void InputManager::update_mouse_options(const bool enabled,
+                                         const bool control_camera,
+                                         const bool control_movement) {
++  if (const char* trace_input = std::getenv("OTTSEL_TRACE_INPUT");
++      trace_input && trace_input[0] == '1') {
++    lg::info("OTTSEL INPUT: mouse options enabled={} camera={} movement={}", enabled,
++             control_camera, control_movement);
++  }
+   m_mouse_enabled = enabled;
+   if (!m_mouse_enabled) {
+     // Reset inputs as this device won't be able to be read from again!
+@@ -754,6 +809,10 @@ void InputManager::set_auto_hide_mouse(const bool auto_hide_mouse) {
+ 
+ void InputManager::clear_inputs() {
+   // Reset inputs as this device won't be able to be read from again!
++  if (m_data.find(m_keyboard_and_mouse_port) != m_data.end()) {
++    m_keyboard.clear_actions(m_data.at(m_keyboard_and_mouse_port));
++    m_mouse.clear_actions(m_data.at(m_keyboard_and_mouse_port));
++  }
+   for (auto& [port, data] : m_data) {
+     data->clear();
+   }
+diff --git a/test/test_keyboard_event_edge.cpp b/test/test_keyboard_event_edge.cpp
+new file mode 100644
+index 000000000..527126791
+--- /dev/null
++++ b/test/test_keyboard_event_edge.cpp
+@@ -0,0 +1,221 @@
++#include <memory>
++
++#include "game/settings/settings.h"
++#include "game/sce/ottsel_platform_input.h"
++#include "game/system/hid/devices/keyboard.h"
++#include "gtest/gtest.h"
++
++TEST(KeyboardEventEdge, DeliversBriefCrossPressToPadState) {
++  auto settings = std::make_shared<game_settings::InputSettings>();
++  settings->keyboard_binds = DEFAULT_KEYBOARD_BINDS;
++  KeyboardDevice keyboard(settings);
++  auto data = std::make_shared<PadData>();
++  CommandBindingGroups commands;
++  std::optional<InputBindAssignmentMeta> bind_assignment;
++
++  SDL_Event event{};
++  event.type = SDL_EVENT_KEY_DOWN;
++  event.key.type = SDL_EVENT_KEY_DOWN;
++  event.key.key = SDLK_SPACE;
++  event.key.mod = 0;
++  keyboard.process_event(event, commands, data, bind_assignment);
++
++  EXPECT_TRUE(data->cross().first);
++  EXPECT_EQ(data->cross().second, 255);
++
++  keyboard.clear_actions(data);
++  EXPECT_FALSE(data->cross().first);
++  EXPECT_EQ(data->cross().second, 0);
++}
++
++TEST(KeyboardEventEdge, WASDUsesOpposingAnalogDirections) {
++  auto settings = std::make_shared<game_settings::InputSettings>();
++  settings->keyboard_binds = DEFAULT_KEYBOARD_BINDS;
++  KeyboardDevice keyboard(settings);
++  auto data = std::make_shared<PadData>();
++  CommandBindingGroups commands;
++  std::optional<InputBindAssignmentMeta> bind_assignment;
++
++  SDL_Event event{};
++  event.type = SDL_EVENT_KEY_DOWN;
++  event.key.type = SDL_EVENT_KEY_DOWN;
++  event.key.key = SDLK_W;
++  keyboard.process_event(event, commands, data, bind_assignment);
++  event.key.key = SDLK_A;
++  keyboard.process_event(event, commands, data, bind_assignment);
++
++  EXPECT_EQ(data->analog_data.at(PadData::AnalogIndex::LEFT_X), 0);
++  EXPECT_EQ(data->analog_data.at(PadData::AnalogIndex::LEFT_Y), 0);
++
++  keyboard.clear_actions(data);
++  EXPECT_EQ(data->analog_data.at(PadData::AnalogIndex::LEFT_X), 127);
++  EXPECT_EQ(data->analog_data.at(PadData::AnalogIndex::LEFT_Y), 127);
++}
++
++TEST(KeyboardEventEdge, MovementKeyUpImmediatelyReturnsToNeutral) {
++  auto settings = std::make_shared<game_settings::InputSettings>();
++  settings->keyboard_binds = DEFAULT_KEYBOARD_BINDS;
++  KeyboardDevice keyboard(settings);
++  auto data = std::make_shared<PadData>();
++  CommandBindingGroups commands;
++  std::optional<InputBindAssignmentMeta> bind_assignment;
++
++  SDL_Event event{};
++  event.type = SDL_EVENT_KEY_DOWN;
++  event.key.type = SDL_EVENT_KEY_DOWN;
++  event.key.key = SDLK_A;
++  keyboard.process_event(event, commands, data, bind_assignment);
++  ASSERT_EQ(data->analog_data.at(PadData::AnalogIndex::LEFT_X), 0);
++
++  event.type = SDL_EVENT_KEY_UP;
++  event.key.type = SDL_EVENT_KEY_UP;
++  keyboard.process_event(event, commands, data, bind_assignment);
++  EXPECT_EQ(data->analog_data.at(PadData::AnalogIndex::LEFT_X), 127);
++}
++
++TEST(KeyboardEventEdge, DefaultDesktopLayoutSupportsMovementActionAndPause) {
++  const auto& binds = DEFAULT_KEYBOARD_BINDS;
++  ASSERT_EQ(binds.buttons.at(SDLK_SPACE).front().pad_data_index,
++            PadData::ButtonIndex::CROSS);
++  ASSERT_EQ(binds.buttons.at(SDLK_E).front().pad_data_index,
++            PadData::ButtonIndex::CIRCLE);
++  ASSERT_EQ(binds.buttons.at(SDLK_F).front().pad_data_index,
++            PadData::ButtonIndex::SQUARE);
++  ASSERT_EQ(binds.buttons.at(SDLK_R).front().pad_data_index,
++            PadData::ButtonIndex::TRIANGLE);
++  ASSERT_EQ(binds.buttons.at(SDLK_RETURN).front().pad_data_index,
++            PadData::ButtonIndex::START);
++  EXPECT_EQ(binds.buttons.at(SDLK_ESCAPE).front().pad_data_index,
++            PadData::ButtonIndex::START);
++  EXPECT_EQ(binds.buttons.at(SDLK_TAB).front().pad_data_index,
++            PadData::ButtonIndex::SELECT);
++}
++
++TEST(KeyboardEventEdge, SimultaneousMovementAndActionReturnsToNeutral) {
++  auto settings = std::make_shared<game_settings::InputSettings>();
++  settings->keyboard_binds = DEFAULT_KEYBOARD_BINDS;
++  KeyboardDevice keyboard(settings);
++  auto data = std::make_shared<PadData>();
++  CommandBindingGroups commands;
++  std::optional<InputBindAssignmentMeta> bind_assignment;
++
++  SDL_Event event{};
++  event.type = SDL_EVENT_KEY_DOWN;
++  event.key.type = SDL_EVENT_KEY_DOWN;
++  event.key.mod = 0;
++  event.key.key = SDLK_W;
++  keyboard.process_event(event, commands, data, bind_assignment);
++  event.key.key = SDLK_SPACE;
++  keyboard.process_event(event, commands, data, bind_assignment);
++
++  EXPECT_EQ(data->analog_data.at(PadData::AnalogIndex::LEFT_Y), 0);
++  EXPECT_TRUE(data->cross().first);
++  EXPECT_EQ(data->cross().second, 255);
++
++  keyboard.clear_actions(data);
++  EXPECT_EQ(data->analog_data.at(PadData::AnalogIndex::LEFT_X), 127);
++  EXPECT_EQ(data->analog_data.at(PadData::AnalogIndex::LEFT_Y), 127);
++  EXPECT_FALSE(data->cross().first);
++  EXPECT_EQ(data->cross().second, 0);
++}
++
++TEST(KeyboardEventEdge, DefaultMouseButtonsMapToFaceActions) {
++  const auto left = DEFAULT_MOUSE_BINDS.buttons.at(SDL_BUTTON_LEFT);
++  const auto right = DEFAULT_MOUSE_BINDS.buttons.at(SDL_BUTTON_RIGHT);
++  ASSERT_EQ(left.size(), 1);
++  ASSERT_EQ(right.size(), 1);
++  EXPECT_EQ(left.front().pad_data_index, PadData::ButtonIndex::CROSS);
++  EXPECT_EQ(right.front().pad_data_index, PadData::ButtonIndex::CIRCLE);
++  EXPECT_EQ(DEFAULT_MOUSE_BINDS.buttons.at(SDL_BUTTON_MIDDLE).front().pad_data_index,
++            PadData::ButtonIndex::SQUARE);
++  EXPECT_EQ(DEFAULT_MOUSE_BINDS.buttons.at(SDL_BUTTON_X1).front().pad_data_index,
++            PadData::ButtonIndex::L1);
++  EXPECT_EQ(DEFAULT_MOUSE_BINDS.buttons.at(SDL_BUTTON_X2).front().pad_data_index,
++            PadData::ButtonIndex::R1);
++}
++
++TEST(KeyboardEventEdge, EnterKeypadEnterAndEscapePause) {
++  EXPECT_EQ(DEFAULT_KEYBOARD_BINDS.buttons.at(SDLK_RETURN).front().pad_data_index,
++            PadData::ButtonIndex::START);
++  EXPECT_EQ(DEFAULT_KEYBOARD_BINDS.buttons.at(SDLK_KP_ENTER).front().pad_data_index,
++            PadData::ButtonIndex::START);
++  EXPECT_EQ(DEFAULT_KEYBOARD_BINDS.buttons.at(SDLK_ESCAPE).front().pad_data_index,
++            PadData::ButtonIndex::START);
++}
++
++TEST(KeyboardEventEdge, LeftHandDesktopActionCluster) {
++  EXPECT_EQ(DEFAULT_KEYBOARD_BINDS.buttons.at(SDLK_Q).front().pad_data_index,
++            PadData::ButtonIndex::L1);
++  EXPECT_EQ(DEFAULT_KEYBOARD_BINDS.buttons.at(SDLK_LSHIFT).front().pad_data_index,
++            PadData::ButtonIndex::R1);
++  EXPECT_EQ(DEFAULT_KEYBOARD_BINDS.buttons.at(SDLK_C).front().pad_data_index,
++            PadData::ButtonIndex::L2);
++  EXPECT_EQ(DEFAULT_KEYBOARD_BINDS.buttons.at(SDLK_X).front().pad_data_index,
++            PadData::ButtonIndex::R2);
++  EXPECT_EQ(DEFAULT_KEYBOARD_BINDS.buttons.at(SDLK_TAB).front().pad_data_index,
++            PadData::ButtonIndex::SELECT);
++}
++
++TEST(KeyboardEventEdge, SimultaneousMovementAndActionReleaseEdgesAreIndependent) {
++  auto settings = std::make_shared<game_settings::InputSettings>();
++  settings->keyboard_binds = DEFAULT_KEYBOARD_BINDS;
++  KeyboardDevice keyboard(settings);
++  auto data = std::make_shared<PadData>();
++  CommandBindingGroups commands;
++  std::optional<InputBindAssignmentMeta> bind_assignment;
++
++  SDL_Event event{};
++  event.type = SDL_EVENT_KEY_DOWN;
++  event.key.type = SDL_EVENT_KEY_DOWN;
++  event.key.mod = 0;
++  event.key.key = SDLK_W;
++  keyboard.process_event(event, commands, data, bind_assignment);
++  event.key.key = SDLK_SPACE;
++  keyboard.process_event(event, commands, data, bind_assignment);
++
++  ASSERT_EQ(data->analog_data.at(PadData::AnalogIndex::LEFT_Y), 0);
++  ASSERT_TRUE(data->cross().first);
++
++  event.type = SDL_EVENT_KEY_UP;
++  event.key.type = SDL_EVENT_KEY_UP;
++  event.key.key = SDLK_W;
++  keyboard.process_event(event, commands, data, bind_assignment);
++  EXPECT_EQ(data->analog_data.at(PadData::AnalogIndex::LEFT_Y), 127);
++  EXPECT_TRUE(data->cross().first);
++
++  event.key.key = SDLK_SPACE;
++  keyboard.process_event(event, commands, data, bind_assignment);
++  EXPECT_EQ(data->analog_data.at(PadData::AnalogIndex::LEFT_Y), 127);
++  EXPECT_TRUE(data->cross().first);
++  EXPECT_EQ(data->cross().second, 255);
++
++  keyboard.clear_actions(data);
++  EXPECT_FALSE(data->cross().first);
++  EXPECT_EQ(data->cross().second, 0);
++}
++
++TEST(KeyboardEventEdge, MouseMotionSurvivesEventLoopUntilPadRead) {
++  ottsel::platform_input::MouseMotionLatch motion;
++  motion.add(4.f, -2.f);
++  EXPECT_EQ(motion.rightx, 159);
++  EXPECT_EQ(motion.righty, 111);
++  EXPECT_EQ(motion.remaining_reads, 8);
++
++  for (int i = 0; i < 7; ++i) {
++    motion.advance_event_loop();
++    EXPECT_NE(motion.rightx, 127);
++  }
++  motion.advance_event_loop();
++  EXPECT_EQ(motion.rightx, 127);
++  EXPECT_EQ(motion.righty, 127);
++}
++
++TEST(KeyboardEventEdge, AccumulatesMouseMotionBeforePadRead) {
++  ottsel::platform_input::MouseMotionLatch motion;
++  motion.add(2.f, -1.f);
++  motion.add(3.f, -2.f);
++
++  EXPECT_EQ(motion.rightx, 167);
++  EXPECT_EQ(motion.righty, 103);
++  EXPECT_EQ(motion.remaining_reads, 8);
++}
