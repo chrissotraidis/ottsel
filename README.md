@@ -50,7 +50,20 @@ product status.
 2. [`docs/reports/2026-08-19-ipad-iphone-blocker-investigation.md`](docs/reports/2026-08-19-ipad-iphone-blocker-investigation.md)
 3. [`docs/BOT33_PROMPT.md`](docs/BOT33_PROMPT.md)
 4. [`docs/15-macos-to-mobile-goal-loop.md`](docs/15-macos-to-mobile-goal-loop.md)
+5. [`docs/macos-settings-and-packaging.md`](docs/macos-settings-and-packaging.md)
+6. [`docs/16-ipados-ios-goal-loop-2026-08-23.md`](docs/16-ipados-ios-goal-loop-2026-08-23.md)
 5. [`docs/13-current-state.md`](docs/13-current-state.md)
+
+### macOS test controls
+
+The native Windowed build defaults to `W/A/S/D` movement, mouse motion camera
+control, left/right mouse for Cross/Circle, `Space/E/F/R` for
+Cross/Circle/Square/Triangle, `Return` or `Esc` for Start/pause, and `Tab` for
+Select/map. `I/J/K/L` provide keyboard camera movement; release every key or
+button to return to neutral. Press Left Alt for the debug toolbar, then use
+`Settings → Ottsel` for runtime upscaling and mute controls.
+
+Package a Finder-visible macOS app with `./scripts/package-macos.sh`.
 
 The Phase 1 research record remains in `docs/00`–`12`; implementation evidence
 is under `docs/evidence/`.

@@ -1,0 +1,69 @@
+diff --git a/game/graphics/opengl_renderer/debug_gui.cpp b/game/graphics/opengl_renderer/debug_gui.cpp
+index c6b58997e..d31c740b2 100644
+--- a/game/graphics/opengl_renderer/debug_gui.cpp
++++ b/game/graphics/opengl_renderer/debug_gui.cpp
+@@ -9,12 +9,32 @@
+ #include "game/graphics/gfx.h"
+ #include "game/graphics/screenshot.h"
+ #include "game/overlord/jak3/dma.h"
++#include "game/sound/sndshim.h"
+ #include "game/system/hid/sdl_util.h"
+ 
+ #include "fmt/format.h"
+ #include "third-party/imgui/imgui.h"
+ #include "third-party/imgui/imgui_style.h"
+ 
++namespace {
++int g_ott_sel_upscale = 1;
++bool g_ott_sel_muted = false;
++
++void apply_ott_sel_upscale(int scale) {
++  g_ott_sel_upscale = std::clamp(scale, 1, 4);
++  Gfx::g_global_settings.game_res_w = 640 * g_ott_sel_upscale;
++  Gfx::g_global_settings.game_res_h = 480 * g_ott_sel_upscale;
++  lg::info("OTTSEL SETTINGS: upscale={}x render={}x{}", g_ott_sel_upscale,
++           Gfx::g_global_settings.game_res_w, Gfx::g_global_settings.game_res_h);
++}
++
++void apply_ott_sel_mute(bool muted) {
++  g_ott_sel_muted = muted;
++  snd_SetMasterVolume(16, g_ott_sel_muted ? 0 : 0x400);
++  lg::info("OTTSEL SETTINGS: muted={}", g_ott_sel_muted);
++}
++}  // namespace
++
+ void FrameTimeRecorder::finish_frame() {
+   m_frame_times[m_idx++] = m_compute_timer.getMs();
+   if (m_idx == SIZE) {
+@@ -131,6 +151,31 @@ void OpenGlDebugGui::draw(const DmaStats& dma_stats) {
+     }
+ 
+     if (ImGui::BeginMenu("Settings")) {
++      if (ImGui::BeginMenu("Ottsel")) {
++        ImGui::TextUnformatted("MacOS game settings");
++        ImGui::Separator();
++        if (ImGui::BeginMenu("Upscaling")) {
++          ImGui::TextUnformatted("Internal render resolution");
++          if (ImGui::MenuItem("Native (1x)", nullptr, g_ott_sel_upscale == 1)) {
++            apply_ott_sel_upscale(1);
++          }
++          if (ImGui::MenuItem("2x (1280x960)", nullptr, g_ott_sel_upscale == 2)) {
++            apply_ott_sel_upscale(2);
++          }
++          if (ImGui::MenuItem("3x (1920x1440)", nullptr, g_ott_sel_upscale == 3)) {
++            apply_ott_sel_upscale(3);
++          }
++          if (ImGui::MenuItem("4x (2560x1920)", nullptr, g_ott_sel_upscale == 4)) {
++            apply_ott_sel_upscale(4);
++          }
++          ImGui::EndMenu();
++        }
++        if (ImGui::MenuItem("Mute game audio", nullptr, g_ott_sel_muted)) {
++          apply_ott_sel_mute(!g_ott_sel_muted);
++        }
++        ImGui::EndMenu();
++      }
++
+       // ImGUI stuff
+       if (ImGui::TreeNode("ImGui Styling")) {
+         if (ImGui::InputFloat("Font Scale", &Gfx::g_debug_settings.imgui_font_scale)) {

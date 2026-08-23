@@ -141,6 +141,10 @@ Target tree: `open-goal/jak-project` pinned at
   page/index membership. See
   `docs/evidence/R1/r1-texture-lookup-page-directory-trace-2026-08-21.md`.
 
+- **`r1-macos-settings-menu.patch`** — macOS debug-toolbar `Settings → Ottsel`
+  submenu with runtime 1x–4x internal upscaling and master-audio mute. It is
+  layered after `49324a47` and does not change the mobile renderer path.
+
 ## Superseded / historical (do not apply)
 
 - `h1-arm64-goal-function-codegen.patch` — H1 slice only (subset of the
