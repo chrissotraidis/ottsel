@@ -49,7 +49,7 @@ native mouse-direction fix.
 - `/tmp/ottsel-macos-20260823-freeze-fix/gk.sha256`; `/tmp/ottsel-macos-20260823-freeze-fix/final-training-linear-knot-helper.png`
 - `/tmp/ottsel-macos-20260823-freeze-fix/training-after-controls-focus.png`
 - `/tmp/ottsel-macos-20260823-fix/post-release-a.jpeg`; fresh coherent Training frame after controls: `/tmp/ottsel-macos-fresh-training-controls-20260823.jpeg`
-- Physical-speaker route: `/tmp/ottsel-macos-physical-audio-20260823-165719/{wrapper-current-post-soak.log,audio-transcript-post-soak.txt,fault-scan-post-soak.txt}`; combined UI route: `/tmp/ottsel-macos-physical-ui-route-20260823-170826/{wrapper-current.log,route-input-audio-transcript.txt,fault-scan.txt}`
+- Physical-speaker route: `/tmp/ottsel-macos-physical-audio-20260823-165719/{wrapper-current-post-soak.log,audio-transcript-post-soak.txt,fault-scan-post-soak.txt}`; combined UI route: `/tmp/ottsel-macos-physical-ui-route-20260823-170826/{wrapper-current.log,route-input-audio-transcript.txt,fault-scan.txt}`; no-override default: `/tmp/ottsel-macos-default-physical-audio-20260823/{wrapper-current.log,audio-transcript.txt,fault-scan.txt}`
 
 ## Boundary
 
