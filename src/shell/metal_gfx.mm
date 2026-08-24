@@ -10,6 +10,7 @@
 #import <QuartzCore/CAMetalLayer.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <array>
 #include <cmath>
@@ -19,6 +20,7 @@
 #include <mutex>
 #include <numeric>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <unistd.h>
 
@@ -36,6 +38,8 @@
 #include "common/dma/ottsel_sprite_phase.h"
 
 #include "metal_shell.h"
+#include "mobile_generic_policy.h"
+#include "mobile_scene_policy.h"
 #include "game/sce/sif_ee.h"
 
 // BOT22: synthetic pad press state (defined in game/sce/libpad.cpp).
@@ -151,12 +155,14 @@ struct MobileDirectTrace {
   u32 font_packet_samples = 0;
   u32 glyph_packet_samples = 0;
   bool glyph_ir_logged = false;
+  bool native_product = false;
   int draw_start = 0;
 };
 MobileDirectTrace g_mobile_direct_trace;
 u32 g_mobile_chain_no = 0;
 u32& g_chain_no = g_mobile_chain_no;
 bool g_mobile_generic_probe_pending = false;
+bool g_mobile_merc_trace = false;
 constexpr u32 kMobileDirectTraceChains = 900;
 
 // CPU-side level data shared with the desktop PC renderer.  iOS keeps this
@@ -166,6 +172,7 @@ std::unordered_map<std::string, std::unique_ptr<tfrag3::Level>> g_mobile_levels;
 bool g_mobile_native_sprite_uploaded = false;
 bool g_mobile_native_sprite_probe_requested = false;
 bool g_mobile_native_sprite_color_only_probe = false;
+bool g_mobile_native_sprite_product_requested = false;
 bool g_mobile_bucket67_world_probe_active = false;
 u32 g_mobile_native_sprite_candidates = 0;
 bool g_mobile_sprite_record_trace = false;
@@ -193,6 +200,7 @@ u64 g_mobile_camera_packet_count = 0;
 u32 g_mobile_camera_last_chain = 0;
 u32 g_mobile_camera_last_transfer = 0;
 std::string g_mobile_camera_level;
+std::unordered_set<std::string> g_mobile_camera_levels_logged;
 bool g_mobile_camera_transition_trace = false;
 u32 g_mobile_camera_transition_trace_count = 0;
 std::string g_mobile_tie_level;
@@ -213,15 +221,22 @@ struct MobileTfragColorRange {
   u32 color_offset = 0;
 };
 std::string g_mobile_tfrag_level;
+std::string g_mobile_tfrag_visibility_level;
 std::vector<MobileTfragColorRange> g_mobile_tfrag_color_ranges;
 std::array<s32, 16> g_mobile_tfrag_itimes{};
 bool g_mobile_tfrag_itimes_valid = false;
 bool g_mobile_tfrag_visibility_ready = false;
+bool g_mobile_tfrag_normal_only_probe = false;
+std::array<float, 16> g_mobile_tfrag_cull_planes{};
 std::array<float, 16> g_mobile_tie_cull_planes{};
 bool g_mobile_tie_visibility_ready = false;
+std::string g_mobile_tie_visibility_level;
 std::array<float, 4> g_mobile_fog_color = {29.f / 255.f, 80.f / 255.f, 200.f / 255.f,
                                             1.f};
 std::array<u8, 3> g_mobile_fog_rgb = {29, 80, 200};
+std::unordered_set<std::string> g_mobile_missing_levels;
+std::unordered_map<const tfrag3::Level*, u32> g_mobile_level_texture_bases;
+u32 g_mobile_next_texture_base = 0;
 
 void update_mobile_fog_color(u64 value) {
   const std::array<u8, 3> next = {(u8)(value & 0xff), (u8)((value >> 8) & 0xff),
@@ -384,7 +399,69 @@ void set_mobile_tie_camera(const OttselPcPortData& packet) {
   pc_camera[3 * 4 + 2] = fog_constant * packet.perspective[3][2] / 8388608.f;
   const float fog_params[4] = {packet.hvdf_off[3], packet.fog[1], packet.fog[2], 1.f / 255.f};
   ottsel_metal_set_tie_camera(g_metal, pc_camera, packet.trans, fog_params,
-                               g_mobile_fog_color.data());
+                               g_mobile_fog_color.data(), packet.hvdf_off, fog_constant);
+
+  static bool clip_equation_logged = false;
+  if (!clip_equation_logged && g_mobile_tie_level == "village1") {
+    const auto level_it = g_mobile_levels.find(g_mobile_tie_level);
+    if (level_it != g_mobile_levels.end() && !level_it->second->tie_trees.empty() &&
+        !level_it->second->tie_trees[g_mobile_tie_geo].empty()) {
+      const auto& ledger_vertex = level_it->second->tie_trees[g_mobile_tie_geo][g_mobile_tie_tree]
+                                      .unpacked.vertices.front();
+      const float vx = ledger_vertex.x - packet.trans[0];
+      const float vy = ledger_vertex.y - packet.trans[1];
+      const float vz = ledger_vertex.z - packet.trans[2];
+      const auto project_reference = [&](float sign) {
+        float transformed[4] = {
+            sign * pc_camera[12], sign * pc_camera[13], sign * pc_camera[14], sign * pc_camera[15]};
+        for (int c = 0; c < 4; ++c) {
+          transformed[c] += sign * pc_camera[c] * vx;
+          transformed[c] += sign * pc_camera[4 + c] * vy;
+          transformed[c] += sign * pc_camera[8 + c] * vz;
+        }
+        const float q = fog_constant / transformed[3];
+        float clip[4] = {transformed[0] * q + packet.hvdf_off[0],
+                         transformed[1] * q + packet.hvdf_off[1],
+                         transformed[2] * q + packet.hvdf_off[2], transformed[3]};
+        clip[0] -= 2048.f;
+        clip[1] -= 2048.f;
+        clip[2] = clip[2] / 8388608.f - 1.f;
+        clip[0] /= 256.f;
+        clip[1] /= -128.f;
+        clip[0] *= clip[3];
+        clip[1] *= clip[3];
+        clip[2] *= clip[3];
+        clip[1] *= 512.f / 448.f;
+        return std::array<float, 4>{clip[0], clip[1], clip[2], clip[3]};
+      };
+      const auto project_native = [&](float sign) {
+        float clip[4] = {sign * pc_camera[12], sign * pc_camera[13], sign * pc_camera[14], 0.f};
+        for (int c = 0; c < 4; ++c) {
+          clip[c] += sign * pc_camera[c] * vx;
+          clip[c] += sign * pc_camera[4 + c] * vy;
+          clip[c] += sign * pc_camera[8 + c] * vz;
+        }
+        clip[1] *= 512.f / 448.f;
+        clip[2] = (clip[2] + clip[3]) * 0.5f;
+        return std::array<float, 4>{clip[0], clip[1], clip[2], clip[3]};
+      };
+      const auto tie_reference = project_reference(-1.f);
+      const auto tfrag_reference = project_reference(1.f);
+      const auto tie_native = project_native(-1.f);
+      const auto tfrag_native = project_native(1.f);
+      lg::info("OTTSEL CLIP LEDGER: level={} vertex=({:.3f},{:.3f},{:.3f}) trans=({:.3f},{:.3f},{:.3f}) "
+               "fog={} hvdf=({:.3f},{:.3f},{:.3f},{:.3f}) "
+               "tie-ref=({:.6f},{:.6f},{:.6f},{:.6f}) tie-native=({:.6f},{:.6f},{:.6f},{:.6f}) "
+               "tfrag-ref=({:.6f},{:.6f},{:.6f},{:.6f}) tfrag-native=({:.6f},{:.6f},{:.6f},{:.6f})",
+               g_mobile_tie_level, ledger_vertex.x, ledger_vertex.y, ledger_vertex.z, packet.trans[0],
+               packet.trans[1], packet.trans[2], fog_constant, packet.hvdf_off[0], packet.hvdf_off[1],
+               packet.hvdf_off[2], packet.hvdf_off[3], tie_reference[0], tie_reference[1], tie_reference[2],
+               tie_reference[3], tie_native[0], tie_native[1], tie_native[2], tie_native[3],
+               tfrag_reference[0], tfrag_reference[1], tfrag_reference[2], tfrag_reference[3],
+               tfrag_native[0], tfrag_native[1], tfrag_native[2], tfrag_native[3]);
+      clip_equation_logged = true;
+    }
+  }
 
   // A single CPU projection summary is the falsifiable companion to the
   // Metal draw. If no vertices are inside clip space here, debug camera math
@@ -402,6 +479,9 @@ void set_mobile_tie_camera(const OttselPcPortData& packet) {
   u64 finite = 0;
   u64 metal_visible = 0;
   u64 gl_visible = 0;
+  float min_ndc_x = 1e30f, max_ndc_x = -1e30f;
+  float min_ndc_y = 1e30f, max_ndc_y = -1e30f;
+  float min_ndc_z = 1e30f, max_ndc_z = -1e30f;
   const size_t stride = std::max<size_t>(1, vertices.size() / 4096);
   for (size_t i = 0; i < vertices.size(); i += stride) {
     const auto& v = vertices[i];
@@ -417,6 +497,15 @@ void set_mobile_tie_camera(const OttselPcPortData& packet) {
       continue;
     }
     ++finite;
+    const float ndc_x = clip[0] / clip[3];
+    const float ndc_y = (clip[1] * (512.f / 448.f)) / clip[3];
+    const float ndc_z = ((clip[2] + clip[3]) * 0.5f) / clip[3];
+    min_ndc_x = std::min(min_ndc_x, ndc_x);
+    max_ndc_x = std::max(max_ndc_x, ndc_x);
+    min_ndc_y = std::min(min_ndc_y, ndc_y);
+    max_ndc_y = std::max(max_ndc_y, ndc_y);
+    min_ndc_z = std::min(min_ndc_z, ndc_z);
+    max_ndc_z = std::max(max_ndc_z, ndc_z);
     if (std::abs(clip[0]) <= std::abs(clip[3]) && std::abs(clip[1]) <= std::abs(clip[3]) &&
         std::abs(clip[2]) <= std::abs(clip[3])) {
       ++gl_visible;
@@ -431,9 +520,10 @@ void set_mobile_tie_camera(const OttselPcPortData& packet) {
   }
   clip_logged_for = g_mobile_tie_level;
   lg::info("OTTSEL TIE: clip sample level='{}' finite={}/{} gl-clip-visible={} "
-           "metal-clip-visible={}",
+           "metal-clip-visible={} ndc-x=({:.4f},{:.4f}) ndc-y=({:.4f},{:.4f}) "
+           "ndc-z=({:.4f},{:.4f})",
            g_mobile_tie_level, finite, (vertices.size() + stride - 1) / stride, gl_visible,
-           metal_visible);
+           metal_visible, min_ndc_x, max_ndc_x, min_ndc_y, max_ndc_y, min_ndc_z, max_ndc_z);
 }
 
 void build_mobile_tie_mesh(const std::string& level_name) {
@@ -445,6 +535,7 @@ void build_mobile_tie_mesh(const std::string& level_name) {
     return;
   }
   const auto& level = *it->second;
+  const u32 texture_base = g_mobile_level_texture_bases.at(&level);
   for (u32 geo = 0; geo < level.tie_trees.size(); ++geo) {
     for (u32 tree_idx = 0; tree_idx < level.tie_trees[geo].size(); ++tree_idx) {
       const auto& tree = level.tie_trees[geo][tree_idx];
@@ -456,13 +547,34 @@ void build_mobile_tie_mesh(const std::string& level_name) {
       std::vector<u32> triangles;
       std::vector<OttselMetalTieDraw> batches;
       std::vector<bool> used_textures(level.textures.size());
-      const auto append_strip = [&triangles](const u32* indices, size_t count) {
-        for (size_t i = 2; i < count; ++i) {
-          if (indices[i - 2] == UINT32_MAX || indices[i - 1] == UINT32_MAX ||
-              indices[i] == UINT32_MAX) {
+      const auto append_indices = [&triangles](const u32* indices, size_t count, bool strips) {
+        if (!strips) {
+          for (size_t i = 0; i + 2 < count; i += 3) {
+            if (indices[i] == UINT32_MAX || indices[i + 1] == UINT32_MAX ||
+                indices[i + 2] == UINT32_MAX) {
+              continue;
+            }
+            triangles.insert(triangles.end(), {indices[i], indices[i + 1], indices[i + 2]});
+          }
+          return;
+        }
+        size_t run_start = 0;
+        for (size_t i = 0; i <= count; ++i) {
+          if (i != count && indices[i] != UINT32_MAX) {
             continue;
           }
-          triangles.insert(triangles.end(), {indices[i - 2], indices[i - 1], indices[i]});
+          const size_t run_count = i - run_start;
+          for (size_t j = 2; j < run_count; ++j) {
+            u32 a = indices[run_start + j - 2];
+            u32 b = indices[run_start + j - 1];
+            const u32 c = indices[run_start + j];
+            // GL_TRIANGLE_STRIP alternates winding for each triangle.
+            if (j & 1) {
+              std::swap(a, b);
+            }
+            triangles.insert(triangles.end(), {a, b, c});
+          }
+          run_start = i + 1;
         }
       };
       for (u32 draw_idx = first; draw_idx < last; ++draw_idx) {
@@ -473,12 +585,14 @@ void build_mobile_tie_mesh(const std::string& level_name) {
           for (u32 i = 0; i < run.length; ++i) {
             run_indices[i] = run.vertex0 + i;
           }
-          append_strip(run_indices.data(), run_indices.size());
+          append_indices(run_indices.data(), run_indices.size(), tree.use_strips);
         }
-        append_strip(draw.plain_indices.data(), draw.plain_indices.size());
+        append_indices(draw.plain_indices.data(), draw.plain_indices.size(), tree.use_strips);
         const u32 count = (u32)triangles.size() - offset;
         if (count) {
-          batches.push_back({offset, count, draw.tree_tex_id, draw.mode.as_int()});
+          batches.push_back({offset, count,
+                             ottsel_mobile_scene_texture_slot(texture_base, draw.tree_tex_id),
+                             draw.mode.as_int()});
           if (draw.tree_tex_id >= 0 && (size_t)draw.tree_tex_id < used_textures.size()) {
             used_textures[draw.tree_tex_id] = true;
           }
@@ -498,8 +612,8 @@ void build_mobile_tie_mesh(const std::string& level_name) {
                    texture.debug_name, texture.w, texture.h, texture.data.size());
           continue;
         }
-        ottsel_metal_set_tie_texture(g_metal, texture_idx, texture.data.data(), texture.w,
-                                     texture.h);
+        ottsel_metal_set_tie_texture(g_metal, texture_base + texture_idx, texture.data.data(),
+                                     texture.w, texture.h);
         ++uploaded_textures;
       }
       std::vector<u8> default_colors((size_t)tree.colors.color_count * 4, 128);
@@ -547,6 +661,7 @@ void build_visible_mobile_tie_mesh(const std::string& level_name,
     return;
   }
   const auto& level = *level_it->second;
+  const u32 texture_base = g_mobile_level_texture_bases.at(&level);
   std::vector<tfrag3::PreloadedVertex> vertices;
   std::vector<u32> triangles;
   std::vector<OttselMetalTieDraw> batches;
@@ -558,79 +673,128 @@ void build_visible_mobile_tie_mesh(const std::string& level_name,
   u32 total_groups = 0;
   u32 visible_groups = 0;
   std::unordered_map<u32, u32> mode_counts;
-  const auto append_strip = [&triangles](const std::vector<u32>& indices, u32 vertex_base) {
-    for (size_t i = 2; i < indices.size(); ++i) {
-      if (indices[i - 2] == UINT32_MAX || indices[i - 1] == UINT32_MAX ||
-          indices[i] == UINT32_MAX) {
+  u32 strip_ledger_logs = 0;
+  const auto append_indices = [&triangles](const std::vector<u32>& indices, u32 vertex_base,
+                                           bool strips) {
+    if (!strips) {
+      for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+        if (indices[i] == UINT32_MAX || indices[i + 1] == UINT32_MAX ||
+            indices[i + 2] == UINT32_MAX) {
+          continue;
+        }
+        triangles.insert(triangles.end(),
+                         {vertex_base + indices[i], vertex_base + indices[i + 1],
+                          vertex_base + indices[i + 2]});
+      }
+      return;
+    }
+    size_t run_start = 0;
+    for (size_t i = 0; i <= indices.size(); ++i) {
+      if (i != indices.size() && indices[i] != UINT32_MAX) {
         continue;
       }
-      triangles.insert(triangles.end(),
-                       {vertex_base + indices[i - 2], vertex_base + indices[i - 1],
-                        vertex_base + indices[i]});
+      const size_t run_count = i - run_start;
+      for (size_t j = 2; j < run_count; ++j) {
+        u32 a = indices[run_start + j - 2];
+        u32 b = indices[run_start + j - 1];
+        const u32 c = indices[run_start + j];
+        if (j & 1) {
+          std::swap(a, b);
+        }
+        triangles.insert(triangles.end(),
+                         {vertex_base + a, vertex_base + b, vertex_base + c});
+      }
+      run_start = i + 1;
     }
   };
 
-  // Match the desktop's default `lod_tie` value: LOD 0, then every loaded
-  // tree at that LOD. Each draw contributes only groups whose referenced BVH
-  // sphere passes the same four PC-port camera planes.
-  constexpr u32 geo = 0;
+  // Match Tie3::lod(): select one geometry slot, then draw every tree in it.
+  // Drawing every slot overlays alternate LODs and manufactures bands.
+  const u32 geo = (u32)std::clamp(Gfx::g_global_settings.lod_tie, 0,
+                                  (int)level.tie_trees.size() - 1);
   for (u32 tree_idx = 0; tree_idx < level.tie_trees[geo].size(); ++tree_idx) {
-    const auto& tree = level.tie_trees[geo][tree_idx];
+      const auto& tree = level.tie_trees[geo][tree_idx];
     const u32 first = tree.category_draw_indices[(u32)tfrag3::TieCategory::NORMAL];
     const u32 last = tree.category_draw_indices[(u32)tfrag3::TieCategory::TRANS];
     if (first == last || tree.unpacked.vertices.empty() ||
         color_offset + tree.colors.color_count > UINT16_MAX + 1u) {
       continue;
     }
-    std::vector<u8> visible(tree.bvh.vis_nodes.size());
-    for (u32 node_idx = 0; node_idx < tree.bvh.vis_nodes.size(); ++node_idx) {
-      const auto& node = tree.bvh.vis_nodes[node_idx];
-      visible[node_idx] = tie_sphere_in_view(node.bsphere.data(), packet);
-      total_nodes++;
-      visible_nodes += visible[node_idx];
-    }
+    // Upload one stable level snapshot. Camera motion is handled by uniforms;
+    // rebuilding this 500k+ vertex mesh on every frustum change causes severe
+    // stalls and races a camera-dependent mesh against a newer camera.
+    total_nodes += tree.bvh.vis_nodes.size();
+    visible_nodes += tree.bvh.vis_nodes.size();
     const u32 vertex_base = (u32)vertices.size();
     const u32 triangle_start = (u32)triangles.size();
     for (u32 draw_idx = first; draw_idx < last; ++draw_idx) {
       const auto& draw = tree.static_draws[draw_idx];
       std::vector<u32> selected_indices;
       u32 index_offset = draw.unpacked.idx_of_first_idx_in_full_buffer;
+      bool strip_run_open = false;
       for (const auto& group : draw.vis_groups) {
         total_groups++;
-        const bool is_visible = group.vis_idx_in_pc_bvh == UINT16_MAX ||
-                                (group.vis_idx_in_pc_bvh < visible.size() &&
-                                 visible[group.vis_idx_in_pc_bvh]);
+        const bool is_visible = true;
         if (is_visible) {
           visible_groups++;
           selected_indices.insert(selected_indices.end(),
                                   tree.unpacked.indices.begin() + index_offset,
                                   tree.unpacked.indices.begin() + index_offset + group.num_inds);
-        } else {
+          // Keep adjacent visible groups in one strip, matching OpenGL's
+          // contiguous multidraw run. Insert a restart only at a visibility
+          // transition, not after every visible group.
+          strip_run_open = tree.use_strips;
+        } else if (tree.use_strips && strip_run_open) {
           selected_indices.push_back(UINT32_MAX);
+          strip_run_open = false;
         }
         index_offset += group.num_inds;
       }
       const u32 batch_start = (u32)triangles.size();
-      append_strip(selected_indices, vertex_base);
+      append_indices(selected_indices, vertex_base, tree.use_strips);
       const u32 batch_count = (u32)triangles.size() - batch_start;
       if (batch_count) {
-        batches.push_back({batch_start, batch_count, draw.tree_tex_id, draw.mode.as_int()});
+        batches.push_back(
+            {batch_start, batch_count,
+             ottsel_mobile_scene_texture_slot(texture_base, draw.tree_tex_id),
+             draw.mode.as_int()});
         mode_counts[draw.mode.as_int()]++;
+        if (tree.use_strips && strip_ledger_logs < 12) {
+          u32 visible_inds = 0;
+          u32 visible_runs = 0;
+          bool in_run = false;
+          for (const auto index : selected_indices) {
+            if (index == UINT32_MAX) {
+              in_run = false;
+            } else {
+              ++visible_inds;
+              if (!in_run) {
+                ++visible_runs;
+                in_run = true;
+              }
+            }
+          }
+          lg::info("OTTSEL TIE STRIP LEDGER: geo={} tree={} draw={} groups={} visible-runs={} "
+                   "source-indices={} source-tris={} native-tris={} mode=0x{:x}",
+                   geo, tree_idx, batches.size() - 1, draw.vis_groups.size(), visible_runs,
+                   visible_inds, draw.num_triangles, batch_count / 3, draw.mode.as_int());
+          ++strip_ledger_logs;
+        }
         if (draw.tree_tex_id >= 0 && (size_t)draw.tree_tex_id < used_textures.size()) {
           used_textures[draw.tree_tex_id] = true;
         }
       }
     }
-    if ((u32)triangles.size() == triangle_start) {
-      continue;
-    }
-    vertices.reserve(vertices.size() + tree.unpacked.vertices.size());
-    for (auto vertex : tree.unpacked.vertices) {
-      vertex.color_index += color_offset;
-      vertices.push_back(vertex);
-    }
-    color_ranges.push_back({geo, tree_idx, color_offset});
-    color_offset += tree.colors.color_count;
+      if ((u32)triangles.size() == triangle_start) {
+        continue;
+      }
+      vertices.reserve(vertices.size() + tree.unpacked.vertices.size());
+      for (auto vertex : tree.unpacked.vertices) {
+        vertex.color_index += color_offset;
+        vertices.push_back(vertex);
+      }
+      color_ranges.push_back({geo, tree_idx, color_offset});
+      color_offset += tree.colors.color_count;
   }
   if (vertices.empty() || triangles.empty() || batches.empty()) {
     lg::warn("OTTSEL TIE: visibility snapshot produced no normal geometry for '{}'", level_name);
@@ -645,7 +809,8 @@ void build_visible_mobile_tie_mesh(const std::string& level_name,
     if (texture.data.size() != (size_t)texture.w * texture.h) {
       continue;
     }
-    ottsel_metal_set_tie_texture(g_metal, texture_idx, texture.data.data(), texture.w, texture.h);
+    ottsel_metal_set_tie_texture(g_metal, texture_base + texture_idx, texture.data.data(),
+                                 texture.w, texture.h);
     ++uploaded_textures;
   }
   std::vector<u8> default_colors((size_t)color_offset * 4, 128);
@@ -655,10 +820,12 @@ void build_visible_mobile_tie_mesh(const std::string& level_name,
   g_mobile_tie_color_ranges = std::move(color_ranges);
   g_mobile_tie_itimes_valid = false;
   g_mobile_tie_visibility_ready = true;
+  g_mobile_tie_visibility_level = level_name;
   memcpy(g_mobile_tie_cull_planes.data(), packet.planes, sizeof(packet.planes));
-  lg::info("OTTSEL TIE: visibility snapshot lod={} trees={} nodes={}/{} groups={}/{} "
+  lg::info("OTTSEL TIE: stable level snapshot lod=0 geos={} trees={} nodes={}/{} groups={}/{} "
            "batches={} vertices={} triangles={} textures={}",
-           geo, g_mobile_tie_color_ranges.size(), visible_nodes, total_nodes, visible_groups,
+           level.tie_trees.size(), g_mobile_tie_color_ranges.size(), visible_nodes, total_nodes,
+           visible_groups,
            total_groups, batches.size(), vertices.size(), triangles.size() / 3, uploaded_textures);
   std::vector<std::pair<u32, u32>> sorted_modes(mode_counts.begin(), mode_counts.end());
   std::sort(sorted_modes.begin(), sorted_modes.end(),
@@ -672,7 +839,7 @@ void build_visible_mobile_tie_mesh(const std::string& level_name,
 
 void build_visible_mobile_tfrag_mesh(const std::string& level_name,
                                      const OttselPcPortData& packet) {
-  if (!g_metal || g_mobile_tfrag_visibility_ready) {
+  if (!g_metal || (g_mobile_tfrag_visibility_ready && level_name == g_mobile_tfrag_level)) {
     return;
   }
   const auto level_it = g_mobile_levels.find(level_name);
@@ -680,6 +847,16 @@ void build_visible_mobile_tfrag_mesh(const std::string& level_name,
     return;
   }
   const auto& level = *level_it->second;
+  const u32 texture_base = g_mobile_level_texture_bases.at(&level);
+  if (!g_mobile_tfrag_normal_only_probe) {
+    const std::string trigger = ottsel_ios_writable_dir() +
+                                "ottsel-trace-metal-scene-tfrag-normal-only";
+    if (access(trigger.c_str(), F_OK) == 0) {
+      unlink(trigger.c_str());
+      g_mobile_tfrag_normal_only_probe = true;
+      lg::info("OTTSEL TFRAG: NORMAL-only data-family probe enabled");
+    }
+  }
   std::vector<tfrag3::PreloadedVertex> vertices;
   std::vector<u32> triangles;
   std::vector<OttselMetalTieDraw> batches;
@@ -690,52 +867,67 @@ void build_visible_mobile_tfrag_mesh(const std::string& level_name,
   u32 visible_nodes = 0;
   u32 total_groups = 0;
   u32 visible_groups = 0;
+  std::unordered_map<u32, u32> mode_counts;
   const auto append_strip = [&triangles](const std::vector<u32>& indices, u32 vertex_base) {
-    for (size_t i = 2; i < indices.size(); ++i) {
-      if (indices[i - 2] == UINT32_MAX || indices[i - 1] == UINT32_MAX ||
-          indices[i] == UINT32_MAX) {
+    size_t run_start = 0;
+    for (size_t i = 0; i <= indices.size(); ++i) {
+      if (i != indices.size() && indices[i] != UINT32_MAX) {
         continue;
       }
-      triangles.insert(triangles.end(),
-                       {vertex_base + indices[i - 2], vertex_base + indices[i - 1],
-                        vertex_base + indices[i]});
+      const size_t run_count = i - run_start;
+      for (size_t j = 2; j < run_count; ++j) {
+        u32 a = indices[run_start + j - 2];
+        u32 b = indices[run_start + j - 1];
+        const u32 c = indices[run_start + j];
+        if (j & 1) {
+          std::swap(a, b);
+        }
+        triangles.insert(triangles.end(),
+                         {vertex_base + a, vertex_base + b, vertex_base + c});
+      }
+      run_start = i + 1;
     }
   };
 
-  // This matches the desktop opaque TFRAG renderer's normal tree selection
-  // at LOD 0. It intentionally excludes trans/dirt/ice; those are distinct
-  // later buckets with different ordering and blend behavior.
-  constexpr u32 geo = 0;
+  // Match TFragment::lod(): select one geometry slot. TRANS and DIRT retain
+  // their source DrawMode bits; the Metal
+  // consumer selects blending and depth-write state per draw instead of
+  // treating them as opaque normal geometry.
+  const u32 geo = (u32)std::clamp(Gfx::g_global_settings.lod_tfrag, 0,
+                                  (int)level.tfrag_trees.size() - 1);
   for (u32 tree_idx = 0; tree_idx < level.tfrag_trees[geo].size(); ++tree_idx) {
-    const auto& tree = level.tfrag_trees[geo][tree_idx];
-    if (tree.kind != tfrag3::TFragmentTreeKind::NORMAL || tree.unpacked.vertices.empty() ||
+      const auto& tree = level.tfrag_trees[geo][tree_idx];
+    if ((tree.kind != tfrag3::TFragmentTreeKind::NORMAL &&
+         tree.kind != tfrag3::TFragmentTreeKind::TRANS &&
+         tree.kind != tfrag3::TFragmentTreeKind::DIRT) ||
+        (g_mobile_tfrag_normal_only_probe && tree.kind != tfrag3::TFragmentTreeKind::NORMAL) ||
+        tree.unpacked.vertices.empty() ||
         color_offset + tree.colors.color_count > UINT16_MAX + 1u) {
       continue;
     }
-    std::vector<u8> visible(tree.bvh.vis_nodes.size());
-    for (u32 node_idx = 0; node_idx < tree.bvh.vis_nodes.size(); ++node_idx) {
-      const auto& node = tree.bvh.vis_nodes[node_idx];
-      visible[node_idx] = tie_sphere_in_view(node.bsphere.data(), packet);
-      ++total_nodes;
-      visible_nodes += visible[node_idx];
-    }
+    total_nodes += tree.bvh.vis_nodes.size();
+    visible_nodes += tree.bvh.vis_nodes.size();
     const u32 vertex_base = (u32)vertices.size();
     const u32 triangle_start = (u32)triangles.size();
     for (const auto& draw : tree.draws) {
       std::vector<u32> selected_indices;
       u32 index_offset = draw.unpacked.idx_of_first_idx_in_full_buffer;
+      bool strip_run_open = false;
       for (const auto& group : draw.vis_groups) {
         ++total_groups;
-        const bool is_visible = group.vis_idx_in_pc_bvh == UINT16_MAX ||
-                                (group.vis_idx_in_pc_bvh < visible.size() &&
-                                 visible[group.vis_idx_in_pc_bvh]);
+        const bool is_visible = true;
         if (is_visible) {
           ++visible_groups;
           selected_indices.insert(selected_indices.end(),
                                   tree.unpacked.indices.begin() + index_offset,
                                   tree.unpacked.indices.begin() + index_offset + group.num_inds);
-        } else if (tree.use_strips) {
+          // Keep adjacent visible groups in one strip, matching OpenGL's
+          // contiguous multidraw run. Insert a restart only at a visibility
+          // transition, not after every visible group.
+          strip_run_open = tree.use_strips;
+        } else if (tree.use_strips && strip_run_open) {
           selected_indices.push_back(UINT32_MAX);
+          strip_run_open = false;
         }
         index_offset += group.num_inds;
       }
@@ -751,22 +943,26 @@ void build_visible_mobile_tfrag_mesh(const std::string& level_name,
       }
       const u32 batch_count = (u32)triangles.size() - batch_start;
       if (batch_count) {
-        batches.push_back({batch_start, batch_count, draw.tree_tex_id, draw.mode.as_int()});
+        batches.push_back(
+            {batch_start, batch_count,
+             ottsel_mobile_scene_texture_slot(texture_base, draw.tree_tex_id),
+             draw.mode.as_int()});
+        mode_counts[draw.mode.as_int()]++;
         if (draw.tree_tex_id >= 0 && (size_t)draw.tree_tex_id < used_textures.size()) {
           used_textures[draw.tree_tex_id] = true;
         }
       }
     }
-    if ((u32)triangles.size() == triangle_start) {
-      continue;
-    }
-    vertices.reserve(vertices.size() + tree.unpacked.vertices.size());
-    for (auto vertex : tree.unpacked.vertices) {
-      vertex.color_index += color_offset;
-      vertices.push_back(vertex);
-    }
-    color_ranges.push_back({geo, tree_idx, color_offset});
-    color_offset += tree.colors.color_count;
+      if ((u32)triangles.size() == triangle_start) {
+        continue;
+      }
+      vertices.reserve(vertices.size() + tree.unpacked.vertices.size());
+      for (auto vertex : tree.unpacked.vertices) {
+        vertex.color_index += color_offset;
+        vertices.push_back(vertex);
+      }
+      color_ranges.push_back({geo, tree_idx, color_offset});
+      color_offset += tree.colors.color_count;
   }
   if (vertices.empty() || triangles.empty() || batches.empty()) {
     lg::warn("OTTSEL TFRAG: visible opaque mesh produced no geometry for '{}'", level_name);
@@ -778,8 +974,8 @@ void build_visible_mobile_tfrag_mesh(const std::string& level_name,
     }
     const auto& texture = level.textures[texture_idx];
     if (texture.data.size() == (size_t)texture.w * texture.h) {
-      ottsel_metal_set_tie_texture(g_metal, texture_idx, texture.data.data(), texture.w,
-                                   texture.h);
+      ottsel_metal_set_tie_texture(g_metal, texture_base + texture_idx, texture.data.data(),
+                                   texture.w, texture.h);
     }
   }
   std::vector<u8> default_colors((size_t)color_offset * 4, 128);
@@ -790,10 +986,21 @@ void build_visible_mobile_tfrag_mesh(const std::string& level_name,
   g_mobile_tfrag_color_ranges = std::move(color_ranges);
   g_mobile_tfrag_itimes_valid = false;
   g_mobile_tfrag_visibility_ready = true;
-  lg::info("OTTSEL TFRAG: opaque visibility snapshot lod={} trees={} nodes={}/{} groups={}/{} "
+  g_mobile_tfrag_visibility_level = level_name;
+  memcpy(g_mobile_tfrag_cull_planes.data(), packet.planes, sizeof(packet.planes));
+  lg::info("OTTSEL TFRAG: stable level snapshot lod=0 geos={} trees={} nodes={}/{} groups={}/{} "
            "batches={} vertices={} triangles={}",
-           geo, g_mobile_tfrag_color_ranges.size(), visible_nodes, total_nodes, visible_groups,
+           level.tfrag_trees.size(), g_mobile_tfrag_color_ranges.size(), visible_nodes, total_nodes,
+           visible_groups,
            total_groups, batches.size(), vertices.size(), triangles.size() / 3);
+  std::vector<std::pair<u32, u32>> sorted_modes(mode_counts.begin(), mode_counts.end());
+  std::sort(sorted_modes.begin(), sorted_modes.end(),
+            [](const auto& a, const auto& b) { return a.second > b.second; });
+  std::string mode_summary;
+  for (size_t i = 0; i < sorted_modes.size() && i < 12; ++i) {
+    mode_summary += fmt::format("{:#x}:{} ", sorted_modes[i].first, sorted_modes[i].second);
+  }
+  lg::info("OTTSEL TFRAG: visible DrawMode histogram [{}]", mode_summary);
 }
 
 void load_mobile_level(const std::string& level_name) {
@@ -805,9 +1012,16 @@ void load_mobile_level(const std::string& level_name) {
       selected_root ? selected_root : "", ottsel_ios_bundle_dir() + "iso_data");
   const auto path = fs::path(root) / "fr3" / (level_name + ".fr3");
   if (!fs::exists(path)) {
-    lg::warn("OTTSEL FR3: missing level '{}' at {}", level_name, path.string());
+    // A clean ROM-safe install intentionally has no user-owned FR3 pack. The
+    // game requests the same level every frame, so report each missing level
+    // once instead of turning the remediation state into an unbounded log and
+    // I/O stall.
+    if (g_mobile_missing_levels.insert(level_name).second) {
+      lg::warn("OTTSEL FR3: missing level '{}' at {}", level_name, path.string());
+    }
     return;
   }
+  g_mobile_missing_levels.erase(level_name);
 
   auto compressed = file_util::read_binary_file(path);
   auto decoded = compression::decompress_zstd(compressed.data(), compressed.size());
@@ -857,8 +1071,13 @@ void load_mobile_level(const std::string& level_name) {
            tfrag_trees[(size_t)tfrag3::TFragmentTreeKind::ICE],
            tfrag_draws[(size_t)tfrag3::TFragmentTreeKind::ICE],
            tfrag_vertices[(size_t)tfrag3::TFragmentTreeKind::ICE]);
+  const auto* level_ptr = level.get();
+  g_mobile_level_texture_bases[level_ptr] = g_mobile_next_texture_base;
+  g_mobile_next_texture_base += level->textures.size();
   g_mobile_levels.emplace(level_name, std::move(level));
-  build_mobile_tie_mesh(level_name);
+  if (level_name != "GAME") {
+    build_mobile_tie_mesh(level_name);
+  }
 }
 
 void request_mobile_levels(const std::vector<std::string>& levels, const char* source) {
@@ -871,6 +1090,9 @@ void request_mobile_levels(const std::vector<std::string>& levels, const char* s
     lg::info("OTTSEL FR3: {} levels [{}]", source, joined);
     last_requested = levels;
   }
+  // Desktop loads GAME.fr3 once as the common Merc/model and texture source.
+  // Mobile must do the same before resolving Jak, Daxter, and other actors.
+  load_mobile_level("GAME");
   for (const auto& level : levels) {
     load_mobile_level(level);
   }
@@ -919,20 +1141,216 @@ void capture_mobile_camera(const void* packet, size_t size) {
     }
   }
   ++g_mobile_camera_packet_count;
-  g_mobile_camera = candidate;
+  if (g_mobile_tie_level.empty() || level == g_mobile_tie_level) {
+    g_mobile_camera = candidate;
+    g_mobile_camera_level = level;
+  }
   if (finite && level == g_mobile_tie_level) {
+    const auto planes_changed = [](const std::array<float, 16>& previous,
+                                   const float current[4][4]) {
+      float max_delta = 0.f;
+      const float* current_flat = &current[0][0];
+      for (size_t i = 0; i < previous.size(); ++i) {
+        max_delta = std::max(max_delta, std::abs(previous[i] - current_flat[i]));
+      }
+      return max_delta > 0.001f;
+    };
+    const bool tfrag_planes_changed =
+        planes_changed(g_mobile_tfrag_cull_planes, candidate.planes);
+    const bool tie_planes_changed = planes_changed(g_mobile_tie_cull_planes, candidate.planes);
+    const bool rebuild_tfrag = ottsel_mobile_scene_snapshot_needs_rebuild(
+        g_mobile_tfrag_visibility_ready, g_mobile_tfrag_visibility_level != level,
+        tfrag_planes_changed);
+    const bool rebuild_tie = ottsel_mobile_scene_snapshot_needs_rebuild(
+        g_mobile_tie_visibility_ready, g_mobile_tie_visibility_level != level,
+        tie_planes_changed);
+    if (rebuild_tfrag) {
+      g_mobile_tfrag_visibility_ready = false;
+      g_mobile_tfrag_itimes_valid = false;
+    }
+    if (rebuild_tie) {
+      g_mobile_tie_visibility_ready = false;
+      g_mobile_tie_itimes_valid = false;
+    }
     build_visible_mobile_tfrag_mesh(level, candidate);
     build_visible_mobile_tie_mesh(level, candidate);
     set_mobile_tie_camera(candidate);
     set_mobile_tfrag_colors(candidate);
     set_mobile_tie_colors(candidate);
   }
-  if (level != g_mobile_camera_level) {
-    g_mobile_camera_level = level;
+  if (g_mobile_camera_levels_logged.insert(level).second) {
     lg::info("OTTSEL FR3: camera '{}' finite={} trans=({:.3f},{:.3f},{:.3f}) fog={:.3f}",
              level, finite, candidate.trans[0], candidate.trans[1], candidate.trans[2],
              candidate.fog[0]);
   }
+}
+
+// The maintained Merc2 PC renderer consumes this packet before VU1 skinning.
+// Mobile has the same FR3 MercModel data, so perform the equivalent bounded
+// CPU skinning here and submit real model triangles to the shared Metal
+// material/camera consumer. This is native geometry composition, not a model
+// fixture or a replacement actor.
+struct MobileMercMatrix {
+  float tmat[4][4];
+  float nmat[3][4];
+};
+
+struct MobileMercFlags {
+  u64 enable_mask;
+  u64 ignore_alpha_mask;
+  u8 effect_count;
+  u8 bitflags;
+};
+
+bool capture_mobile_merc(const DmaTransfer& setup) {
+  if (!g_metal || !setup.data || setup.size_bytes < 416) {
+    return false;
+  }
+  const size_t name_len = strnlen((const char*)setup.data, 128);
+  if (name_len == 0 || name_len >= 128) {
+    return false;
+  }
+  for (size_t i = 0; i < name_len; ++i) {
+    if (!std::isprint((unsigned char)setup.data[i])) {
+      return false;
+    }
+  }
+  const std::string name((const char*)setup.data, name_len);
+
+  const tfrag3::Level* level = nullptr;
+  const tfrag3::MercModel* model = nullptr;
+  for (const auto& [level_name, level_ptr] : g_mobile_levels) {
+    for (const auto& candidate : level_ptr->merc_data.models) {
+      if (candidate.name == name) {
+        level = level_ptr.get();
+        model = &candidate;
+        break;
+      }
+    }
+    if (model) {
+      break;
+    }
+  }
+  if (!level || !model || level->merc_data.vertices.empty()) {
+    return false;
+  }
+  const u32 texture_base = g_mobile_level_texture_bases.at(level);
+
+  // Packet layout: name, VuLights, Jak1 water padding, matrix-slot string,
+  // then one pointer quadword group per slot.
+  constexpr size_t kMatrixSlotsOffset = 128 + 112 + 16;
+  if (setup.size_bytes < kMatrixSlotsOffset + 128) {
+    return false;
+  }
+  const u8* chain_base = setup.data - setup.data_offset;
+  std::array<MobileMercMatrix, 128> matrices{};
+  std::array<bool, 128> matrix_valid{};
+  const u8* slots = setup.data + kMatrixSlotsOffset;
+  const u8* matrix_ptrs = slots + 128;
+  int slot_count = 0;
+  for (; slot_count < 128 && slots[slot_count] != 0xff; ++slot_count) {
+    const u8 slot = slots[slot_count];
+    u32 matrix_addr = 0;
+    memcpy(&matrix_addr, matrix_ptrs + slot_count * 16, sizeof(matrix_addr));
+    if (slot >= matrices.size() || matrix_addr > 0x10000000u) {
+      return false;
+    }
+    memcpy(&matrices[slot], chain_base + matrix_addr, sizeof(MobileMercMatrix));
+    matrix_valid[slot] = true;
+  }
+  const size_t flags_offset = kMatrixSlotsOffset + 128 + slot_count * 16;
+  if (flags_offset + sizeof(MobileMercFlags) > setup.size_bytes || !slot_count) {
+    return false;
+  }
+  MobileMercFlags flags{};
+  memcpy(&flags, setup.data + flags_offset, sizeof(flags));
+  const u8 effect_count = std::min<u8>(flags.effect_count, model->effects.size());
+  if (!effect_count) {
+    return false;
+  }
+
+  std::vector<tfrag3::PreloadedVertex> vertices(level->merc_data.vertices.size());
+  for (size_t vertex_index = 0; vertex_index < vertices.size(); ++vertex_index) {
+    const auto& source = level->merc_data.vertices[vertex_index];
+    auto& output = vertices[vertex_index];
+    float px = 0.f, py = 0.f, pz = 0.f;
+    float total_weight = 0.f;
+    for (int influence = 0; influence < 3; ++influence) {
+      const float weight = source.weights[influence];
+      const u8 matrix_index = source.mats[influence];
+      if (weight <= 0.f || !matrix_valid[matrix_index]) {
+        continue;
+      }
+      const auto& matrix = matrices[matrix_index].tmat;
+      const float tx = matrix[0][0] * source.x + matrix[1][0] * source.y +
+                       matrix[2][0] * source.z + matrix[3][0];
+      const float ty = matrix[0][1] * source.x + matrix[1][1] * source.y +
+                       matrix[2][1] * source.z + matrix[3][1];
+      const float tz = matrix[0][2] * source.x + matrix[1][2] * source.y +
+                       matrix[2][2] * source.z + matrix[3][2];
+      px -= tx * weight;
+      py -= ty * weight;
+      pz -= tz * weight;
+      total_weight += weight;
+    }
+    if (total_weight == 0.f) {
+      continue;
+    }
+    output.x = px;
+    output.y = py;
+    output.z = pz;
+    output.s = source.st[0];
+    output.t = source.st[1];
+    output.color_index = 0;
+  }
+
+  std::vector<u32> indices;
+  std::vector<OttselMetalTieDraw> draws;
+  std::vector<bool> used_textures(level->textures.size());
+  for (u32 effect_index = 0; effect_index < effect_count; ++effect_index) {
+    if (!(flags.enable_mask & (u64(1) << effect_index))) {
+      continue;
+    }
+    for (const auto& source_draw : model->effects[effect_index].all_draws) {
+      if (source_draw.tree_tex_id < 0 ||
+          (size_t)source_draw.tree_tex_id >= level->textures.size() ||
+          source_draw.first_index + source_draw.index_count > level->merc_data.indices.size()) {
+        continue;
+      }
+      const u32 index_offset = indices.size();
+      indices.insert(indices.end(), level->merc_data.indices.begin() + source_draw.first_index,
+                     level->merc_data.indices.begin() + source_draw.first_index +
+                         source_draw.index_count);
+      draws.push_back(
+          {index_offset, source_draw.index_count,
+           ottsel_mobile_scene_texture_slot(texture_base, source_draw.tree_tex_id),
+           source_draw.mode.as_int()});
+      used_textures[(size_t)source_draw.tree_tex_id] = true;
+    }
+  }
+  if (indices.empty() || draws.empty()) {
+    return false;
+  }
+  for (u32 texture_index = 0; texture_index < used_textures.size(); ++texture_index) {
+    if (!used_textures[texture_index]) {
+      continue;
+    }
+    const auto& texture = level->textures[texture_index];
+    if (texture.data.size() == (size_t)texture.w * texture.h) {
+      ottsel_metal_set_tie_texture(g_metal, texture_base + texture_index, texture.data.data(),
+                                   texture.w, texture.h);
+    }
+  }
+  ottsel_metal_append_merc_mesh(g_metal, vertices.data(), vertices.size(), indices.data(),
+                                indices.size(), draws.data(), draws.size());
+  static std::unordered_set<std::string> merc_submit_names;
+  if (merc_submit_names.insert(name).second && merc_submit_names.size() <= 32) {
+    lg::info("OTTSEL MERC NATIVE: model='{}' level='{}' slots={} effects={} vertices={} "
+             "triangles={} draws={}",
+             name, level->level_name, slot_count, effect_count, vertices.size(), indices.size() / 3,
+             draws.size());
+  }
+  return true;
 }
 
 // Fake GS VRAM (4 MB).  The game stores every texture pre-scrambled so it can
@@ -2205,6 +2623,16 @@ struct MobileSpriteMatrix {
 };
 static_assert(sizeof(MobileSpriteMatrix) == 5 * 16, "Sprite3 matrix layout");
 
+// Jak 1 HUD Sprite3 uploads a separate 80-qword matrix block at the same VU
+// address as the world matrix. Keep it distinct so phase routing cannot feed
+// HUD records through the world camera consumer.
+struct MobileSpriteHudMatrix {
+  MobileSpriteVec4 matrix[4];
+  MobileSpriteVec4 hvdf;
+  MobileSpriteVec4 user_hvdf[75];
+};
+static_assert(sizeof(MobileSpriteHudMatrix) == 0x500, "Jak 1 HUD Sprite3 matrix layout");
+
 static u64 ottsel_sprite_trace_hash(const void* data, size_t size) {
   const auto* bytes = static_cast<const u8*>(data);
   u64 hash = 1469598103934665603ull;
@@ -2299,6 +2727,8 @@ static bool g_mobile_sprite_parser_trace = false;
 static bool g_mobile_sprite_parser_trace_logged = false;
 static bool g_mobile_sprite_source_boundary_trace = false;
 static u32 g_mobile_sprite_source_boundary_count = 0;
+static u32 g_mobile_sprite_3d_trace_groups = 0;
+static bool g_mobile_sprite_3d_trace_requested = false;
 
 // Sprite3 traffic is emitted during title and level transitions. Diagnostic
 // windows must not consume their one-shot trigger on title traffic when the
@@ -2311,8 +2741,14 @@ static OttselVertex sprite_raster_vertex(const MobileSpriteVec4& transformed,
                                          const MobileSpriteVec4& st,
                                          const MobileSpriteVec4& color,
                                          OttselRaster& raster) {
-  const float ndc_x = ((transformed.x - 2048.f) / 256.f) * transformed.w;
-  const float ndc_y = ((transformed.y - 2048.f) / -128.f) * transformed.w;
+  // The reference Sprite3 shader multiplies xyz by w before the GPU
+  // perspective divide. The CPU path is already producing the post-divide
+  // coordinate here; retaining w sends large sprites far off-screen and
+  // produces the observed triangular corruption.
+  const float ndc_x = ottsel::sprite3_post_divide_component(transformed.x, transformed.w,
+                                                            2048.f, 256.f);
+  const float ndc_y = ottsel::sprite3_post_divide_component(transformed.y, transformed.w,
+                                                            2048.f, -128.f);
   const float pixel_x = (ndc_x + 1.f) * 0.5f * raster.fb_w;
   const float pixel_y = (1.f - ndc_y) * 0.5f * raster.fb_h;
   const float gx = std::clamp(pixel_x / raster.fb_w - raster.x_off, 0.f, 1.f);
@@ -2338,6 +2774,51 @@ static std::array<float, 2> sprite_shader_clip_vertex(const MobileSpriteVec4& tr
   const float clip_x = (transformed.x - 2048.f) / 256.f;
   const float clip_y = ((transformed.y - 2048.f) / -128.f) * (512.f / 448.f);
   return {clip_x, clip_y};
+}
+
+static bool sprite_world_shader_clips(const MobileSpriteFrameJak1& frame,
+                                      const MobileSpriteMatrix& matrix,
+                                      const MobileSpriteVec2d& vector,
+                                      std::array<float, 2> clips[4],
+                                      float* q_out,
+                                      float* sx_out,
+                                      float* sy_out) {
+  const MobileSpriteVec4 camera_transformed =
+      sprite_matrix_transform(matrix.camera, vector.xyz_sx);
+  if (!std::isfinite(camera_transformed.w) || camera_transformed.w == 0.f) {
+    return false;
+  }
+  const float q = frame.pfog0 / camera_transformed.w;
+  if (!std::isfinite(q)) {
+    return false;
+  }
+  MobileSpriteVec4 base = camera_transformed;
+  base.x *= q;
+  base.y *= q;
+  base.z *= q;
+  base = sprite_add(base, matrix.hvdf);
+  base.w = std::max(base.w, frame.fog_min);
+  const float sx = std::clamp(vector.xyz_sx.w * q, frame.min_scale, frame.max_scale);
+  const float sy = std::clamp(vector.flag_rot_sy.w * q, frame.min_scale, frame.max_scale);
+  const float radians = vector.flag_rot_sy.z * frame.deg_to_rad;
+  const float sine = std::sin(radians);
+  const float cosine = std::cos(radians);
+  const MobileSpriteVec4 x_basis = sprite_scale(
+      sprite_add(sprite_scale(frame.basis_x, cosine), sprite_scale(frame.basis_y, -sine)), sx);
+  const MobileSpriteVec4 y_basis = sprite_scale(
+      sprite_add(sprite_scale(frame.basis_x, sine), sprite_scale(frame.basis_y, cosine)), sy);
+  const u32 flags = *(const u32*)&vector.flag_rot_sy.x;
+  for (u32 vertex = 0; vertex < 4; ++vertex) {
+    const MobileSpriteVec4& offset = frame.xy[vertex + (flags & 15u)];
+    const MobileSpriteVec4 transformed =
+        sprite_add(base, sprite_add(sprite_scale(x_basis, offset.x),
+                                    sprite_scale(y_basis, offset.y)));
+    clips[vertex] = sprite_shader_clip_vertex(transformed);
+  }
+  if (q_out) *q_out = q;
+  if (sx_out) *sx_out = sx;
+  if (sy_out) *sy_out = sy;
+  return true;
 }
 
 static u32 render_mobile_sprite_group0(const MobileSpriteFrameJak1& frame,
@@ -2440,9 +2921,10 @@ static u32 render_mobile_sprite_group0(const MobileSpriteFrameJak1& frame,
       shader_clip[vertex] = sprite_shader_clip_vertex(transformed);
     }
 
-    // R1 discriminator: move the first real Sprite3 expansion to Metal. The
-    // CPU raster call below remains diagnostic until this bounded native draw
-    // is live-verified; it is never published as a product frame.
+    // The CPU raster call below remains diagnostic. The first validated
+    // post-Village1 World2D group is now a normal product Metal upload; the
+    // resource identity comes from the live phase/shape contract, while TBP
+    // remains whatever the current source-side lookup produced.
     bool native_sprite_consumed = false;
     if (!g_mobile_native_sprite_probe_requested) {
       const std::string sprite_probe_path =
@@ -2461,10 +2943,21 @@ static u32 render_mobile_sprite_group0(const MobileSpriteFrameJak1& frame,
         lg::info("OTTSEL SPRITE METAL: probe accepted; awaiting bounded native group");
       }
     }
+    if (!g_mobile_native_sprite_product_requested && mobile_sprite_village1_phase() &&
+        count == 48 && adgifs[index].tex0_data != 0) {
+      const GsTex0 product_tex(adgifs[index].tex0_data);
+      if ((u32)product_tex.psm() == 19 && product_tex.tw() == 6 && product_tex.th() == 6) {
+        g_mobile_native_sprite_product_requested = true;
+        g_mobile_native_sprite_probe_requested = true;
+        g_mobile_native_sprite_color_only_probe = false;
+        lg::info("OTTSEL SPRITE METAL: product World2D group accepted count={} psm={} size={}x{}",
+                 count, (u32)product_tex.psm(), 1u << product_tex.tw(), 1u << product_tex.th());
+      }
+    }
     if (g_mobile_native_sprite_probe_requested && g_metal) {
       const GsTex0 sprite_tex(adgifs[index].tex0_data);
       const bool uses_texture = ottsel::sprite3_uses_texture(adgifs[index].tex0_data);
-      const bool allow_native_upload =
+      bool allow_native_upload =
           !g_mobile_native_sprite_uploaded &&
           (!g_mobile_native_sprite_color_only_probe || !uses_texture);
       const u32 sprite_w = uses_texture ? 1u << sprite_tex.tw() : 1u;
@@ -2509,6 +3002,172 @@ static u32 render_mobile_sprite_group0(const MobileSpriteFrameJak1& frame,
                                            visible_height >= 0.02f;
           const bool visible_probe_texture =
               (!uses_texture || texture_nonzero_alpha != 0) && vector.rgba.w > 0.f;
+
+          if (g_mobile_native_sprite_product_requested && count == 48 && index == 0 &&
+              allow_native_upload) {
+            struct ProductAtlasEntry {
+              u64 tex0 = 0;
+              u32 x = 0;
+              u32 y = 0;
+              u32 w = 1;
+              u32 h = 1;
+            };
+            constexpr u32 kAtlasTile = 64;
+            constexpr u32 kAtlasColumns = 8;
+            constexpr u32 kAtlasWidth = kAtlasTile * kAtlasColumns;
+            constexpr u32 kAtlasRows = 8;
+            std::vector<ProductAtlasEntry> atlas_entries;
+            std::vector<u8> atlas_rgba((size_t)kAtlasWidth * kAtlasTile * kAtlasRows * 4, 0);
+            std::vector<OttselMetalSpriteVertex> atlas_vertices;
+            atlas_vertices.reserve((size_t)count * 6);
+            auto atlas_entry_for = [&](u64 tex0_data, ProductAtlasEntry** out) {
+              for (auto& entry : atlas_entries) {
+                if (entry.tex0 == tex0_data) {
+                  *out = &entry;
+                  return true;
+                }
+              }
+              const GsTex0 tex(tex0_data);
+              const bool entry_uses_texture = ottsel::sprite3_uses_texture(tex0_data);
+              const u32 width = entry_uses_texture ? 1u << tex.tw() : 1u;
+              const u32 height = entry_uses_texture ? 1u << tex.th() : 1u;
+              if (width > kAtlasTile || height > kAtlasTile || atlas_entries.size() >=
+                                                               kAtlasRows * kAtlasColumns) {
+                return false;
+              }
+              ProductAtlasEntry entry;
+              entry.tex0 = tex0_data;
+              entry.x = (u32)(atlas_entries.size() % kAtlasColumns) * kAtlasTile;
+              entry.y = (u32)(atlas_entries.size() / kAtlasColumns) * kAtlasTile;
+              entry.w = width;
+              entry.h = height;
+              std::vector<u8> decoded_texture((size_t)width * height * 4, 255);
+              bool decoded_ok = true;
+              if (entry_uses_texture) {
+                decoded_ok = download_texture_rgba8888(
+                    decoded_texture.data(), tex.tbp0(), std::max(1u, width / 64), width, height,
+                    (u32)tex.psm(), tex.cpsm(), tex.cbp());
+              }
+              if (!decoded_ok) {
+                return false;
+              }
+              for (u32 row = 0; row < height; ++row) {
+                memcpy(atlas_rgba.data() +
+                           ((size_t)(entry.y + row) * kAtlasWidth + entry.x) * 4,
+                       decoded_texture.data() + (size_t)row * width * 4, (size_t)width * 4);
+              }
+              atlas_entries.push_back(entry);
+              *out = &atlas_entries.back();
+              return true;
+            };
+            bool atlas_ok = true;
+            const u32 order[6] = {0, 1, 3, 0, 3, 2};
+            for (u32 group_index = 0; group_index < count && atlas_ok; ++group_index) {
+              ProductAtlasEntry* entry = nullptr;
+              atlas_ok = atlas_entry_for(adgifs[group_index].tex0_data, &entry);
+              if (!atlas_ok) {
+                break;
+              }
+              std::array<float, 2> group_clip[4];
+              float group_q = 0.f, group_sx = 0.f, group_sy = 0.f;
+              atlas_ok = sprite_world_shader_clips(frame, matrix, vectors[group_index], group_clip,
+                                                   &group_q, &group_sx, &group_sy);
+              if (!atlas_ok) {
+                break;
+              }
+              const auto& group_vector = vectors[group_index];
+              const float group_color[4] = {
+                  std::clamp(group_vector.rgba.x, 0.f, 1.f),
+                  std::clamp(group_vector.rgba.y, 0.f, 1.f),
+                  std::clamp(group_vector.rgba.z, 0.f, 1.f),
+                  ottsel::sprite3_faded_alpha_normalized(group_vector.rgba.w, group_sx, group_sy,
+                                                         frame.inv_area)};
+              for (u32 out = 0; out < 6; ++out) {
+                const u32 source = order[out];
+                OttselMetalSpriteVertex native_vertex{};
+                native_vertex.pos[0] = group_clip[source][0];
+                native_vertex.pos[1] = group_clip[source][1];
+                native_vertex.uv[0] = (entry->x + std::clamp(frame.st[source].x, 0.f, 1.f) *
+                                       entry->w) /
+                                      (float)kAtlasWidth;
+                native_vertex.uv[1] = (entry->y + std::clamp(frame.st[source].y, 0.f, 1.f) *
+                                       entry->h) /
+                                      (float)(kAtlasTile * kAtlasRows);
+                memcpy(native_vertex.color, group_color, sizeof(group_color));
+                atlas_vertices.push_back(native_vertex);
+              }
+            }
+            if (atlas_ok && !atlas_vertices.empty() && !atlas_entries.empty()) {
+              ottsel_metal_set_sprite_mesh_n(
+                  g_metal, atlas_vertices.data(), (u32)atlas_vertices.size(), atlas_rgba.data(),
+                  kAtlasWidth, kAtlasTile * kAtlasRows, 1);
+              g_mobile_native_sprite_uploaded = true;
+              native_sprite_consumed = true;
+              allow_native_upload = false;
+              lg::info("OTTSEL SPRITE METAL: native World2D atlas vertices={} sprites={} "
+                       "textures={} atlas={}x{}",
+                       (u32)atlas_vertices.size(), count, (u32)atlas_entries.size(), kAtlasWidth,
+                       kAtlasTile * kAtlasRows);
+            } else {
+              lg::warn("OTTSEL SPRITE METAL: World2D atlas rejected textures={} vertices={}",
+                       (u32)atlas_entries.size(), (u32)atlas_vertices.size());
+            }
+          }
+
+          const bool validated_product_group =
+              g_mobile_native_sprite_product_requested && count == 48 && index == 0 && uses_texture &&
+              (u32)sprite_tex.psm() == 19 && sprite_tex.tw() == 6 && sprite_tex.th() == 6;
+          if (validated_product_group && allow_native_upload) {
+            std::vector<OttselMetalSpriteVertex> group_vertices;
+            group_vertices.reserve((size_t)count * 6);
+            bool group_ok = true;
+            const u64 group_tex0 = adgifs[0].tex0_data;
+            const u32 order[6] = {0, 1, 3, 0, 3, 2};
+            for (u32 group_index = 0; group_index < count && group_ok; ++group_index) {
+              if (adgifs[group_index].tex0_data != group_tex0) {
+                group_ok = false;
+                break;
+              }
+              std::array<float, 2> group_clip[4];
+              float group_q = 0.f, group_sx = 0.f, group_sy = 0.f;
+              if (!sprite_world_shader_clips(frame, matrix, vectors[group_index], group_clip,
+                                             &group_q, &group_sx, &group_sy)) {
+                group_ok = false;
+                break;
+              }
+              const auto& group_vector = vectors[group_index];
+              const float group_alpha = ottsel::sprite3_faded_alpha_normalized(
+                  group_vector.rgba.w, group_sx, group_sy, frame.inv_area);
+              const float group_color[4] = {
+                  std::clamp(group_vector.rgba.x, 0.f, 1.f),
+                  std::clamp(group_vector.rgba.y, 0.f, 1.f),
+                  std::clamp(group_vector.rgba.z, 0.f, 1.f), group_alpha};
+              for (u32 out = 0; out < 6; ++out) {
+                const u32 source = order[out];
+                OttselMetalSpriteVertex native_vertex{};
+                native_vertex.pos[0] = group_clip[source][0];
+                native_vertex.pos[1] = group_clip[source][1];
+                native_vertex.uv[0] = frame.st[source].x;
+                native_vertex.uv[1] = frame.st[source].y;
+                memcpy(native_vertex.color, group_color, sizeof(group_color));
+                group_vertices.push_back(native_vertex);
+              }
+            }
+            if (group_ok && !group_vertices.empty()) {
+              ottsel_metal_set_sprite_mesh_n(g_metal, group_vertices.data(),
+                                             (u32)group_vertices.size(), sprite_rgba.data(),
+                                             sprite_w, sprite_h, 1);
+              g_mobile_native_sprite_uploaded = true;
+              native_sprite_consumed = true;
+              allow_native_upload = false;
+              lg::info("OTTSEL SPRITE METAL: native World2D group vertices={} sprites={} "
+                       "texture=0x{:x} size={}x{}",
+                       (u32)group_vertices.size(), count, sprite_tex.tbp0(), sprite_w, sprite_h);
+            } else {
+              lg::warn("OTTSEL SPRITE METAL: validated World2D group rejected for native upload "
+                       "same-texture={}", group_ok);
+            }
+          }
           if (g_mobile_native_sprite_probe_requested && g_mobile_native_sprite_candidates < 32) {
             lg::info("OTTSEL SPRITE METAL: candidate={} index={} tbp=0x{:x} psm={} bounds=({:.3f},{:.3f}).."
                      "({:.3f},{:.3f}) size=({:.3f},{:.3f}) visible=({:.3f},{:.3f}) usable={}",
@@ -2562,7 +3221,335 @@ static u32 render_mobile_sprite_group0(const MobileSpriteFrameJak1& frame,
       }
     }
 
+    if (g_mobile_native_sprite_product_requested && g_mobile_native_sprite_uploaded &&
+        count == 48) {
+      native_sprite_consumed = true;
+    }
+
     if (!native_sprite_consumed) {
+      const GsTex0 tex0(adgifs[index].tex0_data);
+      raster.load_tex(tex0.tbp0(), tex0.tw(), tex0.th(), (u32)tex0.psm(), tex0.cbp(), tex0.cpsm());
+      raster.tri(vertices[0], vertices[1], vertices[3], true, false, true, 128);
+      raster.tri(vertices[0], vertices[3], vertices[2], true, false, true, 128);
+    }
+    ++drawn;
+  }
+  return drawn;
+}
+
+static bool render_mobile_sprite_group3d_native(const MobileSpriteFrameJak1& frame,
+                                                const MobileSpriteMatrix& matrix,
+                                                const MobileSpriteVec2d* vectors,
+                                                const AdGifData* adgifs,
+                                                u32 count) {
+  if (!g_metal || (count != 48 && count != 16) || !adgifs[0].tex0_data) {
+    return false;
+  }
+  if (!g_mobile_sprite_3d_trace_requested) {
+    const std::string trace_path = ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite-3d";
+    if (access(trace_path.c_str(), F_OK) == 0) {
+      unlink(trace_path.c_str());
+      g_mobile_sprite_3d_trace_requested = true;
+      g_mobile_sprite_3d_trace_groups = 0;
+      lg::info("OTTSEL SPRITE 3D DATA FAMILY: trigger armed");
+    }
+  }
+  const GsTex0 tex(adgifs[0].tex0_data);
+  const bool uses_texture = ottsel::sprite3_uses_texture(adgifs[0].tex0_data);
+  const u32 width = uses_texture ? 1u << tex.tw() : 1u;
+  const u32 height = uses_texture ? 1u << tex.th() : 1u;
+  if (width > 2048 || height > 2048) {
+    return false;
+  }
+  std::vector<u8> rgba((size_t)width * height * 4, 255);
+  if (uses_texture && !download_texture_rgba8888(
+                          rgba.data(), tex.tbp0(), std::max(1u, width / 64), width, height,
+                          (u32)tex.psm(), tex.cpsm(), tex.cbp())) {
+    return false;
+  }
+
+  // This is a bounded source/data-family ledger at the native 3D consumer
+  // boundary. It is diagnostic-only: it records the payload identity that
+  // reached MSCAL=211 before composition, without substituting or remapping
+  // any resource. The existing parser trigger keeps the window opt-in.
+  if (g_mobile_sprite_3d_trace_requested && g_mobile_sprite_3d_trace_groups < 4) {
+    const u64 vector_hash = ottsel_sprite_trace_hash(vectors, count * sizeof(MobileSpriteVec2d));
+    const u64 adgif_hash = ottsel_sprite_trace_hash(adgifs, count * sizeof(AdGifData));
+    const u64 frame_hash = ottsel_sprite_trace_hash(&frame, sizeof(frame));
+    const u64 matrix_hash = ottsel_sprite_trace_hash(&matrix, sizeof(matrix));
+    lg::info("OTTSEL SPRITE 3D DATA FAMILY: group={} count={} tbp=0x{:x} tex0=0x{:016x} "
+             "psm={} tw={} th={} vector-hash=0x{:x} adgif-hash=0x{:x} "
+             "frame-hash=0x{:x} matrix-hash=0x{:x} first-xyz=({}, {}, {}, {}) "
+             "first-flag=({}, {}, {}, {}) first-rgba=({}, {}, {}, {})",
+             g_mobile_sprite_3d_trace_groups, count, tex.tbp0(), adgifs[0].tex0_data,
+             (u32)tex.psm(), tex.tw(), tex.th(), vector_hash, adgif_hash, frame_hash,
+             matrix_hash, vectors[0].xyz_sx.x, vectors[0].xyz_sx.y, vectors[0].xyz_sx.z,
+             vectors[0].xyz_sx.w, vectors[0].flag_rot_sy.x, vectors[0].flag_rot_sy.y,
+             vectors[0].flag_rot_sy.z, vectors[0].flag_rot_sy.w, vectors[0].rgba.x,
+             vectors[0].rgba.y, vectors[0].rgba.z, vectors[0].rgba.w);
+    log_mobile_sprite_texture_identity(adgifs[0], 0, g_mobile_sprite_3d_trace_groups, count);
+    ++g_mobile_sprite_3d_trace_groups;
+  }
+
+  const auto matrix_transform3 = [](const MobileSpriteVec4 m[4], float x, float y, float z) {
+    return MobileSpriteVec4{m[3].x + m[0].x * x + m[1].x * y + m[2].x * z,
+                            m[3].y + m[0].y * x + m[1].y * y + m[2].y * z,
+                            m[3].z + m[0].z * x + m[1].z * y + m[2].z * z,
+                            m[3].w + m[0].w * x + m[1].w * y + m[2].w * z};
+  };
+  const auto quat_rotation = [](float x, float y, float z) {
+    const float qr = std::sqrt(std::abs(1.f - (x * x + y * y + z * z)));
+    std::array<MobileSpriteVec4, 3> result{};
+    // sprite3_3d.vert writes mat3 columns (GLSL's result[column][row]).
+    result[0] = {1.f - 2.f * (y * y + z * z), 2.f * (x * y - z * qr),
+                 2.f * (x * z + y * qr), 0.f};
+    result[1] = {2.f * (x * y + z * qr), 1.f - 2.f * (x * x + z * z),
+                 2.f * (y * z - x * qr), 0.f};
+    result[2] = {2.f * (x * z - y * qr), 2.f * (y * z + x * qr),
+                 1.f - 2.f * (x * x + y * y), 0.f};
+    return result;
+  };
+  std::vector<OttselMetalSpriteVertex> vertices;
+  vertices.reserve((size_t)count * 6);
+  const u32 order[6] = {0, 1, 3, 0, 3, 2};
+  for (u32 index = 0; index < count; ++index) {
+    const auto& vector = vectors[index];
+    const auto rotation = quat_rotation(vector.flag_rot_sy.x, vector.flag_rot_sy.y,
+                                        vector.flag_rot_sy.z);
+    const float sx = vector.xyz_sx.w;
+    const float sy = vector.flag_rot_sy.w;
+    const MobileSpriteVec4 camera_position =
+        matrix_transform3(matrix.camera, vector.xyz_sx.x, vector.xyz_sx.y, vector.xyz_sx.z);
+    const float fade_q = frame.pfog0 / camera_position.w;
+    // Keep the source shader's fade contract: the vertex shader contributes
+    // one Q to sx*sy*Q*inv_area, then its final color/alpha multiplies alpha
+    // by two twice. The prior native path incorrectly used Q squared.
+    const float area_alpha = std::clamp(
+        vector.rgba.w * std::clamp(sx * sy * fade_q * frame.inv_area, 0.f, 1.f) * 4.f,
+        0.f, 1.f);
+    std::array<float, 2> clips[4];
+    for (u32 vertex = 0; vertex < 4; ++vertex) {
+      const auto& offset = frame.xyz[vertex];
+      MobileSpriteVec4 position = vector.xyz_sx;
+      position.x += rotation[0].x * offset.x * sx + rotation[1].x * offset.y +
+                     rotation[2].x * offset.z * sy;
+      position.y += rotation[0].y * offset.x * sx + rotation[1].y * offset.y +
+                     rotation[2].y * offset.z * sy;
+      position.z += rotation[0].z * offset.x * sx + rotation[1].z * offset.y +
+                     rotation[2].z * offset.z * sy;
+      const MobileSpriteVec4 camera_vertex =
+          matrix_transform3(matrix.camera, position.x, position.y, position.z);
+      MobileSpriteVec4 transformed = {-camera_vertex.x, -camera_vertex.y, -camera_vertex.z,
+                                      -camera_vertex.w};
+      const float q = frame.pfog0 / transformed.w;
+      transformed.x = transformed.x * q + matrix.hvdf.x;
+      transformed.y = transformed.y * q + matrix.hvdf.y;
+      transformed.z = transformed.z * q + matrix.hvdf.z;
+      clips[vertex] = sprite_shader_clip_vertex(transformed);
+    }
+    const float color[4] = {std::clamp(vector.rgba.x, 0.f, 1.f),
+                            std::clamp(vector.rgba.y, 0.f, 1.f),
+                            std::clamp(vector.rgba.z, 0.f, 1.f), area_alpha};
+    for (u32 out = 0; out < 6; ++out) {
+      const u32 source = order[out];
+      OttselMetalSpriteVertex vertex{};
+      vertex.pos[0] = clips[source][0];
+      vertex.pos[1] = clips[source][1];
+      vertex.uv[0] = frame.st[source].x;
+      vertex.uv[1] = frame.st[source].y;
+      memcpy(vertex.color, color, sizeof(color));
+      vertices.push_back(vertex);
+    }
+  }
+  if (vertices.empty()) {
+    return false;
+  }
+  ottsel_metal_append_sprite_mesh_n(g_metal, vertices.data(), (u32)vertices.size(), rgba.data(),
+                                    width, height, 1);
+  static u32 native_3d_logs = 0;
+  if (ottsel_mobile_log_within_budget(native_3d_logs, 12)) {
+    ++native_3d_logs;
+    lg::info("OTTSEL SPRITE METAL: native 3D group sprites={} vertices={} tbp=0x{:x} "
+             "tex0=0x{:016x} size={}x{}",
+             count, (u32)vertices.size(), tex.tbp0(), adgifs[0].tex0_data, width, height);
+  }
+  return true;
+}
+
+static bool append_mobile_sprite_hud_native(const MobileSpriteFrameJak1& frame,
+                                            const MobileSpriteHudMatrix& hud,
+                                            const MobileSpriteVec2d* vectors,
+                                            const AdGifData* adgifs,
+                                            u32 count) {
+  if (!g_metal || !g_mobile_native_sprite_product_requested ||
+      (count != 48 && count != 32)) {
+    return false;
+  }
+  constexpr u32 kTile = 64;
+  constexpr u32 kColumns = 8;
+  constexpr u32 kRows = 8;
+  constexpr u32 kWidth = kTile * kColumns;
+  constexpr u32 kHeight = kTile * kRows;
+  struct Entry {
+    u64 tex0 = 0;
+    u32 x = 0;
+    u32 y = 0;
+    u32 w = 1;
+    u32 h = 1;
+  };
+  std::vector<Entry> entries;
+  std::vector<u8> atlas((size_t)kWidth * kHeight * 4, 0);
+  std::vector<OttselMetalSpriteVertex> vertices;
+  vertices.reserve((size_t)count * 6);
+  auto find_entry = [&](u64 tex0_data, u32* out_index) {
+    for (u32 i = 0; i < entries.size(); ++i) {
+      if (entries[i].tex0 == tex0_data) {
+        *out_index = i;
+        return true;
+      }
+    }
+    if (entries.size() >= kColumns * kRows) {
+      return false;
+    }
+    const GsTex0 tex(tex0_data);
+    const bool textured = ottsel::sprite3_uses_texture(tex0_data);
+    const u32 width = textured ? 1u << tex.tw() : 1u;
+    const u32 height = textured ? 1u << tex.th() : 1u;
+    if (width > kTile || height > kTile) {
+      return false;
+    }
+    Entry entry;
+    entry.tex0 = tex0_data;
+    entry.x = (u32)entries.size() % kColumns * kTile;
+    entry.y = (u32)entries.size() / kColumns * kTile;
+    entry.w = width;
+    entry.h = height;
+    std::vector<u8> decoded((size_t)width * height * 4, 255);
+    if (textured && !download_texture_rgba8888(decoded.data(), tex.tbp0(),
+                                                 std::max(1u, width / 64), width, height,
+                                                 (u32)tex.psm(), tex.cpsm(), tex.cbp())) {
+      return false;
+    }
+    for (u32 row = 0; row < height; ++row) {
+      memcpy(atlas.data() + ((size_t)(entry.y + row) * kWidth + entry.x) * 4,
+             decoded.data() + (size_t)row * width * 4, (size_t)width * 4);
+    }
+    entries.push_back(entry);
+    *out_index = (u32)entries.size() - 1;
+    return true;
+  };
+  const u32 order[6] = {0, 1, 3, 0, 3, 2};
+  for (u32 index = 0; index < count; ++index) {
+    const auto& vector = vectors[index];
+    const MobileSpriteVec4 transformed = sprite_matrix_transform(hud.matrix, vector.xyz_sx);
+    if (!std::isfinite(transformed.w) || transformed.w == 0.f) {
+      return false;
+    }
+    const float q = frame.pfog0 / transformed.w;
+    if (!std::isfinite(q)) {
+      return false;
+    }
+    const MobileSpriteVec4 offset = (int)vector.flag_rot_sy.x == 0
+                                        ? hud.hvdf
+                                        : hud.user_hvdf[std::clamp((int)vector.flag_rot_sy.x - 1,
+                                                                    0, 74)];
+    MobileSpriteVec4 base = sprite_add(sprite_scale(transformed, q), offset);
+    const float sx = std::max(vector.xyz_sx.w * q, frame.min_scale);
+    const float sy = std::max(vector.flag_rot_sy.w * q, frame.min_scale);
+    const float radians = vector.flag_rot_sy.z * frame.deg_to_rad;
+    const float sine = std::sin(radians);
+    const float cosine = std::cos(radians);
+    const MobileSpriteVec4 x_basis = sprite_scale(
+        sprite_add(sprite_scale(frame.basis_x, cosine), sprite_scale(frame.basis_y, -sine)), sx);
+    const MobileSpriteVec4 y_basis = sprite_scale(
+        sprite_add(sprite_scale(frame.basis_x, sine), sprite_scale(frame.basis_y, cosine)), sy);
+    const u32 flags = *(const u32*)&vector.flag_rot_sy.x;
+    std::array<float, 2> clip[4];
+    for (u32 vertex = 0; vertex < 4; ++vertex) {
+      const MobileSpriteVec4& xy = frame.xy[vertex + (flags & 15u)];
+      clip[vertex] = sprite_shader_clip_vertex(
+          sprite_add(base, sprite_add(sprite_scale(x_basis, xy.x), sprite_scale(y_basis, xy.y))));
+    }
+    u32 entry_index = 0;
+    if (!find_entry(adgifs[index].tex0_data, &entry_index)) {
+      return false;
+    }
+    const Entry& entry = entries[entry_index];
+    const float color[4] = {std::clamp(vector.rgba.x, 0.f, 1.f),
+                            std::clamp(vector.rgba.y, 0.f, 1.f),
+                            std::clamp(vector.rgba.z, 0.f, 1.f),
+                            std::clamp(vector.rgba.w, 0.f, 1.f)};
+    for (u32 out = 0; out < 6; ++out) {
+      const u32 source = order[out];
+      OttselMetalSpriteVertex vertex{};
+      vertex.pos[0] = clip[source][0];
+      vertex.pos[1] = clip[source][1];
+      vertex.uv[0] = (entry.x + std::clamp(frame.st[source].x, 0.f, 1.f) * entry.w) /
+                     (float)kWidth;
+      vertex.uv[1] = (entry.y + std::clamp(frame.st[source].y, 0.f, 1.f) * entry.h) /
+                     (float)kHeight;
+      memcpy(vertex.color, color, sizeof(color));
+      vertices.push_back(vertex);
+    }
+  }
+  if (vertices.empty() || entries.empty()) {
+    return false;
+  }
+  ottsel_metal_append_sprite_mesh_n(g_metal, vertices.data(), (u32)vertices.size(), atlas.data(),
+                                    kWidth, kHeight, 1);
+  static u32 native_hud_logs = 0;
+  if (ottsel_mobile_log_within_budget(native_hud_logs, 8)) {
+    ++native_hud_logs;
+    lg::info("OTTSEL SPRITE METAL: native HUD atlas vertices={} sprites={} textures={} "
+             "atlas={}x{}",
+             (u32)vertices.size(), count, (u32)entries.size(), kWidth, kHeight);
+  }
+  return true;
+}
+
+static u32 render_mobile_sprite_hud(const MobileSpriteFrameJak1& frame,
+                                    const MobileSpriteHudMatrix& hud,
+                                    const MobileSpriteVec2d* vectors,
+                                    const AdGifData* adgifs,
+                                    u32 count,
+                                    OttselRaster& raster) {
+  const bool native_consumed = append_mobile_sprite_hud_native(frame, hud, vectors, adgifs, count);
+  u32 drawn = 0;
+  for (u32 index = 0; index < count; ++index) {
+    const auto& vector = vectors[index];
+    const MobileSpriteVec4 hud_transformed =
+        sprite_matrix_transform(hud.matrix, vector.xyz_sx);
+    if (!std::isfinite(hud_transformed.w) || hud_transformed.w == 0.f) {
+      continue;
+    }
+    const float q = frame.pfog0 / hud_transformed.w;
+    if (!std::isfinite(q)) {
+      continue;
+    }
+    MobileSpriteVec4 base = sprite_add(sprite_scale(hud_transformed, q),
+                                       (int)vector.flag_rot_sy.x == 0
+                                           ? hud.hvdf
+                                           : hud.user_hvdf[std::clamp((int)vector.flag_rot_sy.x - 1,
+                                                                       0, 74)]);
+    const float sx = std::max(vector.xyz_sx.w * q, frame.min_scale);
+    const float sy = std::max(vector.flag_rot_sy.w * q, frame.min_scale);
+    const float radians = vector.flag_rot_sy.z * frame.deg_to_rad;
+    const float sine = std::sin(radians);
+    const float cosine = std::cos(radians);
+    const MobileSpriteVec4 x_basis = sprite_scale(
+        sprite_add(sprite_scale(frame.basis_x, cosine), sprite_scale(frame.basis_y, -sine)), sx);
+    const MobileSpriteVec4 y_basis = sprite_scale(
+        sprite_add(sprite_scale(frame.basis_x, sine), sprite_scale(frame.basis_y, cosine)), sy);
+    const u32 flags = *(const u32*)&vector.flag_rot_sy.x;
+    OttselVertex vertices[4];
+    for (u32 vertex = 0; vertex < 4; ++vertex) {
+      const MobileSpriteVec4& offset = frame.xy[vertex + (flags & 15u)];
+      const MobileSpriteVec4 transformed =
+          sprite_add(base, sprite_add(sprite_scale(x_basis, offset.x),
+                                      sprite_scale(y_basis, offset.y)));
+      vertices[vertex] = sprite_raster_vertex(transformed, frame.st[vertex], vector.rgba, raster);
+    }
+    if (!native_consumed) {
       const GsTex0 tex0(adgifs[index].tex0_data);
       raster.load_tex(tex0.tbp0(), tex0.tw(), tex0.th(), (u32)tex0.psm(), tex0.cbp(), tex0.cpsm());
       raster.tri(vertices[0], vertices[1], vertices[3], true, false, true, 128);
@@ -2593,6 +3580,8 @@ struct MobileSpritePhaseSummary {
     u32 psm = 0;
     u32 tw = 0;
     u32 th = 0;
+    u64 tex0 = 0;
+    u64 tex0_addr = 0;
   };
   std::array<Item, 64> items{};
   u32 item_count = 0;
@@ -2667,10 +3656,11 @@ static void trace_mobile_sprite_phase_bucket(const void* data,
         other += sprite_count;
         break;
     }
-    const GsTex0 first_tex(((const AdGifData*)adgifs.data)[0].tex0_data);
+    const auto* first_adgif = (const AdGifData*)adgifs.data;
+    const auto* first_vector = (const MobileSpriteVec2d*)vectors.data;
+    const GsTex0 first_tex(first_adgif[0].tex0_data);
     static u32 zero_tbp_dumps = 0;
     if (first_tex.tbp0() == 0 && zero_tbp_dumps < 8) {
-      const auto* first_adgif = (const AdGifData*)adgifs.data;
       ++zero_tbp_dumps;
       lg::warn("OTTSEL SPRITE ZERO TEX: label={} chain={} group={} count={} dump={} "
                "tex0=0x{:016x} tex0-addr=0x{:016x} tex1=0x{:016x} tex1-addr=0x{:016x} "
@@ -2683,7 +3673,6 @@ static void trace_mobile_sprite_phase_bucket(const void* data,
         phase, sprite_count, first_tex.tbp0(), (u32)first_tex.psm(), first_tex.tw(), first_tex.th());
     if (emit_logs && groups <= 2) {
       const auto* first_vec = (const u32*)vectors.data;
-      const auto* first_adgif = (const AdGifData*)adgifs.data;
       lg::info("OTTSEL SPRITE SOURCE ITEM: label={} chain={} group={} count={} "
                "header-vif0=0x{:08x} header-vif1=0x{:08x} vec-bytes={} adgif-bytes={} "
                "mscal={} vec0=0x{:08x}/0x{:08x}/0x{:08x}/0x{:08x} tex0=0x{:016x}",
@@ -2693,13 +3682,17 @@ static void trace_mobile_sprite_phase_bucket(const void* data,
     }
     if (summary && summary->item_count < summary->items.size()) {
       summary->items[summary->item_count++] = {phase, sprite_count, first_tex.tbp0(),
-                                                (u32)first_tex.psm(), first_tex.tw(), first_tex.th()};
+                                                (u32)first_tex.psm(), first_tex.tw(), first_tex.th(),
+                                                first_adgif->tex0_data, first_adgif->tex0_addr};
     }
     if (emit_logs) {
       lg::info("OTTSEL SPRITE PHASE ITEM: label={} chain={} vsync={} group={} phase={} count={} "
-               "tbp=0x{:x} psm={} tw={} th={} fixture={}",
+               "tbp=0x{:x} psm={} tw={} th={} tex0=0x{:016x} tex0-addr=0x{:016x} "
+               "first-xyz=({}, {}, {}, {}) fixture={}",
                label, chain_no, g_ottsel_ios_vsync_count, groups, phase_name, sprite_count,
                first_tex.tbp0(), (u32)first_tex.psm(), first_tex.tw(), first_tex.th(),
+               first_adgif->tex0_data, first_adgif->tex0_addr, first_vector->xyz_sx.x,
+               first_vector->xyz_sx.y, first_vector->xyz_sx.z, first_vector->xyz_sx.w,
                bucket67_world_fixture);
     }
   }
@@ -2727,7 +3720,16 @@ static u32 render_mobile_sprite_bucket(const void* data,
                                        u32 start_offset,
                                        u32 next_bucket,
                                        OttselRaster& raster,
-                                       u32 chain_no) {
+                                       u32 chain_no,
+                                       const MobileSpriteFrameJak1* inherited_frame = nullptr,
+                                       const MobileSpriteMatrix* inherited_matrix = nullptr,
+                                       const MobileSpriteHudMatrix* inherited_hud = nullptr,
+                                       MobileSpriteFrameJak1* frame_out = nullptr,
+                                       MobileSpriteMatrix* matrix_out = nullptr,
+                                       MobileSpriteHudMatrix* hud_out = nullptr,
+                                       bool* frame_valid_out = nullptr,
+                                       bool* matrix_valid_out = nullptr,
+                                       bool* hud_valid_out = nullptr) {
   if (!g_mobile_sprite_parser_trace) {
     const std::string trace_path = ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite";
     if (access(trace_path.c_str(), F_OK) == 0) {
@@ -2765,8 +3767,19 @@ static u32 render_mobile_sprite_bucket(const void* data,
   DmaFollower dma(data, start_offset);
   MobileSpriteFrameJak1 frame{};
   MobileSpriteMatrix matrix{};
-  bool have_frame = false;
-  bool have_matrix = false;
+  MobileSpriteHudMatrix hud{};
+  bool have_frame = inherited_frame != nullptr;
+  bool have_matrix = inherited_matrix != nullptr;
+  bool have_hud = inherited_hud != nullptr;
+  if (inherited_frame) {
+    frame = *inherited_frame;
+  }
+  if (inherited_matrix) {
+    matrix = *inherited_matrix;
+  }
+  if (inherited_hud) {
+    hud = *inherited_hud;
+  }
   u32 frame_transfer_index = UINT32_MAX;
   u32 matrix_transfer_index = UINT32_MAX;
   u64 frame_trace_hash = 0;
@@ -2853,6 +3866,17 @@ static u32 render_mobile_sprite_bucket(const void* data,
       }
       continue;
     }
+    if (transfer.size_bytes == sizeof(hud) && vif1.kind == VifCode::Kind::UNPACK_V4_32 &&
+        (vif1.immediate & 0x3ff) == 0x384) {
+      memcpy(&hud, transfer.data, sizeof(hud));
+      have_hud = true;
+      if (g_mobile_sprite_parser_trace) {
+        lg::info("OTTSEL SPRITE TRACE: hud matrix transfer={} size={} imm=0x{:x} hvdf=({}, {}, {}, {})",
+                 transfer_index, transfer.size_bytes, vif1.immediate, hud.hvdf.x, hud.hvdf.y,
+                 hud.hvdf.z, hud.hvdf.w);
+      }
+      continue;
+    }
     if (!have_frame || !have_matrix || !is_sprite_header(transfer)) {
       continue;
     }
@@ -2885,12 +3909,10 @@ static u32 render_mobile_sprite_bucket(const void* data,
                (u32)run_vif.kind, run_vif.immediate);
     }
     if (g_mobile_sprite_source_boundary_trace &&
-        g_mobile_sprite_source_boundary_count < 8 && run.size_bytes == 0 &&
+        g_mobile_sprite_source_boundary_count < 128 && run.size_bytes == 0 &&
         run_vif.kind == VifCode::Kind::MSCAL) {
       const auto phase = ottsel::classify_jak1_sprite_mscal(run_vif.immediate);
-      if (phase == ottsel::Jak1SpritePhase::ThreeD ||
-          phase == ottsel::Jak1SpritePhase::World2D ||
-          phase == ottsel::Jak1SpritePhase::Hud2D) {
+      if (phase != ottsel::Jak1SpritePhase::Other) {
         const char* phase_name = phase == ottsel::Jak1SpritePhase::ThreeD
                                      ? "3d"
                                      : phase == ottsel::Jak1SpritePhase::World2D ? "world" : "hud";
@@ -3007,6 +4029,18 @@ static u32 render_mobile_sprite_bucket(const void* data,
                                            (const MobileSpriteVec2d*)vectors.data,
                                            (const AdGifData*)adgifs.data, sprite_count, raster);
     } else if (run.size_bytes == 0 && run_vif.kind == VifCode::Kind::MSCAL &&
+               run_vif.immediate == 211 && have_frame && have_matrix) {
+      render_mobile_sprite_group3d_native(
+          frame, matrix, (const MobileSpriteVec2d*)vectors.data,
+          (const AdGifData*)adgifs.data, sprite_count);
+      if (g_mobile_sprite_parser_trace) {
+        parser_3d_sprite_count += sprite_count;
+      }
+    } else if (run.size_bytes == 0 && run_vif.kind == VifCode::Kind::MSCAL &&
+               run_vif.immediate == 109 && have_hud) {
+      drawn += render_mobile_sprite_hud(frame, hud, (const MobileSpriteVec2d*)vectors.data,
+                                        (const AdGifData*)adgifs.data, sprite_count, raster);
+    } else if (run.size_bytes == 0 && run_vif.kind == VifCode::Kind::MSCAL &&
                g_mobile_sprite_parser_trace) {
       const auto phase = ottsel::classify_jak1_sprite_mscal(run_vif.immediate);
       switch (phase) {
@@ -3024,7 +4058,7 @@ static u32 render_mobile_sprite_bucket(const void* data,
       }
     }
   }
-  if (g_mobile_sprite_source_boundary_trace && g_mobile_sprite_source_boundary_count >= 8) {
+  if (g_mobile_sprite_source_boundary_trace && g_mobile_sprite_source_boundary_count >= 128) {
     g_mobile_sprite_source_boundary_trace = false;
     lg::info("OTTSEL SPRITE SOURCE BOUNDARY: complete items={}",
              g_mobile_sprite_source_boundary_count);
@@ -3038,6 +4072,24 @@ static u32 render_mobile_sprite_bucket(const void* data,
              parser_first_tbp == UINT32_MAX ? 0 : parser_first_tbp, parser_last_tbp,
              start_offset, next_bucket);
     g_mobile_sprite_parser_trace = false;
+  }
+  if (frame_out && have_frame) {
+    *frame_out = frame;
+  }
+  if (matrix_out && have_matrix) {
+    *matrix_out = matrix;
+  }
+  if (hud_out && have_hud) {
+    *hud_out = hud;
+  }
+  if (frame_valid_out) {
+    *frame_valid_out = have_frame;
+  }
+  if (matrix_valid_out) {
+    *matrix_valid_out = have_matrix;
+  }
+  if (hud_valid_out) {
+    *hud_valid_out = have_hud;
   }
   return drawn;
 }
@@ -3102,8 +4154,11 @@ static void trace_mobile_direct_bucket(const void* data,
             const std::string metal_ir_path =
                 ottsel_ios_writable_dir() + "ottsel-trace-metal-direct-ir";
             if (!direct_ir_metal_triggered && g_metal &&
-                access(metal_ir_path.c_str(), F_OK) == 0) {
-              unlink(metal_ir_path.c_str());
+                (g_mobile_direct_trace.native_product ||
+                 access(metal_ir_path.c_str(), F_OK) == 0)) {
+              if (!g_mobile_direct_trace.native_product) {
+                unlink(metal_ir_path.c_str());
+              }
               direct_ir_metal_triggered = true;
               // Match DirectRenderer's Jak 1 shader seam: XYZ is normalized
               // from the GS 16-bit range into clip space, with the 512x448
@@ -3208,6 +4263,86 @@ static void trace_mobile_direct_bucket(const void* data,
 // not have a Sprite3 VU program to run on PC_PORT.  Decode only that bucket
 // with isolated GS state so a debug/text packet cannot inherit unrelated
 // state from the generic DMA walk.
+void trace_mobile_generic_buckets(const void* data, u32 chain_offset) {
+  DmaFollower dma(data, chain_offset);
+
+  // Follow the initial CALL into the default-register buffer and its RET back
+  // to bucket zero, exactly as the desktop Jak 1 dispatcher does.
+  if (dma.ended()) {
+    return;
+  }
+  dma.read_and_advance();
+  if (dma.ended()) {
+    return;
+  }
+  dma.read_and_advance();
+  if (dma.ended()) {
+    return;
+  }
+  dma.read_and_advance();
+
+  const u32 bucket_zero = ottsel_mobile_jak1_bucket_boundary(chain_offset, 0);
+  if (dma.current_tag_offset() != bucket_zero) {
+    lg::warn("OTTSEL GENERIC BUCKET: initial dispatch mismatch got=0x{:x} expected=0x{:x}",
+             dma.current_tag_offset(), bucket_zero);
+    return;
+  }
+
+  for (u32 bucket_id = 0; bucket_id < 70; ++bucket_id) {
+    const bool generic = ottsel_mobile_is_jak1_generic_bucket(bucket_id);
+    const u32 next_boundary =
+        ottsel_mobile_jak1_bucket_boundary(chain_offset, bucket_id + 1);
+    u32 transfers = 0;
+    u64 bytes = 0;
+    u32 unpack_v4_32 = 0;
+    u32 fragment_uploads = 0;
+    u32 mscal = 0;
+    std::array<u16, 8> entries{};
+    u32 entry_count = 0;
+
+    while (!dma.ended() && dma.current_tag_offset() != next_boundary && transfers < 4096) {
+      const DmaTransfer transfer = dma.read_and_advance();
+      if (generic) {
+        ++transfers;
+        bytes += transfer.size_bytes;
+        const VifCode v0 = transfer.vifcode0();
+        const VifCode v1 = transfer.vifcode1();
+        if (v1.kind == VifCode::Kind::UNPACK_V4_32) {
+          ++unpack_v4_32;
+          if (transfer.size_bytes > 160) {
+            ++fragment_uploads;
+          }
+        }
+        const VifCode commands[2] = {v0, v1};
+        for (const auto& command : commands) {
+          if (command.kind == VifCode::Kind::MSCAL || command.kind == VifCode::Kind::MSCALF) {
+            ++mscal;
+            if (entry_count < entries.size()) {
+              entries[entry_count++] = command.immediate;
+            }
+          }
+        }
+      }
+    }
+
+    if (dma.current_tag_offset() != next_boundary) {
+      lg::warn("OTTSEL GENERIC BUCKET: walk stopped id={} at=0x{:x} expected=0x{:x} ended={}",
+               bucket_id, dma.current_tag_offset(), next_boundary, dma.ended());
+      return;
+    }
+
+    if (generic) {
+      std::string entry_text;
+      for (u32 i = 0; i < entry_count; ++i) {
+        entry_text += i ? "," : "";
+        entry_text += std::to_string(entries[i]);
+      }
+      lg::info("OTTSEL GENERIC BUCKET: id={} transfers={} bytes={} unpack-v4-32={} "
+               "fragment-uploads={} mscal={} entries=[{}]",
+               bucket_id, transfers, bytes, unpack_v4_32, fragment_uploads, mscal, entry_text);
+    }
+  }
+}
 }  // namespace
 
 void gfx_send_chain(const void* data, u32 offset) {
@@ -3259,14 +4394,21 @@ void gfx_send_chain(const void* data, u32 offset) {
   g_mobile_chain_no++;
   g_dec.chain_no = g_mobile_chain_no;
   const std::string direct_trace_path = ottsel_ios_writable_dir() + "ottsel-trace-mobile-direct";
-  if (!g_mobile_direct_trace.active && access(direct_trace_path.c_str(), F_OK) == 0) {
-    unlink(direct_trace_path.c_str());
+  const std::string direct_product_path =
+      ottsel_ios_writable_dir() + "ottsel-enable-native-direct-product";
+  if (!g_mobile_direct_trace.active &&
+      (access(direct_trace_path.c_str(), F_OK) == 0 ||
+       access(direct_product_path.c_str(), F_OK) == 0)) {
+    const bool native_product = access(direct_product_path.c_str(), F_OK) == 0;
+    unlink(native_product ? direct_product_path.c_str() : direct_trace_path.c_str());
     g_mobile_direct_trace = {};
     g_mobile_direct_trace.active = true;
+    g_mobile_direct_trace.native_product = native_product;
     g_mobile_direct_trace.start_chain = g_mobile_chain_no;
     g_mobile_direct_trace.draw_start = g_raster.draw_count;
     g_dec.ordered_ir.clear();
-    lg::info("OTTSEL MOBILE DIRECT: trace accepted at chain={} draw-start={}", g_mobile_chain_no,
+    lg::info("OTTSEL MOBILE DIRECT: {} accepted at chain={} draw-start={}",
+             native_product ? "native product" : "trace", g_mobile_chain_no,
              g_mobile_direct_trace.draw_start);
   }
   static bool direct_fixture_triggered = false;
@@ -3291,6 +4433,13 @@ void gfx_send_chain(const void* data, u32 offset) {
     unlink(generic_probe_path.c_str());
     g_mobile_generic_probe_pending = true;
     lg::info("OTTSEL GENERIC VU: probe accepted; awaiting MSCAL 46");
+  }
+  const std::string generic_bucket_trace_path =
+      ottsel_ios_writable_dir() + "ottsel-trace-generic-buckets";
+  if (access(generic_bucket_trace_path.c_str(), F_OK) == 0) {
+    unlink(generic_bucket_trace_path.c_str());
+    lg::info("OTTSEL GENERIC BUCKET: trace accepted chain={}", g_chain_no + 1);
+    trace_mobile_generic_buckets(data, offset);
   }
   // Keep the CPU rasterizer available only for bounded diagnostics while the
   // native Metal scene owns presentation.
@@ -3656,8 +4805,8 @@ void gfx_send_chain(const void* data, u32 offset) {
       }
     }
   }
-  int count = 0;
-  while (!dma.ended() && count < 512) {
+  unsigned int count = 0;
+  while (ottsel_mobile_dma_decode_can_continue(dma.ended(), count)) {
     DmaTransfer t = dma.read_and_advance();
     count++;
     if (t.size_bytes == 0) {
@@ -3703,11 +4852,70 @@ void gfx_send_chain(const void* data, u32 offset) {
     ottsel_handle_vif(t.vif1(), t.data, t.size_bytes);
     VifCode v1(t.vif1());
     VifCode v0(t.vif0());
+    if (v0.kind == VifCode::Kind::PC_PORT || v1.kind == VifCode::Kind::PC_PORT) {
+      capture_mobile_merc(t);
+    }
     if ((v0.kind == VifCode::Kind::PC_PORT || v1.kind == VifCode::Kind::PC_PORT) &&
         t.size_bytes == sizeof(OttselPcPortData)) {
       g_mobile_camera_last_chain = g_chain_no;
       g_mobile_camera_last_transfer = count;
       capture_mobile_camera(t.data, t.size_bytes);
+    }
+    static u32 native_merc_trace_count = 0;
+    static u32 native_merc_trace_invalid_count = 0;
+    static std::unordered_set<std::string> native_merc_trace_names;
+    if (!g_mobile_merc_trace) {
+      const std::string trace_path = ottsel_ios_writable_dir() + "ottsel-trace-native-merc";
+      if (access(trace_path.c_str(), F_OK) == 0) {
+        unlink(trace_path.c_str());
+        g_mobile_merc_trace = true;
+        native_merc_trace_count = 0;
+        native_merc_trace_invalid_count = 0;
+        native_merc_trace_names.clear();
+        lg::info("OTTSEL MERC NATIVE TRACE: bounded PC_PORT ledger armed");
+      }
+    }
+    if (g_mobile_merc_trace && native_merc_trace_count < 32 &&
+        (v0.kind == VifCode::Kind::PC_PORT || v1.kind == VifCode::Kind::PC_PORT)) {
+      const size_t name_len = t.size_bytes ? strnlen((const char*)t.data, std::min<size_t>(128, t.size_bytes)) : 0;
+      bool printable_name = name_len > 0 && name_len < 128;
+      for (size_t i = 0; printable_name && i < name_len; ++i) {
+        printable_name = std::isprint((unsigned char)t.data[i]);
+      }
+      const std::string name = printable_name ? std::string((const char*)t.data, name_len)
+                                              : "<non-text>";
+      bool known_model = false;
+      if (printable_name) {
+        for (const auto& [level_name, level_ptr] : g_mobile_levels) {
+          for (const auto& candidate : level_ptr->merc_data.models) {
+            if (candidate.name == name) {
+              known_model = true;
+              break;
+            }
+          }
+          if (known_model) {
+            break;
+          }
+        }
+      }
+      const u32 w0 = t.size_bytes >= 4 ? *(const u32*)t.data : 0;
+      const u32 w1 = t.size_bytes >= 8 ? *(const u32*)(t.data + 4) : 0;
+      if (known_model) {
+        if (native_merc_trace_names.insert(name).second) {
+          lg::info("OTTSEL MERC PC_PORT VALID: chain={} transfer={} size={} vif0=0x{:x} vif1=0x{:x} "
+                   "name='{}' words=0x{:08x}/0x{:08x}",
+                   g_chain_no, count, t.size_bytes, t.vif0(), t.vif1(), name, w0, w1);
+          ++native_merc_trace_count;
+        }
+      } else if (native_merc_trace_invalid_count++ < 8) {
+        lg::info("OTTSEL MERC PC_PORT ignored: chain={} transfer={} size={} vif0=0x{:x} vif1=0x{:x} "
+                 "name='{}' words=0x{:08x}/0x{:08x}",
+                 g_chain_no, count, t.size_bytes, t.vif0(), t.vif1(), name, w0, w1);
+      }
+      if (native_merc_trace_count == 32) {
+        g_mobile_merc_trace = false;
+        lg::info("OTTSEL MERC NATIVE TRACE: ledger complete");
+      }
     }
     // Full-transfer capture of the first tfrag-bearing chain (all vif kinds,
     // including qwc=0 base/offset and any frag-list unpacks).
@@ -3888,13 +5096,16 @@ void gfx_send_chain(const void* data, u32 offset) {
     // frame) so the draw-phase values can be seen.
     {
       static u32 ottsel_bg_samples = 0;
+      static u32 ottsel_bg_logs = 0;
       ottsel_bg_samples++;
       auto bws = g_pc_port_funcs.intern_from_c("*background-work*");
       u32 bw = 0;
       if (bws.offset) {
         memcpy(&bw, g_ee_main_mem + bws.offset, 4);
       }
-      if (bw >= 0x080000 && bw < 0x08000000 && (ottsel_bg_samples % 1500) == 0) {
+      if (ottsel_mobile_log_within_budget(ottsel_bg_logs, 8) && bw >= 0x080000 &&
+          bw < 0x08000000 && (ottsel_bg_samples % 1500) == 0) {
+        ++ottsel_bg_logs;
         lg::info("OTTSEL BGWORK: bg=0x{:x} tfrag-count=0x{:x} tfrag0=0x{:x} tie-count@476=0x{:x}"
                  " tie0@480=0x{:x}",
                  bw, *(u32*)(g_ee_main_mem + bw), *(u32*)(g_ee_main_mem + bw + 4),
@@ -3908,8 +5119,10 @@ void gfx_send_chain(const void* data, u32 offset) {
     // 0xa30.  Statuses are decoded by interned symbol address.
     {
       static u32 ottsel_ls_samples = 0;
+      static u32 ottsel_ls_logs = 0;
       ottsel_ls_samples++;
-      if (g_ee_main_mem && (ottsel_ls_samples % 1500) == 0) {
+      if (ottsel_mobile_log_within_budget(ottsel_ls_logs, 8) && g_ee_main_mem &&
+          (ottsel_ls_samples % 1500) == 0) {
         auto lvs = g_pc_port_funcs.intern_from_c("*level*");
         auto dps = g_pc_port_funcs.intern_from_c("*dproc*");
         u32 grp = 0, dproc = 0;
@@ -3940,6 +5153,7 @@ void gfx_send_chain(const void* data, u32 offset) {
             u32 bsp = *(u32*)(g_ee_main_mem + so + 48);
             n += snprintf(buf + n, sizeof(buf) - n, "slot%d=%s bsp=0x%x ", slot, decode(st), bsp);
           }
+          ++ottsel_ls_logs;
           lg::info("OTTSEL LEVELSTAT: {}loading-level=0x{:x} dproc=0x{:x}", buf, ll, dproc);
         }
       }
@@ -4173,6 +5387,32 @@ void gfx_send_chain(const void* data, u32 offset) {
     }
     decode_transfer(t, g_dec);
   }
+  // Gameplay chains can put the live background camera and foreground Merc
+  // requests after the expensive decoder's 512-transfer budget. Continue a
+  // lightweight bounded walk that handles only those native PC_PORT packets;
+  // running the full VIF/GIF diagnostics through this tail tanks frame pacing.
+  while (ottsel_mobile_pc_port_scan_can_continue(dma.ended(), count)) {
+    DmaTransfer t = dma.read_and_advance();
+    ++count;
+    const VifCode v0(t.vif0());
+    const VifCode v1(t.vif1());
+    if (v0.kind != VifCode::Kind::PC_PORT && v1.kind != VifCode::Kind::PC_PORT) {
+      continue;
+    }
+    capture_mobile_merc(t);
+    if (t.size_bytes == sizeof(OttselPcPortData)) {
+      g_mobile_camera_last_chain = g_chain_no;
+      g_mobile_camera_last_transfer = count;
+      capture_mobile_camera(t.data, t.size_bytes);
+    }
+  }
+  if (!dma.ended()) {
+    static unsigned int truncated_dma_logs = 0;
+    if (ottsel_mobile_log_within_budget(truncated_dma_logs++, 4)) {
+      lg::warn("OTTSEL DMA: PC_PORT tail scan hit bounded limit {} on chain {}",
+               kOttselMobilePcPortScanBudget, g_chain_no);
+    }
+  }
   // Jak 1's bucket-66 table entry carries Sprite3 setup; the populated
   // Sprite3 payload begins at the bucket-67 data address and the retained
   // product walk spans through bucket 68. Keep that walk distinct from the
@@ -4224,13 +5464,19 @@ void gfx_send_chain(const void* data, u32 offset) {
           break;
       }
       lg::info("OTTSEL SPRITE FRAME AGG ITEM: vsync={} item={} phase={} count={} tbp=0x{:x} "
-               "psm={} tw={} th={}",
+               "psm={} tw={} th={} tex0=0x{:016x} tex0-addr=0x{:016x}",
                sprite_frame_aggregate.vsync, item, phase_name, entry.count, entry.tbp,
-               entry.psm, entry.tw, entry.th);
+               entry.psm, entry.tw, entry.th, entry.tex0, entry.tex0_addr);
     }
     sprite_frame_aggregate.active = false;
   }
   if (sprite_bucket.addr && debug_bucket.addr) {
+    MobileSpriteFrameJak1 inherited_frame{};
+    MobileSpriteMatrix inherited_matrix{};
+    MobileSpriteHudMatrix inherited_hud{};
+    bool have_inherited_frame = false;
+    bool have_inherited_matrix = false;
+    bool have_inherited_hud = false;
     if (sprite_frame_aggregate.active && next_bucket.addr &&
         g_ottsel_ios_vsync_count == sprite_frame_aggregate.vsync) {
       MobileSpritePhaseSummary current{};
@@ -4263,7 +5509,9 @@ void gfx_send_chain(const void* data, u32 offset) {
     }
     const u32 sprite_drawn =
         render_mobile_sprite_bucket(data, sprite_bucket.addr, next_bucket.addr, g_raster,
-                                    g_chain_no);
+                                    g_chain_no, nullptr, nullptr, nullptr, &inherited_frame,
+                                    &inherited_matrix, &inherited_hud, &have_inherited_frame,
+                                    &have_inherited_matrix, &have_inherited_hud);
     static bool sprite_trace_requested = false;
     if (!sprite_trace_requested) {
       const std::string sprite_trace_path = ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite";
@@ -4277,6 +5525,19 @@ void gfx_send_chain(const void* data, u32 offset) {
                g_chain_no, g_ottsel_ios_vsync_count, sprite_drawn, sprite_bucket.addr,
                debug_bucket.addr);
       sprite_trace_requested = false;
+    }
+    if (have_inherited_frame && have_inherited_matrix) {
+      const u32 bucket67_sprite_drawn = render_mobile_sprite_bucket(
+          data, debug_bucket.addr, next_bucket.addr, g_raster, g_chain_no, &inherited_frame,
+          &inherited_matrix, have_inherited_hud ? &inherited_hud : nullptr);
+      if (bucket67_sprite_drawn > 0) {
+        static u32 bucket67_pass_logs = 0;
+        if (bucket67_pass_logs++ < 8) {
+          lg::info("OTTSEL SPRITE BUCKET67: Sprite3 pass consumed={} frame/matrix-inherited=1 "
+                   "hud-inherited={}",
+                   bucket67_sprite_drawn, have_inherited_hud);
+        }
+      }
     }
   }
   if (debug_bucket.addr && next_bucket.addr) {

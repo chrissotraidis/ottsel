@@ -1951,6 +1951,22 @@ void ottsel_ios_run_boot() {
     // S2.1: load the full game engine after the kernel so the game's
     // top-levels run and (in the full boot) the game processes start.
     ottsel_ios_link_cgo_from_bundle("GAME.CGO");
+    // Match the native DiskBoot path: GAME.CGO already contains the engine,
+    // art, and common packages.  Register those package markers before play
+    // allocates levels, otherwise alloc-levels! loads ART.CGO a second time
+    // and relocates shared texture pages into a different heap region.
+    jak1::kernel_packages->value =
+        jak1::new_pair(s7.offset + jak1_symbols::FIX_SYM_GLOBAL_HEAP,
+                       *((s7 + jak1_symbols::FIX_SYM_PAIR_TYPE).cast<u32>()),
+                       jak1::make_string_from_c("engine"), jak1::kernel_packages->value);
+    jak1::kernel_packages->value =
+        jak1::new_pair(s7.offset + jak1_symbols::FIX_SYM_GLOBAL_HEAP,
+                       *((s7 + jak1_symbols::FIX_SYM_PAIR_TYPE).cast<u32>()),
+                       jak1::make_string_from_c("art"), jak1::kernel_packages->value);
+    jak1::kernel_packages->value =
+        jak1::new_pair(s7.offset + jak1_symbols::FIX_SYM_GLOBAL_HEAP,
+                       *((s7 + jak1_symbols::FIX_SYM_PAIR_TYPE).cast<u32>()),
+                       jak1::make_string_from_c("common"), jak1::kernel_packages->value);
     // Ottsel S2.1 (BOT11): the native boot (kmachine.cpp InitMachineScheme,
     // DiskBoot && MasterUseKernel) sets *kernel-boot-message* to
     // DebugBootMessage ('play) and then calls the GOAL `(play)` function,

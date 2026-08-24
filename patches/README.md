@@ -9,7 +9,8 @@ Target tree: `open-goal/jak-project` pinned at
   goalc codegen (H1), no-emit runtime (H2), packaging shim (H2.5), and the
   Jak 1 host AOT boot to the GOAL kernel dispatcher loop (H3), plus the
   subsequent signed-native and S2.1 integration work, plus bounded macOS
-  title-renderer forensics. 60 files.
+  title-renderer forensics, macOS controls/audio acceptance, and the current
+  iPad no-IOP stream, scene snapshot, and bounded DMA consumer work. 178 files.
   Verified: applies clean to a fresh pin worktree and reverse-applies
   cleanly against the working worktree (`git apply --check --reverse`).
 

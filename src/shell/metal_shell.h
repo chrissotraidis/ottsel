@@ -84,7 +84,9 @@ void ottsel_metal_set_tie_camera(OttselMetal* m,
                                  const float pc_camera[16],
                                  const float camera_trans[4],
                                  const float fog_params[4],
-                                 const float fog_color[4]);
+                                 const float fog_color[4],
+                                 const float hvdf_offset[4],
+                                 float fog_constant);
 
 // Opaque TFRAG uses the same FR3 vertex layout and material records as TIE,
 // but occupies an independent mesh and color table so it can render first.
@@ -99,6 +101,16 @@ void ottsel_metal_set_tfrag_colors(OttselMetal* m,
                                    const unsigned char* rgba,
                                    unsigned int color_count);
 
+// Append CPU-skinned Merc geometry for the current frame. Vertices use the
+// same 32-byte layout as native TIE/TFRAG, sharing their camera/material path.
+void ottsel_metal_append_merc_mesh(OttselMetal* m,
+                                   const void* vertices,
+                                   unsigned int vertex_count,
+                                   const unsigned int* triangle_indices,
+                                   unsigned int index_count,
+                                   const OttselMetalTieDraw* draws,
+                                   unsigned int draw_count);
+
 // R1 bounded Sprite3 proof: upload one expanded native quad/triangle list.
 // Positions are already in drawable clip space; no CPU frame is produced.
 void ottsel_metal_set_sprite_mesh(OttselMetal* m,
@@ -107,6 +119,26 @@ void ottsel_metal_set_sprite_mesh(OttselMetal* m,
                                   unsigned int width,
                                   unsigned int height,
                                   int blended);
+
+// Same Sprite3 path with a bounded triangle-list vertex count. The texture
+// remains one live TEX0 identity for the submitted group.
+void ottsel_metal_set_sprite_mesh_n(OttselMetal* m,
+                                    const OttselMetalSpriteVertex* vertices,
+                                    unsigned int vertex_count,
+                                    const unsigned char* rgba,
+                                    unsigned int width,
+                                    unsigned int height,
+                                    int blended);
+
+// Append a native Sprite3 batch to the current present. The renderer clears
+// appended batches after encoding one frame; this preserves world/HUD order.
+void ottsel_metal_append_sprite_mesh_n(OttselMetal* m,
+                                       const OttselMetalSpriteVertex* vertices,
+                                       unsigned int vertex_count,
+                                       const unsigned char* rgba,
+                                       unsigned int width,
+                                       unsigned int height,
+                                       int blended);
 
 // T1 first increment: draw the visible touch overlay above the native scene.
 // The shared ShellPadInput seam remains the input owner; this only supplies

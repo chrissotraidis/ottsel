@@ -1,19 +1,17 @@
-# Ottsel iPadOS/iOS goal loop — post-macOS queue
+# Ottsel iPadOS/iOS goal loop — active mobile queue
 
-This is the next goal-based loop after the macOS playability gate closes. It
-does not authorize mobile work while the macOS gate is open.
+The current macOS build is the accepted behavioral reference. iPadOS is now
+the active product gate. `docs/BOT36_PROMPT.md` is authoritative.
 
-## Gate M0 — macOS handoff
+## Gate M0 — accepted macOS reference
 
-Pass only with a fresh cold start, coherent title/New Game/Village1/Training
-frames, native mouse+keyboard release-neutral evidence, lifecycle recovery,
-bounded soak, physical or explicitly documented audio route, and human audible
-confirmation. Retain the executable hash, raw log, input/lifecycle transcript,
-screenshots, fault scan, and package identity.
+Use the current macOS build as the scene, input responsiveness, and fluidity
+reference. Do not reopen macOS as a platform-order blocker unless a shared
+regression is proven.
 
-## Gate I0 — one iPad Simulator bootstrap
+## Gate I0 — one visible iPad Simulator bootstrap
 
-1. Shut down the macOS runtime; boot exactly one iPad Simulator.
+1. Boot exactly one iPad Simulator and visibly open the Simulator app.
 2. Build the signed no-emit app from the canonical `h3-jak1-host-boot.patch`
    plus the current maintained outer patches.
 3. Validate that no ROM, ISO, extracted game data, runtime executable pages,
@@ -22,38 +20,37 @@ screenshots, fault scan, and package identity.
    device UDID, build hash, and raw logs.
 
 Exit only when title and menu render coherently and the app accepts a real
-`title-wait → Start → Cross → Down×4 → Cross` replay. A blank, rotated, or
-partial frame remains non-playable.
+`title-wait → Start → Cross → Down×4 → Cross` replay. A blank, rotated,
+duplicated, partial, or debug-control frame remains non-playable.
 
-## Gate I1 — macOS/iPad source parity
+## Gate I1 — stable and fluid scene parity
 
-At the same validated phase, compare page/index texture lookup order, raw
-particle IDs, AdGif TEX0, native `first-tex0`/TBP, and GOAL Sprite3 source.
-If lookup diverges, trace page-directory/FR3/DGO ordering. If lookup matches,
-trace texture-object/data-family state, DMA ownership, and the first native
-consumer divergence. Do not change TBP, camera, shader, or Metal policy without
-a falsifiable source-side result.
+Close native TFRAG, TIE, MERC/Jak, Sprite3, Direct/HUD, material, depth, and
+composition defects one at a time against macOS. Require focused regressions,
+fresh inspected frames, frame-pacing evidence, and a bounded gameplay route.
 
-## Gate I2 — native visual composition
+## Gate I2 — audio and lifecycle
 
-Implement one native Direct/Sprite/material bucket at a time against the
-macOS reference. Each slice needs a focused fixture/regression, a fresh iPad
-frame, a same-phase macOS frame, and a fault/audio/lifecycle scan. Do not call
-the Simulator playable until Jak, title/menu, and the active scene compose
-coherently and accept input.
+Require nonzero game PCM, audible route acceptance, interruption handling,
+background/foreground recovery, neutral input after cancellation/disconnect,
+save persistence, and termination/relaunch.
 
-## Gate I3 — mobile input/audio/lifecycle
+## Gate I3 — DualShock 2 touch/controller frontend
 
-Prove touch-to-pad state, visible touch controls, cancellation, controller
-disconnect/reconnect, background/resume, neutral recovery, audio route and
-nonzero callback telemetry. Keep one Simulator and one runtime; never run
-macOS `gk` concurrently.
+Use `ref/sunpad` as the menu, interaction, persistence, and diagnostics
+reference, then design an Ottsel-specific PS2 layout. Require both sticks,
+D-pad, four face buttons, L1/L2/R1/R2, L3/R3, Start, Select, multitouch,
+pressed/neutral feedback, editable normalized layouts, controller handoff,
+and separate iPad/iPhone defaults. The persistent three-dot frontend owns
+Gameplay, Controls, Video, Audio, Data & Saves, and Diagnostics settings.
+Capture three visual directions before implementation and validate the chosen
+one live with accessibility labels and lifecycle tests.
 
 ## Gate P1 — iPhone parity
 
-Repeat the accepted iPad route on one iPhone Simulator profile, then compare
-orientation, safe areas, touch layout, audio, lifecycle, and performance. Any
-device-specific divergence gets a focused regression before a renderer change.
+Repeat the accepted iPad route on one iPhone Simulator profile, then rework the
+control layout for phone reachability and compare scene, safe areas, audio,
+lifecycle, persistence, and performance.
 
 ## Gate D1 — physical-device readiness
 

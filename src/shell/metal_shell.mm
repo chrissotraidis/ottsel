@@ -12,6 +12,7 @@
 
 #include <vector>
 #include <algorithm>
+#include <atomic>
 #include <deque>
 #include <mutex>
 #include <unordered_set>
@@ -19,6 +20,8 @@
 #include <string>
 
 #include "metal_shell.h"
+#include "mobile_scene_policy.h"
+#include "mobile_snapshot_store.h"
 #include "common/dma/ottsel_sprite_math.h"
 #include "ios_boot.h"
 
@@ -92,31 +95,51 @@ NSString* kTieShaderSource = @""
 "struct TieIn { float3 position [[attribute(0)]]; float2 uv [[attribute(1)]]; "
 "ushort color_index [[attribute(2)]]; };\n"
 "struct TieUniforms { float4 pc_camera[4]; float4 camera_trans; float4 fog_params; "
-"float4 fog_color; };\n"
-"struct TieMaterial { float alpha_min; };\n"
+"float4 fog_color; float4 hvdf_offset; float fog_constant; float camera_sign; };\n"
+"struct TieMaterial { float alpha_min; float alpha_max; uint fog_enable; uint decal; };\n"
 "struct TieOut { float4 position [[position]]; float2 uv; ushort color_index [[flat]]; "
 "float fogginess; float3 fog_color; };\n"
 "vertex TieOut tie_vs(TieIn in [[stage_in]], constant TieUniforms& u [[buffer(1)]]) {\n"
 "  float3 vert = in.position - u.camera_trans.xyz;\n"
+"  float original_w = 0.0;\n"
 "  float4 transformed = -u.pc_camera[3];\n"
 "  transformed.w = 0.0;\n"
 "  transformed -= u.pc_camera[0] * vert.x;\n"
 "  transformed -= u.pc_camera[1] * vert.y;\n"
 "  transformed -= u.pc_camera[2] * vert.z;\n"
-"  // The shared PC shader targets OpenGL's z range [-w,w]; Metal clips z\n"
-"  // in [0,w]. Preserve x/y/w and remap only depth.\n"
+"  original_w = transformed.w;\n"
+"  if (u.camera_sign < 0.0) {\n"
+"    float Q = u.fog_constant / transformed.w;\n"
+"    transformed.xyz *= Q;\n"
+"    transformed.xyz += u.hvdf_offset.xyz;\n"
+"    transformed.xy -= float2(2048.0);\n"
+"    transformed.z /= 8388608.0;\n"
+"    transformed.z -= 1.0;\n"
+"    transformed.x /= 256.0;\n"
+"    transformed.y /= -128.0;\n"
+"    transformed.xyz *= transformed.w;\n"
+"  }\n"
+"  transformed.y *= (512.0 / 448.0);\n"
 "  transformed.z = (transformed.z + transformed.w) * 0.5;\n"
 "  TieOut out; out.position = transformed; out.uv = in.uv; out.color_index = in.color_index; "
-"out.fogginess = 255.0 - clamp(-transformed.w + u.fog_params.x, u.fog_params.y, u.fog_params.z); "
+"out.fogginess = 255.0 - clamp(-original_w + u.fog_params.x, u.fog_params.y, u.fog_params.z); "
 "out.fog_color = u.fog_color.xyz; "
 "return out;\n"
 "}\n"
 "fragment float4 tie_fs(TieOut in [[stage_in]], texture2d<float> tex [[texture(0)]], "
 "constant uchar4* colors [[buffer(0)]], constant TieMaterial& material [[buffer(1)]], "
 "sampler tex_sampler [[sampler(0)]]) {\n"
-"  float4 color = tex.sample(tex_sampler, in.uv) * (float4(colors[in.color_index]) / 255.0) * 2.0;\n"
-"  if (color.a < material.alpha_min) discard_fragment();\n"
-"  color.rgb = mix(color.rgb, in.fog_color, clamp(in.fogginess * 0.0039215686, 0.0, 1.0));\n"
+"  float4 texel = tex.sample(tex_sampler, in.uv);\n"
+"  float4 tod = float4(colors[in.color_index]) / 255.0;\n"
+"  float4 color = float4(texel.rgb * (material.decal != 0 ? float3(1.0) : tod.rgb * 2.0),\n"
+  "                        texel.a * tod.a * 2.0);\n"
+  "  // Match tfrag3.vert: the interpolated time-of-day color is doubled once\n"
+  "  // before modulation with the texture. The reference shader does not apply\n"
+  "  // a second native-only alpha scale.\n"
+"  if (color.a < material.alpha_min || color.a > material.alpha_max) discard_fragment();\n"
+"  if (material.fog_enable != 0) {\n"
+"    color.rgb = mix(color.rgb, in.fog_color, clamp(in.fogginess * 0.0039215686, 0.0, 1.0));\n"
+"  }\n"
 "  return color;\n"
 "}\n";
 
@@ -125,10 +148,16 @@ struct TieUniforms {
   float camera_trans[4];
   float fog_params[4];
   float fog_color[4];
+  float hvdf_offset[4];
+  float fog_constant = 0.f;
+  float camera_sign = 1.f;
 };
 
 struct TieMaterial {
   float alpha_min;
+  float alpha_max;
+  uint32_t fog_enable;
+  uint32_t decal;
 };
 
 struct DirectFixtureVertex {
@@ -168,7 +197,40 @@ struct PendingSpriteUpload {
   std::vector<unsigned char> rgba;
   NSUInteger width = 0;
   NSUInteger height = 0;
+  NSUInteger vertex_count = 0;
   BOOL blended = NO;
+};
+
+struct NativeSpriteBatch {
+  id<MTLBuffer> vertices = nil;
+  id<MTLTexture> texture = nil;
+  NSUInteger vertex_count = 0;
+  BOOL blended = NO;
+  bool persistent = false;
+};
+
+// Metal's Simulator serializer asserts if a render encoder is released while
+// still open. Any Objective-C exception from a validation/resource call can
+// unwind presentRGBA before its normal endEncoding line, so make the lifetime
+// exception-safe as well as normally explicit.
+class RenderEncoderEndGuard {
+ public:
+  explicit RenderEncoderEndGuard(id<MTLRenderCommandEncoder> encoder) : m_encoder(encoder) {}
+  RenderEncoderEndGuard(const RenderEncoderEndGuard&) = delete;
+  RenderEncoderEndGuard& operator=(const RenderEncoderEndGuard&) = delete;
+  ~RenderEncoderEndGuard() {
+    end();
+  }
+  void end() {
+    if (m_encoder && !m_ended) {
+      [m_encoder endEncoding];
+      m_ended = true;
+    }
+  }
+
+ private:
+  id<MTLRenderCommandEncoder> m_encoder;
+  bool m_ended = false;
 };
 
 }  // namespace
@@ -182,6 +244,8 @@ struct PendingSpriteUpload {
 @property (nonatomic, strong) id<MTLRenderPipelineState> directNoDepthPipeline;
 @property (nonatomic, strong) id<MTLRenderPipelineState> directColorOnlyPipeline;
 @property (nonatomic, strong) id<MTLRenderPipelineState> tiePipeline;
+@property (nonatomic, strong) id<MTLRenderPipelineState> tieBlendPipeline;
+@property (nonatomic, strong) id<MTLDepthStencilState> tieNoWriteDepthState;
 @property (nonatomic, strong) CAMetalLayer* layer;
 @property (nonatomic, strong) id<MTLTexture> logTex;
 @property (nonatomic, strong) id<MTLTexture> directTex;
@@ -191,6 +255,7 @@ struct PendingSpriteUpload {
 @property (nonatomic, strong) id<MTLBuffer> spriteVertices;
 @property (nonatomic, strong) id<MTLTexture> spriteTex;
 @property (nonatomic) BOOL spriteActive;
+@property (nonatomic) NSUInteger spriteVertexCount;
 @property (nonatomic) BOOL spriteBlendEnabled;
 @property (nonatomic, strong) id<MTLBuffer> touchOverlayVertices;
 @property (nonatomic, strong) id<MTLTexture> touchOverlayTex;
@@ -200,6 +265,14 @@ struct PendingSpriteUpload {
 @property (nonatomic) BOOL directFixtureNoDepth;
 @property (nonatomic) BOOL directFixtureColorOnly;
 @property (nonatomic) BOOL directFixtureOffscreen;
+@property (nonatomic) BOOL sceneNoDepthProbe;
+@property (nonatomic) BOOL sceneNoTieProbe;
+@property (nonatomic) BOOL sceneNoMercProbe;
+@property (nonatomic) BOOL sceneNoTfragProbe;
+@property (nonatomic) BOOL sceneNoCpuFrameProbe;
+@property (nonatomic) BOOL sceneTieReferenceProjectionProbe;
+@property (nonatomic) BOOL sceneFirstBatchProbe;
+@property (nonatomic) NSUInteger sceneDrawLimit;
 @property (nonatomic, strong) id<MTLTexture> directOffscreenTarget;
 @property (nonatomic) unsigned long long directTex0;
 @property (nonatomic) unsigned long long directFrame;
@@ -225,6 +298,9 @@ struct PendingSpriteUpload {
 @property (nonatomic, strong) id<MTLBuffer> tfragVertices;
 @property (nonatomic, strong) id<MTLBuffer> tfragIndices;
 @property (nonatomic, strong) id<MTLBuffer> tfragColors;
+@property (nonatomic, strong) id<MTLBuffer> mercVertices;
+@property (nonatomic, strong) id<MTLBuffer> mercIndices;
+@property (nonatomic, strong) id<MTLBuffer> mercColors;
 @property (nonatomic, strong) NSMutableArray* tieTextures;
 @property (nonatomic, strong) NSArray* tieSamplers;
 @property (nonatomic, strong) id<MTLTexture> tieDepth;
@@ -234,6 +310,7 @@ struct PendingSpriteUpload {
 @property (nonatomic, strong) id<MTLDepthStencilState> overlayDepthState;
 @property (nonatomic) NSUInteger tieIndexCount;
 @property (nonatomic) NSUInteger tfragIndexCount;
+@property (nonatomic) NSUInteger mercIndexCount;
 @property (nonatomic) TieUniforms tieUniforms;
 - (BOOL)setupWithWindow:(SDL_Window*)win width:(int)w height:(int)h;
 - (void)presentRGBA:(const unsigned char*)rgba width:(int)w height:(int)h;
@@ -246,7 +323,9 @@ struct PendingSpriteUpload {
 - (void)setTieCamera:(const float*)pcCamera
           cameraTrans:(const float*)cameraTrans
            fogParams:(const float*)fogParams
-            fogColor:(const float*)fogColor;
+            fogColor:(const float*)fogColor
+          hvdfOffset:(const float*)hvdfOffset
+        fogConstant:(float)fogConstant;
 - (void)setTieTextureAtIndex:(NSUInteger)index
                          rgba:(const unsigned int*)rgba
                         width:(NSUInteger)width
@@ -266,6 +345,7 @@ struct PendingSpriteUpload {
          drawCount:(NSUInteger)drawCount
             tfrag:(BOOL)tfrag;
 - (void)drainMeshUploads;
+- (void)drainMercUploads;
 - (void)setTieColors:(const unsigned char*)rgba count:(NSUInteger)count;
 - (void)setTfragMesh:(const void*)vertices
          vertexCount:(NSUInteger)vertexCount
@@ -274,16 +354,31 @@ struct PendingSpriteUpload {
                draws:(const OttselMetalTieDraw*)draws
            drawCount:(NSUInteger)drawCount;
 - (void)setTfragColors:(const unsigned char*)rgba count:(NSUInteger)count;
+- (void)appendMercMesh:(const void*)vertices
+          vertexCount:(NSUInteger)vertexCount
+       triangleIndices:(const unsigned int*)indices
+            indexCount:(NSUInteger)indexCount
+                 draws:(const OttselMetalTieDraw*)draws
+             drawCount:(NSUInteger)drawCount;
 - (void)setSpriteMesh:(const OttselMetalSpriteVertex*)vertices
                  rgba:(const unsigned char*)rgba
                 width:(NSUInteger)width
                 height:(NSUInteger)height
                 blended:(BOOL)blended;
 - (void)setSpriteMeshNow:(const OttselMetalSpriteVertex*)vertices
+              vertexCount:(NSUInteger)vertexCount
                     rgba:(const unsigned char*)rgba
                    width:(NSUInteger)width
-                  height:(NSUInteger)height
+                 height:(NSUInteger)height
                  blended:(BOOL)blended;
+- (void)appendSpriteMeshNow:(const OttselMetalSpriteVertex*)vertices
+                vertexCount:(NSUInteger)vertexCount
+                       rgba:(const unsigned char*)rgba
+                      width:(NSUInteger)width
+                     height:(NSUInteger)height
+                    blended:(BOOL)blended;
+- (void)clearSpriteBatches;
+- (void)clearTransientSpriteBatches;
 - (void)drainSpriteUploads;
 - (void)setTouchOverlay:(const OttselMetalOverlayVertex*)vertices
                   count:(NSUInteger)count;
@@ -307,11 +402,19 @@ struct PendingSpriteUpload {
   std::deque<PendingDirectUpload> _pendingDirectUploads;
   std::unordered_set<unsigned long long> _queuedDirectUploadKeys;
   std::mutex _tieUploadMutex;
+  std::mutex _tieUniformMutex;
   std::deque<PendingTieUpload> _pendingTieUploads;
   std::deque<PendingColorUpload> _pendingColorUploads;
   std::deque<PendingMeshUpload> _pendingMeshUploads;
   std::mutex _spriteUploadMutex;
   std::deque<PendingSpriteUpload> _pendingSpriteUploads;
+  OttselMobileSnapshotStore<NativeSpriteBatch> _spriteBatches;
+  std::vector<OttselMetalTieDraw> _mercDraws;
+  std::mutex _mercMutex;
+  std::vector<unsigned char> _pendingMercVertices;
+  std::vector<unsigned int> _pendingMercIndices;
+  std::vector<OttselMetalTieDraw> _pendingMercDraws;
+  std::vector<unsigned char> _pendingMercColors;
 }
 
 - (BOOL)setupWithWindow:(SDL_Window*)win width:(int)w height:(int)h {
@@ -470,13 +573,34 @@ struct PendingSpriteUpload {
     NSLog(@"ottsel metal: TIE pipeline error %@", err);
     return NO;
   }
+  MTLRenderPipelineDescriptor* tieBlendPd = [tiePd copy];
+  MTLRenderPipelineColorAttachmentDescriptor* tieBlendColor = tieBlendPd.colorAttachments[0];
+  tieBlendColor.blendingEnabled = YES;
+  tieBlendColor.rgbBlendOperation = MTLBlendOperationAdd;
+  tieBlendColor.alphaBlendOperation = MTLBlendOperationAdd;
+  tieBlendColor.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
+  tieBlendColor.destinationRGBBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
+  tieBlendColor.sourceAlphaBlendFactor = MTLBlendFactorOne;
+  tieBlendColor.destinationAlphaBlendFactor = MTLBlendFactorZero;
+  self.tieBlendPipeline = [device newRenderPipelineStateWithDescriptor:tieBlendPd error:&err];
+  if (!self.tieBlendPipeline) {
+    NSLog(@"ottsel metal: TIE blend pipeline error %@", err);
+    return NO;
+  }
   MTLDepthStencilDescriptor* depthDesc = [[MTLDepthStencilDescriptor alloc] init];
-  // PC/OpenGL's depth value is remapped to Metal's [0,1] range in tie_vs;
-  // normal TIE DrawModes use GEQUAL and clear to zero.
-  depthDesc.depthCompareFunction = MTLCompareFunctionGreaterEqual;
+  // tie_vs remaps PC/OpenGL depth into Metal's forward [0,1] range;
+  // use the matching forward-Z compare and clear value.
+  depthDesc.depthCompareFunction = MTLCompareFunctionLessEqual;
   depthDesc.depthWriteEnabled = YES;
   self.tieDepthState = [device newDepthStencilStateWithDescriptor:depthDesc];
+  depthDesc.depthWriteEnabled = NO;
+  self.tieNoWriteDepthState = [device newDepthStencilStateWithDescriptor:depthDesc];
+  depthDesc.depthWriteEnabled = YES;
   self.directDepthState = self.tieDepthState;
+  // Sprite3's maintained Jak 1 GS prefix uses GEQUAL and leaves the scene
+  // depth buffer untouched. TIE uses forward-Z LessEqual above; do not reuse
+  // that compare function for Sprite3 just because both share the attachment.
+  depthDesc.depthCompareFunction = MTLCompareFunctionGreaterEqual;
   depthDesc.depthWriteEnabled = ottsel::sprite3_depth_write_enabled();
   self.spriteDepthState = [device newDepthStencilStateWithDescriptor:depthDesc];
   depthDesc.depthCompareFunction = MTLCompareFunctionAlways;
@@ -516,7 +640,13 @@ struct PendingSpriteUpload {
 }
 
 - (void)presentRGBA:(const unsigned char*)rgba width:(int)w height:(int)h {
-  if (!rgba && !self.directFixtureActive) {
+  // MTLSimDriver serializes this byte range over XPC. Reject malformed
+  // callers before replaceRegion can turn a bad signed dimension into an
+  // unbounded memmove (the 2026-08-21 presentRGBA crash).
+  constexpr int kMaxPresentDimension = 4096;
+  if (!self.directFixtureActive &&
+      (!rgba || w <= 0 || h <= 0 || w > kMaxPresentDimension || h > kMaxPresentDimension)) {
+    NSLog(@"ottsel metal: rejected invalid RGBA frame ptr=%p size=%dx%d", rgba, w, h);
     return;
   }
   const std::string readback_state_trigger = ottsel_ios_writable_dir() +
@@ -542,6 +672,7 @@ struct PendingSpriteUpload {
   [self drainTieTextureUploads];
   [self drainColorUploads];
   [self drainMeshUploads];
+  [self drainMercUploads];
   [self drainSpriteUploads];
   // Keep the CAMetalLayer drawableSize in sync with the actual layer bounds
   // (the simulator's windowed presentation reports the pre-layout 480x320
@@ -638,6 +769,84 @@ struct PendingSpriteUpload {
       NSLog(@"ottsel metal: Direct fixture offscreen submission enabled");
     }
   }
+  if (!self.sceneNoDepthProbe) {
+    const std::string scene_no_depth_trigger = ottsel_ios_writable_dir() +
+                                               "ottsel-trace-metal-scene-no-depth";
+    if (access(scene_no_depth_trigger.c_str(), F_OK) == 0) {
+      unlink(scene_no_depth_trigger.c_str());
+      self.sceneNoDepthProbe = YES;
+      NSLog(@"ottsel metal: scene no-depth probe enabled");
+    }
+  }
+  if (!self.sceneNoTieProbe) {
+    const std::string scene_no_tie_trigger = ottsel_ios_writable_dir() +
+                                              "ottsel-trace-metal-scene-no-tie";
+    if (access(scene_no_tie_trigger.c_str(), F_OK) == 0) {
+      unlink(scene_no_tie_trigger.c_str());
+      self.sceneNoTieProbe = YES;
+      NSLog(@"ottsel metal: scene no-TIE probe enabled");
+    }
+  }
+  if (!self.sceneNoMercProbe) {
+    const std::string scene_no_merc_trigger = ottsel_ios_writable_dir() +
+                                               "ottsel-trace-metal-scene-no-merc";
+    if (access(scene_no_merc_trigger.c_str(), F_OK) == 0) {
+      unlink(scene_no_merc_trigger.c_str());
+      self.sceneNoMercProbe = YES;
+      NSLog(@"ottsel metal: scene no-MERC probe enabled");
+    }
+  }
+  if (!self.sceneNoTfragProbe) {
+    const std::string scene_no_tfrag_trigger = ottsel_ios_writable_dir() +
+                                                "ottsel-trace-metal-scene-no-tfrag";
+    if (access(scene_no_tfrag_trigger.c_str(), F_OK) == 0) {
+      unlink(scene_no_tfrag_trigger.c_str());
+      self.sceneNoTfragProbe = YES;
+      NSLog(@"ottsel metal: scene no-TFRAG probe enabled");
+    }
+  }
+  if (!self.sceneNoCpuFrameProbe) {
+    const std::string scene_no_cpu_frame_trigger = ottsel_ios_writable_dir() +
+                                                   "ottsel-trace-metal-scene-no-cpu-frame";
+    if (access(scene_no_cpu_frame_trigger.c_str(), F_OK) == 0) {
+      unlink(scene_no_cpu_frame_trigger.c_str());
+      self.sceneNoCpuFrameProbe = YES;
+      NSLog(@"ottsel metal: scene no-CPU-frame probe enabled");
+    }
+  }
+  if (!self.sceneTieReferenceProjectionProbe) {
+    const std::string scene_tie_reference_projection_trigger =
+        ottsel_ios_writable_dir() + "ottsel-trace-metal-scene-tie-reference-projection";
+    if (access(scene_tie_reference_projection_trigger.c_str(), F_OK) == 0) {
+      unlink(scene_tie_reference_projection_trigger.c_str());
+      self.sceneTieReferenceProjectionProbe = YES;
+      NSLog(@"ottsel metal: scene TIE reference-projection probe enabled");
+    }
+  }
+  if (!self.sceneFirstBatchProbe) {
+    const std::string scene_first_batch_trigger = ottsel_ios_writable_dir() +
+                                                  "ottsel-trace-metal-scene-first-batch";
+    if (access(scene_first_batch_trigger.c_str(), F_OK) == 0) {
+      unlink(scene_first_batch_trigger.c_str());
+      self.sceneFirstBatchProbe = YES;
+      NSLog(@"ottsel metal: scene first-batch probe enabled");
+    }
+  }
+  if (!self.sceneDrawLimit) {
+    const std::string scene_draw_limit_trigger =
+        ottsel_ios_writable_dir() + "ottsel-trace-metal-scene-draw-limit";
+    if (access(scene_draw_limit_trigger.c_str(), F_OK) == 0) {
+      unsigned long limit = 0;
+      if (FILE* file = fopen(scene_draw_limit_trigger.c_str(), "r")) {
+        fscanf(file, "%lu", &limit);
+        fclose(file);
+      }
+      unlink(scene_draw_limit_trigger.c_str());
+      self.sceneDrawLimit = (NSUInteger)std::min<unsigned long>(limit ? limit : 1, 1024);
+      NSLog(@"ottsel metal: scene draw-limit probe enabled limit=%lu",
+            (unsigned long)self.sceneDrawLimit);
+    }
+  }
   id<CAMetalDrawable> drawable = [self.layer nextDrawable];
   if (!drawable) {
     return;
@@ -680,28 +889,50 @@ struct PendingSpriteUpload {
     pass.depthAttachment.texture = self.tieDepth;
     pass.depthAttachment.loadAction = MTLLoadActionClear;
     pass.depthAttachment.storeAction = MTLStoreActionDontCare;
-    pass.depthAttachment.clearDepth = 0.0;
+    pass.depthAttachment.clearDepth = 1.0;
   }
 
   id<MTLCommandBuffer> cb = [self.queue commandBuffer];
   id<MTLRenderCommandEncoder> enc = [cb renderCommandEncoderWithDescriptor:pass];
-  if (!self.directFixtureIsolated) {
+  RenderEncoderEndGuard encoder_guard(enc);
+  // Camera updates arrive on the game thread. Snapshot the complete block
+  // before encoding so no draw can observe a partially copied matrix/fog set.
+  TieUniforms draw_uniforms;
+  {
+    std::lock_guard<std::mutex> lock(_tieUniformMutex);
+    draw_uniforms = _tieUniforms;
+  }
+  if (!self.directFixtureIsolated && !self.sceneNoCpuFrameProbe) {
     [enc setRenderPipelineState:self.pipeline];
     [enc setFragmentTexture:self.logTex atIndex:0];
     [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
   }
   const auto draw_mesh = ^(id<MTLBuffer> vertices, id<MTLBuffer> indices, id<MTLBuffer> colors,
                            NSUInteger index_count,
-                           const std::vector<OttselMetalTieDraw>& draws) {
+                           const std::vector<OttselMetalTieDraw>& draws,
+                           bool tfrag_mesh) {
     if (!vertices || !indices || !colors || !index_count) {
       return;
     }
-    [enc setRenderPipelineState:self.tiePipeline];
-    [enc setDepthStencilState:self.tieDepthState];
     [enc setVertexBuffer:vertices offset:0 atIndex:0];
-    [enc setVertexBytes:&_tieUniforms length:sizeof(_tieUniforms) atIndex:1];
+    TieUniforms mesh_uniforms = draw_uniforms;
+    // Normal TIE uses the same TFRAG3 shader and derived pc_camera in the
+    // desktop renderer. Only the separate wind-TIE path consumes raw camera
+    // matrices; this native mesh contains normal static draws.
+    // Keep the production path on the native derived-pc-camera equation. The
+    // reference-projection switch is a one-shot falsification probe only; it
+    // must not silently become the shipping camera policy.
+    mesh_uniforms.camera_sign = self.sceneTieReferenceProjectionProbe ? -1.f : 1.f;
+    [enc setVertexBytes:&mesh_uniforms length:sizeof(mesh_uniforms) atIndex:1];
     [enc setFragmentBuffer:colors offset:0 atIndex:0];
-    for (const auto& draw : draws) {
+    for (size_t draw_index = 0; draw_index < draws.size(); ++draw_index) {
+      if (self.sceneFirstBatchProbe && draw_index > 0) {
+        break;
+      }
+      if (self.sceneDrawLimit && draw_index >= self.sceneDrawLimit) {
+        break;
+      }
+      const auto& draw = draws[draw_index];
       if (draw.texture_index < 0 || (NSUInteger)draw.texture_index >= self.tieTextures.count) {
         continue;
       }
@@ -717,7 +948,22 @@ struct PendingSpriteUpload {
       const float alpha_min = alpha_test && alpha_test_kind == 2
                                   ? ((draw.mode >> 8) & 0xff) / 127.f
                                   : 0.f;
-      TieMaterial material{alpha_min};
+      const unsigned int alpha_fail = (draw.mode >> 21) & 3u;
+      const bool alpha_blend_enabled = (draw.mode & (1u << 20)) != 0 &&
+                                       ((draw.mode >> 24) & 7u) != 0;
+      const bool source_depth_write_enabled = (draw.mode & 1u) != 0;
+      // OpenGL's NEVER + FB_ONLY setup keeps color but disables depth writes.
+      const bool depth_write_enabled =
+          source_depth_write_enabled && !(alpha_test && alpha_test_kind == 0 && alpha_fail == 1);
+      [enc setRenderPipelineState:alpha_blend_enabled ? self.tieBlendPipeline
+                                                       : self.tiePipeline];
+      [enc setDepthStencilState:self.sceneNoDepthProbe
+                                  ? self.overlayDepthState
+                                  : (depth_write_enabled ? self.tieDepthState
+                                                         : self.tieNoWriteDepthState)];
+      const bool fog_enable = (draw.mode & (1u << 29)) != 0;
+      const bool decal = (draw.mode & (1u << 28)) == 0;
+      TieMaterial material{alpha_min, 10.f, fog_enable ? 1u : 0u, decal ? 1u : 0u};
       [enc setFragmentTexture:texture atIndex:0];
       [enc setFragmentSamplerState:self.tieSamplers[sampler_idx] atIndex:0];
       [enc setFragmentBytes:&material length:sizeof(material) atIndex:1];
@@ -726,32 +972,63 @@ struct PendingSpriteUpload {
                        indexType:MTLIndexTypeUInt32
                       indexBuffer:indices
                indexBufferOffset:draw.index_offset * sizeof(unsigned int)];
+      // OpenGL's FB_ONLY alpha-fail path draws passing fragments with depth
+      // writes, then draws failing fragments again without depth writes.
+      if (alpha_test && alpha_test_kind == 2 && alpha_fail == 1 &&
+          source_depth_write_enabled) {
+        [enc setDepthStencilState:self.sceneNoDepthProbe ? self.overlayDepthState
+                                                         : self.tieNoWriteDepthState];
+        TieMaterial alpha_fail_material{-10.f, alpha_min, fog_enable ? 1u : 0u,
+                                         decal ? 1u : 0u};
+        [enc setFragmentBytes:&alpha_fail_material length:sizeof(alpha_fail_material) atIndex:1];
+        [enc drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                        indexCount:draw.index_count
+                         indexType:MTLIndexTypeUInt32
+                        indexBuffer:indices
+                 indexBufferOffset:draw.index_offset * sizeof(unsigned int)];
+      }
     }
   };
   // Desktop bucket order draws opaque background TFRAG before normal TIE.
   // They share the exact camera/material shader but have separate meshes and
   // time-of-day color tables.
-  if (!self.directFixtureIsolated) {
+  if (!self.directFixtureIsolated && !self.sceneNoTfragProbe) {
     draw_mesh(self.tfragVertices, self.tfragIndices, self.tfragColors, self.tfragIndexCount,
-              _tfragDraws);
-    draw_mesh(self.tieVertices, self.tieIndices, self.tieColors, self.tieIndexCount, _tieDraws);
+              _tfragDraws, true);
   }
-  if (self.spriteActive && !self.directFixtureIsolated) {
-    [enc setRenderPipelineState:self.spriteBlendEnabled ? self.directBlendPipeline
-                                                        : self.directPipeline];
-    [enc setDepthStencilState:self.spriteDepthState];
-    [enc setVertexBuffer:self.spriteVertices offset:0 atIndex:0];
-    [enc setFragmentTexture:self.spriteTex atIndex:0];
-    [enc setFragmentSamplerState:self.directSampler atIndex:0];
+  if (!self.directFixtureIsolated && !self.sceneNoTieProbe) {
+    draw_mesh(self.tieVertices, self.tieIndices, self.tieColors, self.tieIndexCount, _tieDraws,
+              false);
+  }
+  if (!self.directFixtureIsolated && self.mercIndexCount && !self.sceneNoMercProbe) {
+    draw_mesh(self.mercVertices, self.mercIndices, self.mercColors, self.mercIndexCount,
+              _mercDraws, false);
+  }
+  const auto sprite_batches = _spriteBatches.snapshot();
+  static unsigned int sprite_draw_logs = 0;
+  if (!sprite_batches.empty() && !self.directFixtureIsolated) {
     const unsigned int sprite_state[5] = {ottsel::sprite3_alpha_test_enabled(),
                                           ottsel::sprite3_alpha_test_gequal(),
                                           ottsel::sprite3_primary_alpha_ref(), 1, 0};
-    [enc setFragmentBytes:sprite_state length:sizeof(sprite_state) atIndex:1];
-    [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:6];
-    NSLog(@"ottsel metal: Sprite3 native draw vertices=6 blend=%s depth=gequal/no-write "
-          "alpha-test=gequal/%u/%u tcc=1 tfx=0 texture=hit",
-          self.spriteBlendEnabled ? "enabled" : "disabled",
-          ottsel::sprite3_alpha_test_gequal(), ottsel::sprite3_primary_alpha_ref());
+    for (const auto& sprite : sprite_batches) {
+      [enc setRenderPipelineState:sprite.blended ? self.directBlendPipeline
+                                                 : self.directPipeline];
+      [enc setDepthStencilState:self.sceneNoDepthProbe ? self.overlayDepthState
+                                                       : self.spriteDepthState];
+      [enc setVertexBuffer:sprite.vertices offset:0 atIndex:0];
+      [enc setFragmentTexture:sprite.texture atIndex:0];
+      [enc setFragmentSamplerState:self.directSampler atIndex:0];
+      [enc setFragmentBytes:sprite_state length:sizeof(sprite_state) atIndex:1];
+      [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:sprite.vertex_count];
+      if (ottsel_mobile_log_within_budget(sprite_draw_logs, 12)) {
+        ++sprite_draw_logs;
+        NSLog(@"ottsel metal: Sprite3 native draw vertices=%lu blend=%s batches=%lu depth=gequal/no-write "
+              "alpha-test=gequal/%u/%u tcc=1 tfx=0 texture=hit",
+              (unsigned long)sprite.vertex_count, sprite.blended ? "enabled" : "disabled",
+              (unsigned long)sprite_batches.size(), ottsel::sprite3_alpha_test_gequal(),
+              ottsel::sprite3_primary_alpha_ref());
+      }
+    }
   }
   // D0-NORMAL Direct owns the same final drawable as the existing composition.
   // Append it after TFRAG/TIE in this encoder; never replace the scene with a
@@ -825,7 +1102,7 @@ struct PendingSpriteUpload {
     [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0
             vertexCount:self.touchOverlayVertexCount];
   }
-  [enc endEncoding];
+  encoder_guard.end();
   // One-shot diagnostic readback only. This copies the actual composed Metal
   // drawable after all active buckets have rendered; it never feeds the
   // product frame path or OttselRaster. The trigger is consumed once so a
@@ -898,6 +1175,7 @@ struct PendingSpriteUpload {
   }
   [cb presentDrawable:drawable];
   [cb commit];
+  [self clearTransientSpriteBatches];
 }
 
 - (void)setTieMesh:(const void*)vertices
@@ -918,6 +1196,12 @@ struct PendingSpriteUpload {
   }
   {
     std::lock_guard<std::mutex> lock(_tieUploadMutex);
+    // A newer camera snapshot supersedes stale TIE geometry still waiting for
+    // the presentation thread; retain only the newest snapshot for this family.
+    _pendingMeshUploads.erase(
+        std::remove_if(_pendingMeshUploads.begin(), _pendingMeshUploads.end(),
+                       [](const PendingMeshUpload& pending) { return !pending.tfrag; }),
+        _pendingMeshUploads.end());
     _pendingMeshUploads.push_back(std::move(upload));
   }
 }
@@ -925,14 +1209,19 @@ struct PendingSpriteUpload {
 - (void)setTieCamera:(const float*)pcCamera
           cameraTrans:(const float*)cameraTrans
            fogParams:(const float*)fogParams
-            fogColor:(const float*)fogColor {
-  if (!pcCamera || !cameraTrans || !fogParams || !fogColor) {
+           fogColor:(const float*)fogColor
+         hvdfOffset:(const float*)hvdfOffset
+       fogConstant:(float)fogConstant {
+  if (!pcCamera || !cameraTrans || !fogParams || !fogColor || !hvdfOffset) {
     return;
   }
+  std::lock_guard<std::mutex> lock(_tieUniformMutex);
   memcpy(_tieUniforms.pc_camera, pcCamera, sizeof(_tieUniforms.pc_camera));
   memcpy(_tieUniforms.camera_trans, cameraTrans, sizeof(_tieUniforms.camera_trans));
   memcpy(_tieUniforms.fog_params, fogParams, sizeof(_tieUniforms.fog_params));
   memcpy(_tieUniforms.fog_color, fogColor, sizeof(_tieUniforms.fog_color));
+  memcpy(_tieUniforms.hvdf_offset, hvdfOffset, sizeof(_tieUniforms.hvdf_offset));
+  _tieUniforms.fog_constant = fogConstant;
 }
 
 - (void)setTieTextureNowAtIndex:(NSUInteger)index
@@ -1004,6 +1293,10 @@ struct PendingSpriteUpload {
   upload.rgba.assign(rgba, rgba + count * 4);
   {
     std::lock_guard<std::mutex> lock(_tieUploadMutex);
+    _pendingColorUploads.erase(
+        std::remove_if(_pendingColorUploads.begin(), _pendingColorUploads.end(),
+                       [](const PendingColorUpload& pending) { return !pending.tfrag; }),
+        _pendingColorUploads.end());
     _pendingColorUploads.push_back(std::move(upload));
   }
 }
@@ -1097,6 +1390,46 @@ struct PendingSpriteUpload {
   }
 }
 
+- (void)drainMercUploads {
+  std::vector<unsigned char> vertices;
+  std::vector<unsigned int> indices;
+  std::vector<OttselMetalTieDraw> draws;
+  std::vector<unsigned char> colors;
+  {
+    std::lock_guard<std::mutex> lock(_mercMutex);
+    vertices = std::move(_pendingMercVertices);
+    indices = std::move(_pendingMercIndices);
+    draws = std::move(_pendingMercDraws);
+    colors = std::move(_pendingMercColors);
+    _pendingMercVertices.clear();
+    _pendingMercIndices.clear();
+    _pendingMercDraws.clear();
+    _pendingMercColors.clear();
+  }
+  if (vertices.empty() || indices.empty() || draws.empty()) {
+    self.mercVertices = nil;
+    self.mercIndices = nil;
+    self.mercColors = nil;
+    self.mercIndexCount = 0;
+    _mercDraws.clear();
+    return;
+  }
+  self.mercVertices = [self.device newBufferWithBytes:vertices.data()
+                                                  length:vertices.size()
+                                                 options:MTLResourceStorageModeShared];
+  self.mercIndices = [self.device newBufferWithBytes:indices.data()
+                                                 length:indices.size() * sizeof(unsigned int)
+                                                options:MTLResourceStorageModeShared];
+  self.mercColors = [self.device newBufferWithBytes:colors.data()
+                                                length:colors.size()
+                                               options:MTLResourceStorageModeShared];
+  self.mercIndexCount = indices.size();
+  _mercDraws = std::move(draws);
+  NSLog(@"ottsel metal: MERC mesh vertices=%lu triangles=%lu draws=%lu",
+        (unsigned long)(vertices.size() / 32), (unsigned long)(indices.size() / 3),
+        (unsigned long)_mercDraws.size());
+}
+
 - (void)setTfragMesh:(const void*)vertices
          vertexCount:(NSUInteger)vertexCount
       triangleIndices:(const unsigned int*)indices
@@ -1116,6 +1449,10 @@ struct PendingSpriteUpload {
   }
   {
     std::lock_guard<std::mutex> lock(_tieUploadMutex);
+    _pendingMeshUploads.erase(
+        std::remove_if(_pendingMeshUploads.begin(), _pendingMeshUploads.end(),
+                       [](const PendingMeshUpload& pending) { return pending.tfrag; }),
+        _pendingMeshUploads.end());
     _pendingMeshUploads.push_back(std::move(upload));
   }
 }
@@ -1129,7 +1466,38 @@ struct PendingSpriteUpload {
   upload.tfrag = true;
   {
     std::lock_guard<std::mutex> lock(_tieUploadMutex);
+    _pendingColorUploads.erase(
+        std::remove_if(_pendingColorUploads.begin(), _pendingColorUploads.end(),
+                       [](const PendingColorUpload& pending) { return pending.tfrag; }),
+        _pendingColorUploads.end());
     _pendingColorUploads.push_back(std::move(upload));
+  }
+}
+
+- (void)appendMercMesh:(const void*)vertices
+          vertexCount:(NSUInteger)vertexCount
+       triangleIndices:(const unsigned int*)indices
+            indexCount:(NSUInteger)indexCount
+                 draws:(const OttselMetalTieDraw*)draws
+             drawCount:(NSUInteger)drawCount {
+  if (!vertices || !vertexCount || !indices || !indexCount || !draws || !drawCount) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(_mercMutex);
+  const unsigned int vertex_base = _pendingMercVertices.size() / 32;
+  const unsigned int index_base = _pendingMercIndices.size();
+  _pendingMercVertices.insert(_pendingMercVertices.end(), (const unsigned char*)vertices,
+                              (const unsigned char*)vertices + vertexCount * 32);
+  for (NSUInteger i = 0; i < indexCount; ++i) {
+    _pendingMercIndices.push_back(indices[i] + vertex_base);
+  }
+  for (NSUInteger i = 0; i < drawCount; ++i) {
+    auto draw = draws[i];
+    draw.index_offset += index_base;
+    _pendingMercDraws.push_back(draw);
+  }
+  if (_pendingMercColors.empty()) {
+    _pendingMercColors = {255, 255, 255, 255};
   }
 }
 
@@ -1143,6 +1511,7 @@ struct PendingSpriteUpload {
   }
   PendingSpriteUpload upload;
   upload.vertices.assign(vertices, vertices + 6);
+  upload.vertex_count = 6;
   upload.rgba.assign(rgba, rgba + width * height * 4);
   upload.width = width;
   upload.height = height;
@@ -1154,11 +1523,29 @@ struct PendingSpriteUpload {
 }
 
 - (void)setSpriteMeshNow:(const OttselMetalSpriteVertex*)vertices
+              vertexCount:(NSUInteger)vertexCount
                     rgba:(const unsigned char*)rgba
                    width:(NSUInteger)width
                   height:(NSUInteger)height
                  blended:(BOOL)blended {
-  if (!vertices || !rgba || !width || !height || !self.device || !self.directPipeline) {
+  [self clearSpriteBatches];
+  [self appendSpriteMeshNow:vertices
+                 vertexCount:vertexCount
+                        rgba:rgba
+                       width:width
+                      height:height
+                     blended:blended];
+  _spriteBatches.mutate_last([](NativeSpriteBatch& batch) { batch.persistent = true; });
+}
+
+- (void)appendSpriteMeshNow:(const OttselMetalSpriteVertex*)vertices
+                vertexCount:(NSUInteger)vertexCount
+                       rgba:(const unsigned char*)rgba
+                      width:(NSUInteger)width
+                     height:(NSUInteger)height
+                    blended:(BOOL)blended {
+  if (!vertices || !vertexCount || !rgba || !width || !height || !self.device ||
+      !self.directPipeline) {
     return;
   }
   MTLTextureDescriptor* desc = [MTLTextureDescriptor
@@ -1175,13 +1562,21 @@ struct PendingSpriteUpload {
              mipmapLevel:0
                withBytes:rgba
              bytesPerRow:width * 4];
+  id<MTLBuffer> vertex_buffer = [self.device
+      newBufferWithBytes:vertices
+                   length:vertexCount * sizeof(OttselMetalSpriteVertex)
+                  options:MTLResourceStorageModeShared];
+  if (!vertex_buffer) {
+    return;
+  }
+  _spriteBatches.append({vertex_buffer, texture, vertexCount, blended, false});
   self.spriteTex = texture;
-  self.spriteVertices = [self.device newBufferWithBytes:vertices
-                                                   length:6 * sizeof(OttselMetalSpriteVertex)
-                                                  options:MTLResourceStorageModeShared];
+  self.spriteVertices = vertex_buffer;
+  self.spriteVertexCount = vertexCount;
   self.spriteBlendEnabled = blended;
-  self.spriteActive = self.spriteVertices != nil;
-  if (self.spriteActive) {
+  self.spriteActive = YES;
+  static std::atomic<bool> sprite_ready_written = false;
+  if (self.spriteActive && !sprite_ready_written.exchange(true)) {
     const std::string ready_path = ottsel_ios_writable_dir() +
                                     "ottsel-native-sprite-ready";
     if (FILE* ready = fopen(ready_path.c_str(), "wb")) {
@@ -1191,14 +1586,32 @@ struct PendingSpriteUpload {
   }
   float min_x = vertices[0].pos[0], max_x = vertices[0].pos[0];
   float min_y = vertices[0].pos[1], max_y = vertices[0].pos[1];
-  for (NSUInteger i = 1; i < 6; ++i) {
+  for (NSUInteger i = 1; i < vertexCount; ++i) {
     min_x = std::min(min_x, vertices[i].pos[0]);
     max_x = std::max(max_x, vertices[i].pos[0]);
     min_y = std::min(min_y, vertices[i].pos[1]);
     max_y = std::max(max_y, vertices[i].pos[1]);
   }
-  NSLog(@"ottsel metal: Sprite3 native bounds=%.3f..%.3f,%.3f..%.3f texture=%lux%lu",
-        min_x, max_x, min_y, max_y, (unsigned long)width, (unsigned long)height);
+  static unsigned int sprite_bounds_logs = 0;
+  if (ottsel_mobile_log_within_budget(sprite_bounds_logs, 8)) {
+    ++sprite_bounds_logs;
+    NSLog(@"ottsel metal: Sprite3 native bounds=%.3f..%.3f,%.3f..%.3f vertices=%lu texture=%lux%lu",
+          min_x, max_x, min_y, max_y, (unsigned long)vertexCount, (unsigned long)width,
+          (unsigned long)height);
+  }
+}
+
+- (void)clearSpriteBatches {
+  _spriteBatches.clear();
+  self.spriteVertices = nil;
+  self.spriteTex = nil;
+  self.spriteVertexCount = 0;
+  self.spriteActive = NO;
+}
+
+- (void)clearTransientSpriteBatches {
+  _spriteBatches.erase_if(
+      [](const NativeSpriteBatch& batch) { return !batch.persistent; });
 }
 
 - (void)drainSpriteUploads {
@@ -1214,6 +1627,7 @@ struct PendingSpriteUpload {
       _pendingSpriteUploads.pop_front();
     }
     [self setSpriteMeshNow:upload.vertices.data()
+                vertexCount:upload.vertex_count
                        rgba:upload.rgba.data()
                       width:upload.width
                      height:upload.height
@@ -1545,7 +1959,9 @@ void ottsel_metal_set_tie_camera(OttselMetal* m,
                                  const float pc_camera[16],
                                  const float camera_trans[4],
                                  const float fog_params[4],
-                                 const float fog_color[4]) {
+                                 const float fog_color[4],
+                                 const float hvdf_offset[4],
+                                 float fog_constant) {
   if (!m) {
     return;
   }
@@ -1554,7 +1970,9 @@ void ottsel_metal_set_tie_camera(OttselMetal* m,
     [r setTieCamera:pc_camera
          cameraTrans:camera_trans
           fogParams:fog_params
-           fogColor:fog_color];
+           fogColor:fog_color
+         hvdfOffset:hvdf_offset
+       fogConstant:fog_constant];
   }
 }
 
@@ -1591,6 +2009,27 @@ void ottsel_metal_set_tfrag_colors(OttselMetal* m,
   }
 }
 
+void ottsel_metal_append_merc_mesh(OttselMetal* m,
+                                   const void* vertices,
+                                   unsigned int vertex_count,
+                                   const unsigned int* triangle_indices,
+                                   unsigned int index_count,
+                                   const OttselMetalTieDraw* draws,
+                                   unsigned int draw_count) {
+  if (!m) {
+    return;
+  }
+  @autoreleasepool {
+    OttselMetalRenderer* r = (__bridge OttselMetalRenderer*)m;
+    [r appendMercMesh:vertices
+          vertexCount:vertex_count
+       triangleIndices:triangle_indices
+            indexCount:index_count
+                 draws:draws
+             drawCount:draw_count];
+  }
+}
+
 void ottsel_metal_set_sprite_mesh(OttselMetal* m,
                                   const OttselMetalSpriteVertex vertices[6],
                                   const unsigned char* rgba,
@@ -1607,6 +2046,48 @@ void ottsel_metal_set_sprite_mesh(OttselMetal* m,
                width:width
               height:height
              blended:blended != 0];
+  }
+}
+
+void ottsel_metal_set_sprite_mesh_n(OttselMetal* m,
+                                    const OttselMetalSpriteVertex* vertices,
+                                    unsigned int vertex_count,
+                                    const unsigned char* rgba,
+                                    unsigned int width,
+                                    unsigned int height,
+                                    int blended) {
+  if (!m || !vertices || vertex_count == 0) {
+    return;
+  }
+  @autoreleasepool {
+    OttselMetalRenderer* r = (__bridge OttselMetalRenderer*)m;
+    [r setSpriteMeshNow:vertices
+            vertexCount:vertex_count
+                   rgba:rgba
+                  width:width
+                 height:height
+                blended:blended != 0];
+  }
+}
+
+void ottsel_metal_append_sprite_mesh_n(OttselMetal* m,
+                                       const OttselMetalSpriteVertex* vertices,
+                                       unsigned int vertex_count,
+                                       const unsigned char* rgba,
+                                       unsigned int width,
+                                       unsigned int height,
+                                       int blended) {
+  if (!m || !vertices || vertex_count == 0) {
+    return;
+  }
+  @autoreleasepool {
+    OttselMetalRenderer* r = (__bridge OttselMetalRenderer*)m;
+    [r appendSpriteMeshNow:vertices
+                vertexCount:vertex_count
+                       rgba:rgba
+                      width:width
+                     height:height
+                    blended:blended != 0];
   }
 }
 

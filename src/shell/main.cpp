@@ -102,8 +102,10 @@ bool g_touch_editor = false;
 bool g_touch_editor_active = false;
 SDL_FingerID g_touch_editor_finger = 0;
 TouchRegion g_touch_editor_region = TouchRegion::LeftStick;
+bool g_native_input_mode = false;
 
 int touch_region_at(float x, float y);
+void hide_touch_overlay_for_native_input();
 
 // The mobile shell does not create the desktop Display/InputManager.  It
 // nevertheless delivers the same completed DualShock snapshot to GOAL, via
@@ -114,6 +116,12 @@ struct ShellPadInput {
   bool key_a = false;
   bool key_s = false;
   bool key_d = false;
+  bool mouse_left = false;
+  bool mouse_right = false;
+  ottsel::platform_input::MouseMotionLatch mouse_motion_latch;
+  bool mouse_position_valid = false;
+  float last_mouse_x = 0.f;
+  float last_mouse_y = 0.f;
   SDL_FingerID left_stick_finger = 0;
   SDL_FingerID action_finger = 0;
   SDL_FingerID camera_finger = 0;
@@ -150,31 +158,46 @@ struct ShellPadInput {
 
   void update_keyboard_stick() {
     state.leftx = key_a == key_d ? 127 : (key_a ? 0 : 255);
+    // Mouse buttons are actions, not a second movement source. Keeping the
+    // left stick exclusively keyboard-driven prevents a simultaneous
+    // Cross/Circle click from injecting an unexpected forward direction.
     state.lefty = key_w == key_s ? 127 : (key_w ? 0 : 255);
   }
 
-  void keyboard(SDL_Keycode key, bool pressed) {
+  void keyboard(SDL_Keycode key, SDL_Scancode scancode, bool pressed) {
+    hide_touch_overlay_for_native_input();
     using namespace ottsel::platform_input;
     Button digital_button = static_cast<Button>(0);
-    switch (key) {
-      case SDLK_W: key_w = pressed; break;
-      case SDLK_A: key_a = pressed; break;
-      case SDLK_S: key_s = pressed; break;
-      case SDLK_D: key_d = pressed; break;
-      case SDLK_RETURN: digital_button = Start; break;
-      case SDLK_SPACE: digital_button = Cross; break;
-      case SDLK_E: digital_button = Circle; break;
-      case SDLK_F: digital_button = Square; break;
-      case SDLK_R: digital_button = Triangle; break;
-      case SDLK_Q: digital_button = L1; break;
-      case SDLK_O: digital_button = R1; break;
-      case SDLK_1: digital_button = L2; break;
-      case SDLK_P: digital_button = R2; break;
-      case SDLK_UP: digital_button = DpadUp; break;
-      case SDLK_RIGHT: digital_button = DpadRight; break;
-      case SDLK_DOWN: digital_button = DpadDown; break;
-      case SDLK_LEFT: digital_button = DpadLeft; break;
-      default: return;
+    // Movement is physical-key driven first. This keeps WASD stable across
+    // keyboard layouts and avoids SDL text/keycode translation changing the
+    // direction while a key is held.
+    switch (scancode) {
+      case SDL_SCANCODE_W: key_w = pressed; break;
+      case SDL_SCANCODE_A: key_a = pressed; break;
+      case SDL_SCANCODE_S: key_s = pressed; break;
+      case SDL_SCANCODE_D: key_d = pressed; break;
+      default:
+        switch (key) {
+          case SDLK_RETURN: digital_button = Start; break;
+          case SDLK_SPACE: digital_button = Cross; break;
+          case SDLK_E: digital_button = Circle; break;
+          case SDLK_F: digital_button = Square; break;
+          case SDLK_R: digital_button = Triangle; break;
+          case SDLK_Q: digital_button = L1; break;
+          case SDLK_O: digital_button = R1; break;
+          case SDLK_1: digital_button = L2; break;
+          case SDLK_P: digital_button = R2; break;
+          case SDLK_UP: digital_button = DpadUp; break;
+          case SDLK_RIGHT: digital_button = DpadRight; break;
+          case SDLK_DOWN: digital_button = DpadDown; break;
+          case SDLK_LEFT: digital_button = DpadLeft; break;
+          case SDLK_W: key_w = pressed; break;
+          case SDLK_A: key_a = pressed; break;
+          case SDLK_S: key_s = pressed; break;
+          case SDLK_D: key_d = pressed; break;
+          default: return;
+        }
+        break;
     }
     if (digital_button) {
       set_button(&state, digital_button, pressed);
@@ -182,12 +205,72 @@ struct ShellPadInput {
       // preserve a tap long enough for the independent GOAL thread, while
       // ordinary held keys continue to use the live state above.
       if (pressed) {
-        latch_button(0, digital_button, 8);
+        latch_native_button(0, digital_button);
       }
     }
     update_keyboard_stick();
     publish();
     trace("keyboard");
+  }
+
+  void mouse_motion(float x, float y, float xrel, float yrel) {
+    hide_touch_overlay_for_native_input();
+    if (g_win) {
+      SDL_SetWindowRelativeMouseMode(g_win, true);
+    }
+    // Some SDL backends (notably Simulator pointer capture) report absolute
+    // motion while leaving xrel/yrel at zero on the first captured event. Use
+    // the position delta as a fallback so a native mouse cannot silently
+    // produce a permanently neutral camera stick.
+    if (mouse_position_valid && xrel == 0.f && yrel == 0.f) {
+      xrel = x - last_mouse_x;
+      yrel = y - last_mouse_y;
+    }
+    last_mouse_x = x;
+    last_mouse_y = y;
+    mouse_position_valid = true;
+    // SDL may deliver several relative-motion events before the next pad
+    // sample. Accumulate them from the neutral center instead of letting the
+    // last event overwrite the earlier motion; settle_mouse() clears the
+    // impulse after the frame is published.
+    mouse_motion_latch.add(xrel, yrel);
+    state.rightx = mouse_motion_latch.rightx;
+    state.righty = mouse_motion_latch.righty;
+    publish();
+    trace("mouse-motion");
+  }
+
+  void settle_mouse() {
+    const int before = mouse_motion_latch.remaining_reads;
+    mouse_motion_latch.advance_event_loop();
+    if (before != mouse_motion_latch.remaining_reads) {
+      state.rightx = mouse_motion_latch.rightx;
+      state.righty = mouse_motion_latch.righty;
+      publish();
+    }
+  }
+
+  void mouse_button(Uint8 button, bool pressed) {
+    hide_touch_overlay_for_native_input();
+    if (g_win) {
+      SDL_SetWindowRelativeMouseMode(g_win, true);
+    }
+    using namespace ottsel::platform_input;
+    if (button == SDL_BUTTON_LEFT) mouse_left = pressed;
+    if (button == SDL_BUTTON_RIGHT) mouse_right = pressed;
+    if (button == SDL_BUTTON_LEFT) set_button(&state, Cross, pressed);
+    if (button == SDL_BUTTON_RIGHT) set_button(&state, Circle, pressed);
+    if (pressed) {
+      // A short click can otherwise disappear between SDL delivery and the
+      // independent GOAL pad read. Keep mouse actions on the same bounded
+      // tap-latch path as native keyboard actions.
+      latch_native_button(0, button == SDL_BUTTON_LEFT ? Cross : Circle);
+    }
+    // Recompute the complete keyboard stick state so mouse release cannot
+    // leave a stale direction behind or override a held physical WASD key.
+    update_keyboard_stick();
+    publish();
+    trace("mouse-button");
   }
 
   void gamepad_button(SDL_JoystickID instance_id, Uint8 button, bool pressed) {
@@ -559,11 +642,24 @@ void build_touch_overlay() {
 }
 
 void upload_touch_overlay() {
-  if (g_metal && !g_touch_overlay.empty()) {
+  if (!g_native_input_mode && g_metal && !g_touch_overlay.empty()) {
     ottsel_metal_set_touch_overlay(g_metal, g_touch_overlay.data(),
                                    static_cast<unsigned int>(g_touch_overlay.size()));
     g_touch_overlay_uploaded = true;
   }
+}
+
+void hide_touch_overlay_for_native_input() {
+  if (g_native_input_mode) {
+    return;
+  }
+  g_native_input_mode = true;
+  g_touch_overlay_uploaded = false;
+  g_touch_overlay.clear();
+  if (g_metal) {
+    ottsel_metal_set_touch_overlay(g_metal, nullptr, 0);
+  }
+  lg::info("OTTSEL INPUT: native keyboard/mouse active; touch overlay hidden");
 }
 
 void put_pixel(int x, int y, unsigned char r, unsigned char g, unsigned char b) {
@@ -715,6 +811,9 @@ bool on_event_watch(void*, SDL_Event* ev) {
     case SDL_EVENT_DID_ENTER_BACKGROUND:
       // Never leave movement or an action held when the app is suspended.
       g_input.neutralize();
+      if (g_win) {
+        SDL_SetWindowRelativeMouseMode(g_win, false);
+      }
       snd_PauseAudioOutput();
       lg::info("OTTSEL LIFECYCLE: background input neutralized and audio paused");
       break;
@@ -834,7 +933,26 @@ int main(int argc, char** argv) {
           } else if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_RIGHTBRACKET) {
             adjust_touch_opacity(0.05f);
           } else {
-            g_input.keyboard(ev.key.key, ev.type == SDL_EVENT_KEY_DOWN);
+            g_input.keyboard(ev.key.key, ev.key.scancode, ev.type == SDL_EVENT_KEY_DOWN);
+          }
+          break;
+        case SDL_EVENT_MOUSE_MOTION:
+          if (ottsel::platform_input::routes_to_native_mouse(ev.motion.which,
+                                                              SDL_TOUCH_MOUSEID)) {
+            g_input.mouse_motion(ev.motion.x, ev.motion.y, ev.motion.xrel, ev.motion.yrel);
+          }
+          break;
+        case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        case SDL_EVENT_MOUSE_BUTTON_UP:
+          if (ottsel::platform_input::routes_to_native_mouse(ev.button.which,
+                                                              SDL_TOUCH_MOUSEID)) {
+            g_input.mouse_button(ev.button.button, ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
+          }
+          break;
+        case SDL_EVENT_WINDOW_FOCUS_LOST:
+          g_input.neutralize();
+          if (g_win) {
+            SDL_SetWindowRelativeMouseMode(g_win, false);
           }
           break;
         case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
@@ -857,6 +975,7 @@ int main(int argc, char** argv) {
           break;
       }
     }
+    g_input.settle_mouse();
     snd_PumpAudioInit();
     // BOT22: file-based input trigger for headless driving — creating
     // <bundle>/ottsel-press-start injects a START press (then the file is
@@ -875,29 +994,29 @@ int main(int argc, char** argv) {
         std::string trig = trigger_path("ottsel-press-start");
         if (access(trig.c_str(), F_OK) == 0) {
           unlink(trig.c_str());
-          g_input.keyboard(SDLK_RETURN, true);
-          g_input.keyboard(SDLK_RETURN, false);
+          g_input.keyboard(SDLK_RETURN, SDL_SCANCODE_RETURN, true);
+          g_input.keyboard(SDLK_RETURN, SDL_SCANCODE_RETURN, false);
           fprintf(stderr, "ottsel BOT22: latched START tap (file trigger)\n");
         }
         std::string cross_trig = trigger_path("ottsel-press-cross");
         if (access(cross_trig.c_str(), F_OK) == 0) {
           unlink(cross_trig.c_str());
-          g_input.keyboard(SDLK_SPACE, true);
-          g_input.keyboard(SDLK_SPACE, false);
+          g_input.keyboard(SDLK_SPACE, SDL_SCANCODE_SPACE, true);
+          g_input.keyboard(SDLK_SPACE, SDL_SCANCODE_SPACE, false);
           fprintf(stderr, "ottsel BOT22: latched Cross tap (file trigger)\n");
         }
         std::string left_trig = trigger_path("ottsel-press-left");
         if (access(left_trig.c_str(), F_OK) == 0) {
           unlink(left_trig.c_str());
-          g_input.keyboard(SDLK_LEFT, true);
-          g_input.keyboard(SDLK_LEFT, false);
+          g_input.keyboard(SDLK_LEFT, SDL_SCANCODE_LEFT, true);
+          g_input.keyboard(SDLK_LEFT, SDL_SCANCODE_LEFT, false);
           fprintf(stderr, "ottsel BOT22: latched D-pad-left tap (file trigger)\n");
         }
         std::string down_trig = trigger_path("ottsel-press-down");
         if (access(down_trig.c_str(), F_OK) == 0) {
           unlink(down_trig.c_str());
-          g_input.keyboard(SDLK_DOWN, true);
-          g_input.keyboard(SDLK_DOWN, false);
+          g_input.keyboard(SDLK_DOWN, SDL_SCANCODE_DOWN, true);
+          g_input.keyboard(SDLK_DOWN, SDL_SCANCODE_DOWN, false);
           fprintf(stderr, "ottsel BOT22: latched D-pad-down tap (file trigger)\n");
         }
         std::string bgtrig = trigger_path("ottsel-bg-village1");
@@ -950,7 +1069,7 @@ int main(int argc, char** argv) {
       // races the Simulator Metal host and aborts the app before it reaches
       // the foreground.  The layout is static for this first T1 increment;
       // later editor changes will reset this one-shot upload flag.
-      if (!g_touch_overlay_uploaded && g_frame >= 60) {
+      if (!g_touch_overlay_uploaded && !g_native_input_mode && g_frame >= 60) {
         build_touch_overlay();
         upload_touch_overlay();
       }

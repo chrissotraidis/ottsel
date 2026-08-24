@@ -25,3 +25,7 @@ DerivedData/
 # local research corpus (upstream clones with nested .git; keep out of repo git)
 ref/
 __pycache__/
+
+# Simulator recordings stay outside the worktree; ignore any accidental copies.
+docs/evidence/**/*.mp4
+docs/evidence/**/*.mov
