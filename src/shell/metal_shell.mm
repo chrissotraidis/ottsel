@@ -23,6 +23,7 @@
 #include "mobile_scene_policy.h"
 #include "mobile_snapshot_store.h"
 #include "common/dma/ottsel_sprite_math.h"
+#include "common/log/log.h"
 #include "ios_boot.h"
 
 namespace {
@@ -94,21 +95,26 @@ NSString* kTieShaderSource = @""
 "using namespace metal;\n"
 "struct TieIn { float3 position [[attribute(0)]]; float2 uv [[attribute(1)]]; "
 "ushort color_index [[attribute(2)]]; };\n"
-"struct TieUniforms { float4 pc_camera[4]; float4 camera_trans; float4 fog_params; "
-"float4 fog_color; float4 hvdf_offset; float fog_constant; float camera_sign; };\n"
+"struct TieUniforms { float4 pc_camera[4]; float4 merc_perspective[4]; float4 camera_trans; float4 fog_params; "
+"float4 fog_color; float4 hvdf_offset; float fog_constant; float camera_sign; uint projection_mode; };\n"
 "struct TieMaterial { float alpha_min; float alpha_max; uint fog_enable; uint decal; };\n"
 "struct TieOut { float4 position [[position]]; float2 uv; ushort color_index [[flat]]; "
 "float fogginess; float3 fog_color; };\n"
 "vertex TieOut tie_vs(TieIn in [[stage_in]], constant TieUniforms& u [[buffer(1)]]) {\n"
-"  float3 vert = in.position - u.camera_trans.xyz;\n"
 "  float original_w = 0.0;\n"
-"  float4 transformed = -u.pc_camera[3];\n"
-"  transformed.w = 0.0;\n"
-"  transformed -= u.pc_camera[0] * vert.x;\n"
-"  transformed -= u.pc_camera[1] * vert.y;\n"
-"  transformed -= u.pc_camera[2] * vert.z;\n"
-"  original_w = transformed.w;\n"
-"  if (u.camera_sign < 0.0) {\n"
+"  float4 transformed;\n"
+"  if (u.projection_mode == 2u) {\n"
+"    // Diagnostics-only fixture: positions are already Metal clip-space.\n"
+"    transformed = float4(in.position, 1.0);\n"
+"    original_w = 1.0;\n"
+"  } else if (u.projection_mode != 0u) {\n"
+"    // MERC vertices are already in bone-skinned camera space. Desktop\n"
+"    // applies the raw perspective matrix, not the background pc_camera.\n"
+"    transformed = u.merc_perspective[0] * in.position.x;\n"
+"    transformed += u.merc_perspective[1] * in.position.y;\n"
+"    transformed += u.merc_perspective[2] * in.position.z;\n"
+"    transformed += u.merc_perspective[3];\n"
+"    original_w = transformed.w;\n"
 "    float Q = u.fog_constant / transformed.w;\n"
 "    transformed.xyz *= Q;\n"
 "    transformed.xyz += u.hvdf_offset.xyz;\n"
@@ -118,6 +124,25 @@ NSString* kTieShaderSource = @""
 "    transformed.x /= 256.0;\n"
 "    transformed.y /= -128.0;\n"
 "    transformed.xyz *= transformed.w;\n"
+"  } else {\n"
+"    float3 vert = in.position - u.camera_trans.xyz;\n"
+"    transformed = -u.pc_camera[3];\n"
+"    transformed.w = 0.0;\n"
+"    transformed -= u.pc_camera[0] * vert.x;\n"
+"    transformed -= u.pc_camera[1] * vert.y;\n"
+"    transformed -= u.pc_camera[2] * vert.z;\n"
+"    original_w = transformed.w;\n"
+"    if (u.camera_sign < 0.0) {\n"
+"      float Q = u.fog_constant / transformed.w;\n"
+"      transformed.xyz *= Q;\n"
+"      transformed.xyz += u.hvdf_offset.xyz;\n"
+"      transformed.xy -= float2(2048.0);\n"
+"      transformed.z /= 8388608.0;\n"
+"      transformed.z -= 1.0;\n"
+"      transformed.x /= 256.0;\n"
+"      transformed.y /= -128.0;\n"
+"      transformed.xyz *= transformed.w;\n"
+"    }\n"
 "  }\n"
 "  transformed.y *= (512.0 / 448.0);\n"
 "  transformed.z = (transformed.z + transformed.w) * 0.5;\n"
@@ -132,10 +157,9 @@ NSString* kTieShaderSource = @""
 "  float4 texel = tex.sample(tex_sampler, in.uv);\n"
 "  float4 tod = float4(colors[in.color_index]) / 255.0;\n"
 "  float4 color = float4(texel.rgb * (material.decal != 0 ? float3(1.0) : tod.rgb * 2.0),\n"
-  "                        texel.a * tod.a * 2.0);\n"
+  "                        texel.a * tod.a * 4.0);\n"
   "  // Match tfrag3.vert: the interpolated time-of-day color is doubled once\n"
-  "  // before modulation with the texture. The reference shader does not apply\n"
-  "  // a second native-only alpha scale.\n"
+  "  // alpha is doubled again by the upstream vertex path.\n"
 "  if (color.a < material.alpha_min || color.a > material.alpha_max) discard_fragment();\n"
 "  if (material.fog_enable != 0) {\n"
 "    color.rgb = mix(color.rgb, in.fog_color, clamp(in.fogginess * 0.0039215686, 0.0, 1.0));\n"
@@ -145,12 +169,14 @@ NSString* kTieShaderSource = @""
 
 struct TieUniforms {
   float pc_camera[16];
+  float merc_perspective[16];
   float camera_trans[4];
   float fog_params[4];
   float fog_color[4];
   float hvdf_offset[4];
   float fog_constant = 0.f;
   float camera_sign = 1.f;
+  uint32_t projection_mode = 0;
 };
 
 struct TieMaterial {
@@ -159,6 +185,18 @@ struct TieMaterial {
   uint32_t fog_enable;
   uint32_t decal;
 };
+
+// Layout-compatible diagnostic vertex for the TFRAG pipeline. The fixture
+// uses clip-space positions directly and never enters the product path.
+struct OttselTfragFixtureVertex {
+  float x, y, z;
+  unsigned char rgba[4];
+  float s, t;
+  unsigned int nor;
+  unsigned short color_index;
+  unsigned short padding;
+};
+static_assert(sizeof(OttselTfragFixtureVertex) == 32);
 
 struct DirectFixtureVertex {
   float pos[2];
@@ -246,8 +284,11 @@ class RenderEncoderEndGuard {
 @property (nonatomic, strong) id<MTLRenderPipelineState> tiePipeline;
 @property (nonatomic, strong) id<MTLRenderPipelineState> tieBlendPipeline;
 @property (nonatomic, strong) id<MTLDepthStencilState> tieNoWriteDepthState;
+@property (nonatomic, strong) NSArray* tieDepthStates;
+@property (nonatomic, strong) NSArray* tieNoWriteDepthStates;
 @property (nonatomic, strong) CAMetalLayer* layer;
 @property (nonatomic, strong) id<MTLTexture> logTex;
+@property (nonatomic, strong) id<MTLTexture> tfragFixtureTexture;
 @property (nonatomic, strong) id<MTLTexture> directTex;
 @property (nonatomic, strong) id<MTLSamplerState> directSampler;
 @property (nonatomic, strong) NSMutableDictionary* directTextures;
@@ -270,6 +311,8 @@ class RenderEncoderEndGuard {
 @property (nonatomic) BOOL sceneNoMercProbe;
 @property (nonatomic) BOOL sceneNoTfragProbe;
 @property (nonatomic) BOOL sceneNoCpuFrameProbe;
+@property (nonatomic) BOOL sceneNoOverlayProbe;
+@property (nonatomic) BOOL sceneTfragFixture;
 @property (nonatomic) BOOL sceneTieReferenceProjectionProbe;
 @property (nonatomic) BOOL sceneFirstBatchProbe;
 @property (nonatomic) NSUInteger sceneDrawLimit;
@@ -321,7 +364,8 @@ class RenderEncoderEndGuard {
               draws:(const OttselMetalTieDraw*)draws
           drawCount:(NSUInteger)drawCount;
 - (void)setTieCamera:(const float*)pcCamera
-          cameraTrans:(const float*)cameraTrans
+          mercPerspective:(const float*)mercPerspective
+         cameraTrans:(const float*)cameraTrans
            fogParams:(const float*)fogParams
             fogColor:(const float*)fogColor
           hvdfOffset:(const float*)hvdfOffset
@@ -358,8 +402,14 @@ class RenderEncoderEndGuard {
           vertexCount:(NSUInteger)vertexCount
        triangleIndices:(const unsigned int*)indices
             indexCount:(NSUInteger)indexCount
-                 draws:(const OttselMetalTieDraw*)draws
-             drawCount:(NSUInteger)drawCount;
+                draws:(const OttselMetalTieDraw*)draws
+            drawCount:(NSUInteger)drawCount;
+- (void)setMercActorMesh:(const void*)vertices
+            vertexCount:(NSUInteger)vertexCount
+         triangleIndices:(const unsigned int*)indices
+              indexCount:(NSUInteger)indexCount
+                  draws:(const OttselMetalTieDraw*)draws
+              drawCount:(NSUInteger)drawCount;
 - (void)setSpriteMesh:(const OttselMetalSpriteVertex*)vertices
                  rgba:(const unsigned char*)rgba
                 width:(NSUInteger)width
@@ -373,10 +423,16 @@ class RenderEncoderEndGuard {
                  blended:(BOOL)blended;
 - (void)appendSpriteMeshNow:(const OttselMetalSpriteVertex*)vertices
                 vertexCount:(NSUInteger)vertexCount
-                       rgba:(const unsigned char*)rgba
+                      rgba:(const unsigned char*)rgba
                       width:(NSUInteger)width
                      height:(NSUInteger)height
-                    blended:(BOOL)blended;
+                      blended:(BOOL)blended;
+- (void)appendSkyMeshNow:(const OttselMetalSpriteVertex*)vertices
+             vertexCount:(NSUInteger)vertexCount
+                   rgba:(const unsigned char*)rgba
+                  width:(NSUInteger)width
+                 height:(NSUInteger)height
+                blended:(BOOL)blended;
 - (void)clearSpriteBatches;
 - (void)clearTransientSpriteBatches;
 - (void)drainSpriteUploads;
@@ -402,6 +458,7 @@ class RenderEncoderEndGuard {
   std::deque<PendingDirectUpload> _pendingDirectUploads;
   std::unordered_set<unsigned long long> _queuedDirectUploadKeys;
   std::mutex _tieUploadMutex;
+  std::unordered_set<NSUInteger> _queuedTieTextureIndices;
   std::mutex _tieUniformMutex;
   std::deque<PendingTieUpload> _pendingTieUploads;
   std::deque<PendingColorUpload> _pendingColorUploads;
@@ -409,12 +466,22 @@ class RenderEncoderEndGuard {
   std::mutex _spriteUploadMutex;
   std::deque<PendingSpriteUpload> _pendingSpriteUploads;
   OttselMobileSnapshotStore<NativeSpriteBatch> _spriteBatches;
+  OttselMobileSnapshotStore<NativeSpriteBatch> _skyBatches;
   std::vector<OttselMetalTieDraw> _mercDraws;
   std::mutex _mercMutex;
   std::vector<unsigned char> _pendingMercVertices;
   std::vector<unsigned int> _pendingMercIndices;
   std::vector<OttselMetalTieDraw> _pendingMercDraws;
   std::vector<unsigned char> _pendingMercColors;
+  id<MTLBuffer> _mercActorVertices;
+  id<MTLBuffer> _mercActorIndices;
+  id<MTLBuffer> _mercActorColors;
+  NSUInteger _mercActorIndexCount;
+  std::vector<OttselMetalTieDraw> _mercActorDraws;
+  std::vector<unsigned char> _pendingMercActorVertices;
+  std::vector<unsigned int> _pendingMercActorIndices;
+  std::vector<OttselMetalTieDraw> _pendingMercActorDraws;
+  std::vector<unsigned char> _pendingMercActorColors;
 }
 
 - (BOOL)setupWithWindow:(SDL_Window*)win width:(int)w height:(int)h {
@@ -588,18 +655,33 @@ class RenderEncoderEndGuard {
     return NO;
   }
   MTLDepthStencilDescriptor* depthDesc = [[MTLDepthStencilDescriptor alloc] init];
-  // tie_vs remaps PC/OpenGL depth into Metal's forward [0,1] range;
-  // use the matching forward-Z compare and clear value.
-  depthDesc.depthCompareFunction = MTLCompareFunctionLessEqual;
+  // tie_vs remaps PC/OpenGL depth into Metal's [0,1] range. The upstream GS
+  // contract clears to zero and keeps the nearer remapped depth with GEQUAL.
+  depthDesc.depthCompareFunction = kOttselMobileDepthGreaterEqual
+                                       ? MTLCompareFunctionGreaterEqual
+                                       : MTLCompareFunctionLessEqual;
   depthDesc.depthWriteEnabled = YES;
   self.tieDepthState = [device newDepthStencilStateWithDescriptor:depthDesc];
   depthDesc.depthWriteEnabled = NO;
   self.tieNoWriteDepthState = [device newDepthStencilStateWithDescriptor:depthDesc];
+  NSMutableArray* tieDepthStates = [NSMutableArray arrayWithCapacity:4];
+  NSMutableArray* tieNoWriteDepthStates = [NSMutableArray arrayWithCapacity:4];
+  const MTLCompareFunction depthFunctions[] = {
+      MTLCompareFunctionNever, MTLCompareFunctionAlways, MTLCompareFunctionGreaterEqual,
+      MTLCompareFunctionGreater};
+  for (NSUInteger i = 0; i < 4; ++i) {
+    depthDesc.depthCompareFunction = depthFunctions[i];
+    depthDesc.depthWriteEnabled = YES;
+    [tieDepthStates addObject:[device newDepthStencilStateWithDescriptor:depthDesc]];
+    depthDesc.depthWriteEnabled = NO;
+    [tieNoWriteDepthStates addObject:[device newDepthStencilStateWithDescriptor:depthDesc]];
+  }
+  self.tieDepthStates = tieDepthStates;
+  self.tieNoWriteDepthStates = tieNoWriteDepthStates;
   depthDesc.depthWriteEnabled = YES;
   self.directDepthState = self.tieDepthState;
-  // Sprite3's maintained Jak 1 GS prefix uses GEQUAL and leaves the scene
-  // depth buffer untouched. TIE uses forward-Z LessEqual above; do not reuse
-  // that compare function for Sprite3 just because both share the attachment.
+  // Sprite3's maintained Jak 1 GS prefix uses the same GEQUAL convention and
+  // leaves the scene depth buffer untouched.
   depthDesc.depthCompareFunction = MTLCompareFunctionGreaterEqual;
   depthDesc.depthWriteEnabled = ottsel::sprite3_depth_write_enabled();
   self.spriteDepthState = [device newDepthStencilStateWithDescriptor:depthDesc];
@@ -636,6 +718,18 @@ class RenderEncoderEndGuard {
   if (!self.logTex) {
     return NO;
   }
+  MTLTextureDescriptor* fixtureDesc = [MTLTextureDescriptor
+      texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:2 height:2 mipmapped:NO];
+  fixtureDesc.usage = MTLTextureUsageShaderRead;
+  self.tfragFixtureTexture = [device newTextureWithDescriptor:fixtureDesc];
+  if (!self.tfragFixtureTexture) {
+    return NO;
+  }
+  const unsigned int fixturePixels[4] = {0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu};
+  [self.tfragFixtureTexture replaceRegion:MTLRegionMake2D(0, 0, 2, 2)
+                              mipmapLevel:0
+                                withBytes:fixturePixels
+                              bytesPerRow:2 * sizeof(unsigned int)];
   return YES;
 }
 
@@ -643,9 +737,7 @@ class RenderEncoderEndGuard {
   // MTLSimDriver serializes this byte range over XPC. Reject malformed
   // callers before replaceRegion can turn a bad signed dimension into an
   // unbounded memmove (the 2026-08-21 presentRGBA crash).
-  constexpr int kMaxPresentDimension = 4096;
-  if (!self.directFixtureActive &&
-      (!rgba || w <= 0 || h <= 0 || w > kMaxPresentDimension || h > kMaxPresentDimension)) {
+  if (!ottsel_present_rgba_frame_valid(rgba, w, h, self.directFixtureActive)) {
     NSLog(@"ottsel metal: rejected invalid RGBA frame ptr=%p size=%dx%d", rgba, w, h);
     return;
   }
@@ -796,6 +888,15 @@ class RenderEncoderEndGuard {
       NSLog(@"ottsel metal: scene no-MERC probe enabled");
     }
   }
+  if (!self.sceneTfragFixture) {
+    const std::string fixture_trigger = ottsel_ios_writable_dir() +
+                                        "ottsel-trace-metal-tfrag-fixture";
+    if (access(fixture_trigger.c_str(), F_OK) == 0) {
+      unlink(fixture_trigger.c_str());
+      self.sceneTfragFixture = YES;
+      NSLog(@"ottsel metal: TFRAG pipeline fixture enabled");
+    }
+  }
   if (!self.sceneNoTfragProbe) {
     const std::string scene_no_tfrag_trigger = ottsel_ios_writable_dir() +
                                                 "ottsel-trace-metal-scene-no-tfrag";
@@ -812,6 +913,15 @@ class RenderEncoderEndGuard {
       unlink(scene_no_cpu_frame_trigger.c_str());
       self.sceneNoCpuFrameProbe = YES;
       NSLog(@"ottsel metal: scene no-CPU-frame probe enabled");
+    }
+  }
+  if (!self.sceneNoOverlayProbe) {
+    const std::string scene_no_overlay_trigger = ottsel_ios_writable_dir() +
+                                                 "ottsel-trace-metal-scene-no-overlay";
+    if (access(scene_no_overlay_trigger.c_str(), F_OK) == 0) {
+      unlink(scene_no_overlay_trigger.c_str());
+      self.sceneNoOverlayProbe = YES;
+      NSLog(@"ottsel metal: scene world-only overlay probe enabled");
     }
   }
   if (!self.sceneTieReferenceProjectionProbe) {
@@ -889,7 +999,7 @@ class RenderEncoderEndGuard {
     pass.depthAttachment.texture = self.tieDepth;
     pass.depthAttachment.loadAction = MTLLoadActionClear;
     pass.depthAttachment.storeAction = MTLStoreActionDontCare;
-    pass.depthAttachment.clearDepth = 1.0;
+    pass.depthAttachment.clearDepth = kOttselMobileDepthClear;
   }
 
   id<MTLCommandBuffer> cb = [self.queue commandBuffer];
@@ -902,7 +1012,9 @@ class RenderEncoderEndGuard {
     std::lock_guard<std::mutex> lock(_tieUniformMutex);
     draw_uniforms = _tieUniforms;
   }
-  if (!self.directFixtureIsolated && !self.sceneNoCpuFrameProbe) {
+  if (!self.directFixtureIsolated &&
+      ottsel_mobile_cpu_frame_should_draw(self.tfragIndexCount != 0, self.tieIndexCount != 0,
+                                          self.sceneNoCpuFrameProbe)) {
     [enc setRenderPipelineState:self.pipeline];
     [enc setFragmentTexture:self.logTex atIndex:0];
     [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
@@ -910,21 +1022,107 @@ class RenderEncoderEndGuard {
   const auto draw_mesh = ^(id<MTLBuffer> vertices, id<MTLBuffer> indices, id<MTLBuffer> colors,
                            NSUInteger index_count,
                            const std::vector<OttselMetalTieDraw>& draws,
-                           bool tfrag_mesh) {
+                           bool tfrag_mesh,
+                           bool merc_mesh) {
     if (!vertices || !indices || !colors || !index_count) {
       return;
     }
     [enc setVertexBuffer:vertices offset:0 atIndex:0];
     TieUniforms mesh_uniforms = draw_uniforms;
+    mesh_uniforms.projection_mode =
+        (self.sceneTfragFixture && tfrag_mesh)
+            ? 2u
+            : (ottsel_mobile_projection_uses_raw_perspective(
+                   merc_mesh ? OttselMobileMeshProjection::MercPerspective
+                             : OttselMobileMeshProjection::PcCamera)
+                   ? 1u
+                   : 0u);
     // Normal TIE uses the same TFRAG3 shader and derived pc_camera in the
     // desktop renderer. Only the separate wind-TIE path consumes raw camera
     // matrices; this native mesh contains normal static draws.
     // Keep the production path on the native derived-pc-camera equation. The
     // reference-projection switch is a one-shot falsification probe only; it
     // must not silently become the shipping camera policy.
-    mesh_uniforms.camera_sign = self.sceneTieReferenceProjectionProbe ? -1.f : 1.f;
+    // The reference equation has opposite signs for TIE and TFRAG. Keep the
+    // one-shot probe scoped to TIE; applying its TIE sign to the background
+    // TFRAG path makes the diagnostic frame itself invalid.
+    mesh_uniforms.camera_sign = self.sceneTieReferenceProjectionProbe && !tfrag_mesh ? -1.f : 1.f;
     [enc setVertexBytes:&mesh_uniforms length:sizeof(mesh_uniforms) atIndex:1];
     [enc setFragmentBuffer:colors offset:0 atIndex:0];
+    static bool merc_draw_probe_armed = false;
+    static bool merc_draw_probe_logged = false;
+    if (merc_mesh && !merc_draw_probe_armed) {
+      const std::string trigger = ottsel_ios_writable_dir() + "ottsel-trace-metal-merc-draw";
+      if (access(trigger.c_str(), F_OK) == 0) {
+        unlink(trigger.c_str());
+        merc_draw_probe_armed = true;
+      } else {
+        merc_draw_probe_armed = true;
+      }
+    }
+    if (merc_mesh && merc_draw_probe_armed && !merc_draw_probe_logged && !draws.empty() &&
+        [vertices contents] && [indices contents]) {
+      const auto* index_data = (const unsigned int*)[indices contents];
+      const unsigned int first_index = index_data[draws.front().index_offset];
+      const auto* vertex_data = (const float*)[vertices contents] + first_index * 8;
+      NSLog(@"ottsel metal: MERC draw-probe projection=%u sign=%.1f indices=%lu "
+            "first=(%.3f,%.3f,%.3f) pc-row0=(%.6f,%.6f,%.6f,%.6f) "
+            "raw-row0=(%.6f,%.6f,%.6f,%.6f) trans=(%.3f,%.3f,%.3f)",
+            mesh_uniforms.projection_mode, mesh_uniforms.camera_sign,
+            (unsigned long)index_count, vertex_data[0], vertex_data[1], vertex_data[2],
+            mesh_uniforms.pc_camera[0], mesh_uniforms.pc_camera[1], mesh_uniforms.pc_camera[2],
+            mesh_uniforms.pc_camera[3], mesh_uniforms.merc_perspective[0],
+            mesh_uniforms.merc_perspective[1], mesh_uniforms.merc_perspective[2],
+            mesh_uniforms.merc_perspective[3],
+            mesh_uniforms.camera_trans[0], mesh_uniforms.camera_trans[1],
+            mesh_uniforms.camera_trans[2]);
+      const std::string output = ottsel_ios_writable_dir() + "ottsel-metal-merc-draw.log";
+      if (FILE* file = fopen(output.c_str(), "w")) {
+        fprintf(file, "projection=%u sign=%.1f indices=%lu first=(%.3f,%.3f,%.3f) "
+                     "pc-row0=(%.6f,%.6f,%.6f,%.6f) raw-row0=(%.6f,%.6f,%.6f,%.6f) "
+                     "trans=(%.3f,%.3f,%.3f)\n",
+                mesh_uniforms.projection_mode, mesh_uniforms.camera_sign,
+                (unsigned long)index_count, vertex_data[0], vertex_data[1], vertex_data[2],
+                mesh_uniforms.pc_camera[0], mesh_uniforms.pc_camera[1], mesh_uniforms.pc_camera[2],
+                mesh_uniforms.pc_camera[3], mesh_uniforms.merc_perspective[0],
+                mesh_uniforms.merc_perspective[1], mesh_uniforms.merc_perspective[2],
+                mesh_uniforms.merc_perspective[3], mesh_uniforms.camera_trans[0],
+                mesh_uniforms.camera_trans[1], mesh_uniforms.camera_trans[2]);
+        for (size_t draw_index = 0; draw_index < draws.size(); ++draw_index) {
+          const auto& draw = draws[draw_index];
+          fprintf(file, "draw[%lu] offset=%u count=%u owner=%u\n",
+                  (unsigned long)draw_index, draw.index_offset, draw.index_count, draw.owner_tag);
+        }
+        fclose(file);
+      }
+      merc_draw_probe_logged = true;
+    }
+    static bool submit_boundary_armed = false;
+    static bool submit_boundary_logged = false;
+    if (tfrag_mesh && !submit_boundary_armed) {
+      const std::string trigger = ottsel_ios_writable_dir() +
+                                  "ottsel-trace-metal-tfrag-submit-boundary";
+      if (access(trigger.c_str(), F_OK) == 0) {
+        unlink(trigger.c_str());
+        submit_boundary_armed = true;
+        NSLog(@"ottsel metal: TFRAG submit-boundary probe enabled");
+      } else {
+        submit_boundary_armed = true;
+      }
+    }
+    static unsigned int tfrag_texture_ledger_logs = 0;
+    static unsigned int tfrag_texture_skip_count = 0;
+    static bool batch_trace_armed = false;
+    static bool batch_trace_enabled = false;
+    if (!tfrag_mesh && !merc_mesh && !batch_trace_armed) {
+      const std::string trigger = ottsel_ios_writable_dir() +
+                                  "ottsel-trace-metal-scene-final-batches";
+      if (access(trigger.c_str(), F_OK) == 0) {
+        unlink(trigger.c_str());
+        batch_trace_enabled = true;
+      }
+      batch_trace_armed = true;
+    }
     for (size_t draw_index = 0; draw_index < draws.size(); ++draw_index) {
       if (self.sceneFirstBatchProbe && draw_index > 0) {
         break;
@@ -933,11 +1131,27 @@ class RenderEncoderEndGuard {
         break;
       }
       const auto& draw = draws[draw_index];
+      if (batch_trace_enabled && !tfrag_mesh && !merc_mesh && draw_index >= 115) {
+        NSLog(@"ottsel metal: TIE final-batch index=%lu texture=%d indices=%u mode=0x%08x",
+              (unsigned long)draw_index, draw.texture_index, draw.index_count, draw.mode);
+      }
       if (draw.texture_index < 0 || (NSUInteger)draw.texture_index >= self.tieTextures.count) {
+        if (tfrag_mesh && tfrag_texture_ledger_logs < 12) {
+          ++tfrag_texture_ledger_logs;
+          ++tfrag_texture_skip_count;
+          NSLog(@"ottsel metal: TFRAG texture skip index=%d count=%lu reason=out-of-range",
+                draw.texture_index, (unsigned long)self.tieTextures.count);
+        }
         continue;
       }
       id texture = self.tieTextures[(NSUInteger)draw.texture_index];
       if (![texture conformsToProtocol:@protocol(MTLTexture)]) {
+        if (tfrag_mesh && tfrag_texture_ledger_logs < 12) {
+          ++tfrag_texture_ledger_logs;
+          ++tfrag_texture_skip_count;
+          NSLog(@"ottsel metal: TFRAG texture skip index=%d count=%lu reason=not-uploaded",
+                draw.texture_index, (unsigned long)self.tieTextures.count);
+        }
         continue;
       }
       const bool clamp_s = draw.mode & (1u << 5);
@@ -945,25 +1159,51 @@ class RenderEncoderEndGuard {
       const NSUInteger sampler_idx = (clamp_t ? 2 : 0) + (clamp_s ? 1 : 0);
       const bool alpha_test = draw.mode & (1u << 18);
       const unsigned int alpha_test_kind = (draw.mode >> 16) & 3;
-      const float alpha_min = alpha_test && alpha_test_kind == 2
-                                  ? ((draw.mode >> 8) & 0xff) / 127.f
-                                  : 0.f;
       const unsigned int alpha_fail = (draw.mode >> 21) & 3u;
-      const bool alpha_blend_enabled = (draw.mode & (1u << 20)) != 0 &&
-                                       ((draw.mode >> 24) & 7u) != 0;
+      const bool depth_test_enabled = (draw.mode & (1u << 19)) != 0;
+      const bool alpha_blend_enabled = ottsel_mobile_alpha_blend_enabled(
+          (draw.mode & (1u << 20)) != 0, (draw.mode >> 24) & 7u);
       const bool source_depth_write_enabled = (draw.mode & 1u) != 0;
+      const float alpha_min = ottsel_mobile_alpha_min(
+          alpha_test_kind, alpha_test, alpha_fail, source_depth_write_enabled,
+          (draw.mode >> 8) & 0xff);
       // OpenGL's NEVER + FB_ONLY setup keeps color but disables depth writes.
       const bool depth_write_enabled =
-          source_depth_write_enabled && !(alpha_test && alpha_test_kind == 0 && alpha_fail == 1);
+          depth_test_enabled && source_depth_write_enabled &&
+          !(alpha_test && alpha_test_kind == 0 && alpha_fail == 1);
+      const NSUInteger depth_compare_index =
+          (draw.mode & (1u << 19)) ? ((draw.mode >> 1) & 3u) : 1u;
       [enc setRenderPipelineState:alpha_blend_enabled ? self.tieBlendPipeline
                                                        : self.tiePipeline];
       [enc setDepthStencilState:self.sceneNoDepthProbe
                                   ? self.overlayDepthState
-                                  : (depth_write_enabled ? self.tieDepthState
-                                                         : self.tieNoWriteDepthState)];
+                                  : (depth_write_enabled ? self.tieDepthStates[depth_compare_index]
+                                                         : self.tieNoWriteDepthStates[depth_compare_index])];
       const bool fog_enable = (draw.mode & (1u << 29)) != 0;
       const bool decal = (draw.mode & (1u << 28)) == 0;
       TieMaterial material{alpha_min, 10.f, fog_enable ? 1u : 0u, decal ? 1u : 0u};
+      if (tfrag_mesh && draws.size() >= 80 && submit_boundary_armed && !submit_boundary_logged &&
+          [vertices contents] && [indices contents]) {
+        const auto* index_data = (const unsigned int*)[indices contents];
+        const unsigned int first_index = index_data[draw.index_offset];
+        const auto* vertex_data = (const float*)[vertices contents] + first_index * 8;
+        NSLog(@"ottsel metal: TFRAG submit-boundary draw=%lu index-offset=%u first-index=%u "
+              "vertex=(%.3f,%.3f,%.3f) uv=(%.3f,%.3f) mode=0x%08x projection=%u sign=%.1f "
+              "camera-row0=(%.6f,%.6f,%.6f,%.6f) camera-row1=(%.6f,%.6f,%.6f,%.6f) "
+              "camera-row2=(%.6f,%.6f,%.6f,%.6f) camera-row3=(%.6f,%.6f,%.6f,%.6f) "
+              "trans=(%.3f,%.3f,%.3f)",
+              (unsigned long)draw_index, draw.index_offset, first_index, vertex_data[0],
+              vertex_data[1], vertex_data[2], vertex_data[4], vertex_data[5], draw.mode,
+              mesh_uniforms.projection_mode, mesh_uniforms.camera_sign, mesh_uniforms.pc_camera[0],
+              mesh_uniforms.pc_camera[1], mesh_uniforms.pc_camera[2], mesh_uniforms.pc_camera[3],
+              mesh_uniforms.pc_camera[4], mesh_uniforms.pc_camera[5], mesh_uniforms.pc_camera[6],
+              mesh_uniforms.pc_camera[7], mesh_uniforms.pc_camera[8], mesh_uniforms.pc_camera[9],
+              mesh_uniforms.pc_camera[10], mesh_uniforms.pc_camera[11], mesh_uniforms.pc_camera[12],
+              mesh_uniforms.pc_camera[13], mesh_uniforms.pc_camera[14], mesh_uniforms.pc_camera[15],
+              mesh_uniforms.camera_trans[0], mesh_uniforms.camera_trans[1],
+              mesh_uniforms.camera_trans[2]);
+        submit_boundary_logged = true;
+      }
       [enc setFragmentTexture:texture atIndex:0];
       [enc setFragmentSamplerState:self.tieSamplers[sampler_idx] atIndex:0];
       [enc setFragmentBytes:&material length:sizeof(material) atIndex:1];
@@ -976,8 +1216,9 @@ class RenderEncoderEndGuard {
       // writes, then draws failing fragments again without depth writes.
       if (alpha_test && alpha_test_kind == 2 && alpha_fail == 1 &&
           source_depth_write_enabled) {
-        [enc setDepthStencilState:self.sceneNoDepthProbe ? self.overlayDepthState
-                                                         : self.tieNoWriteDepthState];
+        [enc setDepthStencilState:self.sceneNoDepthProbe
+                                       ? self.overlayDepthState
+                                       : self.tieNoWriteDepthStates[depth_compare_index]];
         TieMaterial alpha_fail_material{-10.f, alpha_min, fog_enable ? 1u : 0u,
                                          decal ? 1u : 0u};
         [enc setFragmentBytes:&alpha_fail_material length:sizeof(alpha_fail_material) atIndex:1];
@@ -989,24 +1230,86 @@ class RenderEncoderEndGuard {
       }
     }
   };
+  // Pre-world Direct/GIF batches (currently Sky) must be encoded before the
+  // opaque world queues. They are separate from Sprite3 so HUD ordering and
+  // the existing diagnostic overlay remain unchanged.
+  const auto sky_batches = _skyBatches.snapshot();
+  if (!sky_batches.empty() && !self.directFixtureIsolated && !self.sceneNoOverlayProbe) {
+    const unsigned int sky_state[5] = {0, 0, 0, 1, 0};
+    for (const auto& sky : sky_batches) {
+      [enc setRenderPipelineState:sky.blended ? self.directBlendPipeline
+                                              : self.directPipeline];
+      [enc setDepthStencilState:self.overlayDepthState];
+      [enc setVertexBuffer:sky.vertices offset:0 atIndex:0];
+      [enc setFragmentTexture:sky.texture atIndex:0];
+      [enc setFragmentSamplerState:self.directSampler atIndex:0];
+      [enc setFragmentBytes:sky_state length:sizeof(sky_state) atIndex:1];
+      [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:sky.vertex_count];
+    }
+    static bool sky_batch_logged = false;
+    if (!sky_batch_logged) {
+      sky_batch_logged = true;
+      NSLog(@"ottsel metal: native Sky batches=%lu encoded=pre-world/no-depth",
+            (unsigned long)sky_batches.size());
+    }
+  }
   // Desktop bucket order draws opaque background TFRAG before normal TIE.
   // They share the exact camera/material shader but have separate meshes and
   // time-of-day color tables.
   if (!self.directFixtureIsolated && !self.sceneNoTfragProbe) {
-    draw_mesh(self.tfragVertices, self.tfragIndices, self.tfragColors, self.tfragIndexCount,
-              _tfragDraws, true);
+    if (self.sceneTfragFixture) {
+      const OttselTfragFixtureVertex fixture_vertices[6] = {
+          {-0.75f, -0.75f, 0.5f, {255, 255, 255, 255}, 0.f, 1.f, 0, 0, 0},
+          {0.75f, -0.75f, 0.5f, {255, 255, 255, 255}, 1.f, 1.f, 0, 0, 0},
+          {0.75f, 0.75f, 0.5f, {255, 255, 255, 255}, 1.f, 0.f, 0, 0, 0},
+          {-0.75f, -0.75f, 0.5f, {255, 255, 255, 255}, 0.f, 1.f, 0, 0, 0},
+          {0.75f, 0.75f, 0.5f, {255, 255, 255, 255}, 1.f, 0.f, 0, 0, 0},
+          {-0.75f, 0.75f, 0.5f, {255, 255, 255, 255}, 0.f, 0.f, 0, 0, 0},
+      };
+      const unsigned int fixture_indices[6] = {0, 1, 2, 3, 4, 5};
+      const unsigned char fixture_colors[4] = {255, 255, 255, 255};
+      id<MTLBuffer> fixture_v = [self.device newBufferWithBytes:fixture_vertices
+                                                            length:sizeof(fixture_vertices)
+                                                           options:MTLResourceStorageModeShared];
+      id<MTLBuffer> fixture_i = [self.device newBufferWithBytes:fixture_indices
+                                                            length:sizeof(fixture_indices)
+                                                           options:MTLResourceStorageModeShared];
+      id<MTLBuffer> fixture_c = [self.device newBufferWithBytes:fixture_colors
+                                                            length:sizeof(fixture_colors)
+                                                           options:MTLResourceStorageModeShared];
+      std::vector<OttselMetalTieDraw> fixture_draws = {{0, 6, 0, 0}};
+      id<MTLTexture> saved_texture = self.tieTextures.count ? self.tieTextures[0] : nil;
+      while (self.tieTextures.count == 0) {
+        [self.tieTextures addObject:[NSNull null]];
+      }
+      self.tieTextures[0] = self.tfragFixtureTexture;
+      draw_mesh(fixture_v, fixture_i, fixture_c, 6, fixture_draws, true, false);
+      self.tieTextures[0] = saved_texture ? (id)saved_texture : (id)[NSNull null];
+      static bool fixture_logged = false;
+      if (!fixture_logged) {
+        fixture_logged = true;
+        NSLog(@"ottsel metal: TFRAG pipeline fixture submitted clip-quad=(-.75,-.75)..(.75,.75)");
+      }
+    } else {
+      draw_mesh(self.tfragVertices, self.tfragIndices, self.tfragColors, self.tfragIndexCount,
+                _tfragDraws, true, false);
+    }
   }
   if (!self.directFixtureIsolated && !self.sceneNoTieProbe) {
     draw_mesh(self.tieVertices, self.tieIndices, self.tieColors, self.tieIndexCount, _tieDraws,
-              false);
+              false, false);
   }
   if (!self.directFixtureIsolated && self.mercIndexCount && !self.sceneNoMercProbe) {
     draw_mesh(self.mercVertices, self.mercIndices, self.mercColors, self.mercIndexCount,
-              _mercDraws, false);
+              _mercDraws, false, true);
+  }
+  if (!self.directFixtureIsolated && _mercActorIndexCount && !self.sceneNoMercProbe) {
+    draw_mesh(_mercActorVertices, _mercActorIndices, _mercActorColors, _mercActorIndexCount,
+              _mercActorDraws, false, true);
   }
   const auto sprite_batches = _spriteBatches.snapshot();
   static unsigned int sprite_draw_logs = 0;
-  if (!sprite_batches.empty() && !self.directFixtureIsolated) {
+  if (!sprite_batches.empty() && !self.directFixtureIsolated && !self.sceneNoOverlayProbe) {
     const unsigned int sprite_state[5] = {ottsel::sprite3_alpha_test_enabled(),
                                           ottsel::sprite3_alpha_test_gequal(),
                                           ottsel::sprite3_primary_alpha_ref(), 1, 0};
@@ -1090,7 +1393,7 @@ class RenderEncoderEndGuard {
       }
     }
   }
-  if (!self.directFixtureIsolated && self.touchOverlayVertices && self.touchOverlayTex &&
+  if (!self.directFixtureIsolated && !self.sceneNoOverlayProbe && self.touchOverlayVertices && self.touchOverlayTex &&
       self.touchOverlayVertexCount) {
     [enc setRenderPipelineState:self.directBlendPipeline];
     [enc setDepthStencilState:self.overlayDepthState];
@@ -1206,22 +1509,66 @@ class RenderEncoderEndGuard {
   }
 }
 
+- (void)appendSkyMeshNow:(const OttselMetalSpriteVertex*)vertices
+             vertexCount:(NSUInteger)vertexCount
+                   rgba:(const unsigned char*)rgba
+                  width:(NSUInteger)width
+                 height:(NSUInteger)height
+                blended:(BOOL)blended {
+  if (!vertices || !vertexCount || !rgba || !width || !height || !self.device ||
+      !self.directPipeline) {
+    return;
+  }
+  MTLTextureDescriptor* desc = [MTLTextureDescriptor
+      texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                   width:width
+                                  height:height
+                               mipmapped:NO];
+  desc.usage = MTLTextureUsageShaderRead;
+  id<MTLTexture> texture = [self.device newTextureWithDescriptor:desc];
+  id<MTLBuffer> vertex_buffer = [self.device
+      newBufferWithBytes:vertices
+                   length:vertexCount * sizeof(OttselMetalSpriteVertex)
+                  options:MTLResourceStorageModeShared];
+  if (!texture || !vertex_buffer) {
+    return;
+  }
+  [texture replaceRegion:MTLRegionMake2D(0, 0, width, height)
+             mipmapLevel:0
+               withBytes:rgba
+             bytesPerRow:width * 4];
+  _skyBatches.append({vertex_buffer, texture, vertexCount, blended, false});
+}
+
 - (void)setTieCamera:(const float*)pcCamera
-          cameraTrans:(const float*)cameraTrans
+          mercPerspective:(const float*)mercPerspective
+         cameraTrans:(const float*)cameraTrans
            fogParams:(const float*)fogParams
            fogColor:(const float*)fogColor
          hvdfOffset:(const float*)hvdfOffset
        fogConstant:(float)fogConstant {
+  static int camera_trace_count = 0;
+  const bool trace_camera = camera_trace_count++ < 8;
+  if (trace_camera) {
+    lg::info("OTTSEL CAMERA METHOD: enter");
+  }
   if (!pcCamera || !cameraTrans || !fogParams || !fogColor || !hvdfOffset) {
     return;
   }
   std::lock_guard<std::mutex> lock(_tieUniformMutex);
   memcpy(_tieUniforms.pc_camera, pcCamera, sizeof(_tieUniforms.pc_camera));
+  if (mercPerspective) {
+    memcpy(_tieUniforms.merc_perspective, mercPerspective,
+           sizeof(_tieUniforms.merc_perspective));
+  }
   memcpy(_tieUniforms.camera_trans, cameraTrans, sizeof(_tieUniforms.camera_trans));
   memcpy(_tieUniforms.fog_params, fogParams, sizeof(_tieUniforms.fog_params));
   memcpy(_tieUniforms.fog_color, fogColor, sizeof(_tieUniforms.fog_color));
   memcpy(_tieUniforms.hvdf_offset, hvdfOffset, sizeof(_tieUniforms.hvdf_offset));
   _tieUniforms.fog_constant = fogConstant;
+  if (trace_camera) {
+    lg::info("OTTSEL CAMERA METHOD: exit");
+  }
 }
 
 - (void)setTieTextureNowAtIndex:(NSUInteger)index
@@ -1262,6 +1609,11 @@ class RenderEncoderEndGuard {
   upload.height = height;
   {
     std::lock_guard<std::mutex> lock(_tieUploadMutex);
+    const bool already_queued = _queuedTieTextureIndices.contains(index);
+    if (!ottsel_mobile_texture_upload_should_queue(already_queued)) {
+      return;
+    }
+    _queuedTieTextureIndices.insert(index);
     _pendingTieUploads.push_back(std::move(upload));
   }
 }
@@ -1374,6 +1726,17 @@ class RenderEncoderEndGuard {
     PendingMeshUpload upload;
     {
       std::lock_guard<std::mutex> lock(_tieUploadMutex);
+      // Mesh draw indices are global slots shared with the FIFO texture cache.
+      // Do not promote a snapshot while an earlier level's texture uploads can
+      // still leave its slots absent from tieTextures.
+      if (!ottsel_mobile_mesh_upload_ready((unsigned int)_pendingTieUploads.size())) {
+        static unsigned int residency_wait_logs = 0;
+        if (residency_wait_logs++ < 4) {
+          NSLog(@"ottsel metal: delaying mesh promotion for %lu pending texture uploads",
+                (unsigned long)_pendingTieUploads.size());
+        }
+        return;
+      }
       if (_pendingMeshUploads.empty()) {
         return;
       }
@@ -1395,6 +1758,10 @@ class RenderEncoderEndGuard {
   std::vector<unsigned int> indices;
   std::vector<OttselMetalTieDraw> draws;
   std::vector<unsigned char> colors;
+  std::vector<unsigned char> actor_vertices;
+  std::vector<unsigned int> actor_indices;
+  std::vector<OttselMetalTieDraw> actor_draws;
+  std::vector<unsigned char> actor_colors;
   {
     std::lock_guard<std::mutex> lock(_mercMutex);
     vertices = std::move(_pendingMercVertices);
@@ -1405,14 +1772,48 @@ class RenderEncoderEndGuard {
     _pendingMercIndices.clear();
     _pendingMercDraws.clear();
     _pendingMercColors.clear();
+    actor_vertices = std::move(_pendingMercActorVertices);
+    actor_indices = std::move(_pendingMercActorIndices);
+    actor_draws = std::move(_pendingMercActorDraws);
+    actor_colors = std::move(_pendingMercActorColors);
+    _pendingMercActorVertices.clear();
+    _pendingMercActorIndices.clear();
+    _pendingMercActorDraws.clear();
+    _pendingMercActorColors.clear();
+  }
+  if (!actor_vertices.empty() && !actor_indices.empty() && !actor_draws.empty()) {
+    static const unsigned char kWhite[4] = {255, 255, 255, 255};
+    if (actor_colors.empty()) {
+      actor_colors.assign(kWhite, kWhite + 4);
+    }
+    _mercActorVertices = [self.device newBufferWithBytes:actor_vertices.data()
+                                                    length:actor_vertices.size()
+                                                   options:MTLResourceStorageModeShared];
+    _mercActorIndices = [self.device newBufferWithBytes:actor_indices.data()
+                                                   length:actor_indices.size() * sizeof(unsigned int)
+                                                  options:MTLResourceStorageModeShared];
+    _mercActorColors = [self.device newBufferWithBytes:actor_colors.data()
+                                                  length:actor_colors.size()
+                                                 options:MTLResourceStorageModeShared];
+    _mercActorIndexCount = actor_indices.size();
+    _mercActorDraws = std::move(actor_draws);
+    NSLog(@"ottsel metal: MERC actor snapshot vertices=%lu triangles=%lu draws=%lu",
+          (unsigned long)(actor_vertices.size() / 32),
+          (unsigned long)(actor_indices.size() / 3), (unsigned long)_mercActorDraws.size());
   }
   if (vertices.empty() || indices.empty() || draws.empty()) {
-    self.mercVertices = nil;
-    self.mercIndices = nil;
-    self.mercColors = nil;
-    self.mercIndexCount = 0;
-    _mercDraws.clear();
+    if (!ottsel_mobile_merc_snapshot_should_retain(
+            true, self.mercVertices && self.mercIndices && self.mercIndexCount && !_mercDraws.empty())) {
+      self.mercVertices = nil;
+      self.mercIndices = nil;
+      self.mercColors = nil;
+      self.mercIndexCount = 0;
+      _mercDraws.clear();
+    }
     return;
+  }
+  if (colors.empty()) {
+    colors = {255, 255, 255, 255};
   }
   self.mercVertices = [self.device newBufferWithBytes:vertices.data()
                                                   length:vertices.size()
@@ -1499,6 +1900,23 @@ class RenderEncoderEndGuard {
   if (_pendingMercColors.empty()) {
     _pendingMercColors = {255, 255, 255, 255};
   }
+}
+
+- (void)setMercActorMesh:(const void*)vertices
+            vertexCount:(NSUInteger)vertexCount
+         triangleIndices:(const unsigned int*)indices
+              indexCount:(NSUInteger)indexCount
+                  draws:(const OttselMetalTieDraw*)draws
+              drawCount:(NSUInteger)drawCount {
+  if (!vertices || !vertexCount || !indices || !indexCount || !draws || !drawCount) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(_mercMutex);
+  _pendingMercActorVertices.assign((const unsigned char*)vertices,
+                                   (const unsigned char*)vertices + vertexCount * 32);
+  _pendingMercActorIndices.assign(indices, indices + indexCount);
+  _pendingMercActorDraws.assign(draws, draws + drawCount);
+  _pendingMercActorColors = {255, 255, 255, 255};
 }
 
 - (void)setSpriteMesh:(const OttselMetalSpriteVertex*)vertices
@@ -1612,6 +2030,7 @@ class RenderEncoderEndGuard {
 - (void)clearTransientSpriteBatches {
   _spriteBatches.erase_if(
       [](const NativeSpriteBatch& batch) { return !batch.persistent; });
+  _skyBatches.clear();
 }
 
 - (void)drainSpriteUploads {
@@ -1957,23 +2376,33 @@ void ottsel_metal_set_tie_colors(OttselMetal* m,
 
 void ottsel_metal_set_tie_camera(OttselMetal* m,
                                  const float pc_camera[16],
+                                 const float merc_perspective[16],
                                  const float camera_trans[4],
                                  const float fog_params[4],
                                  const float fog_color[4],
                                  const float hvdf_offset[4],
                                  float fog_constant) {
+  static int camera_wrapper_trace_count = 0;
+  const bool trace_camera = camera_wrapper_trace_count++ < 8;
+  if (trace_camera) {
+    lg::info("OTTSEL CAMERA WRAPPER: enter m-nonnull=1");
+  }
   if (!m) {
     return;
   }
   @autoreleasepool {
     OttselMetalRenderer* r = (__bridge OttselMetalRenderer*)m;
     [r setTieCamera:pc_camera
+         mercPerspective:merc_perspective
          cameraTrans:camera_trans
           fogParams:fog_params
            fogColor:fog_color
-         hvdfOffset:hvdf_offset
+       hvdfOffset:hvdf_offset
        fogConstant:fog_constant];
-  }
+    if (trace_camera) {
+      lg::info("OTTSEL CAMERA WRAPPER: exit");
+    }
+}
 }
 
 void ottsel_metal_set_tfrag_mesh(OttselMetal* m,
@@ -2025,8 +2454,29 @@ void ottsel_metal_append_merc_mesh(OttselMetal* m,
           vertexCount:vertex_count
        triangleIndices:triangle_indices
             indexCount:index_count
-                 draws:draws
-             drawCount:draw_count];
+             draws:draws
+         drawCount:draw_count];
+  }
+}
+
+void ottsel_metal_set_merc_actor_mesh(OttselMetal* m,
+                                      const void* vertices,
+                                      unsigned int vertex_count,
+                                      const unsigned int* triangle_indices,
+                                      unsigned int index_count,
+                                      const OttselMetalTieDraw* draws,
+                                      unsigned int draw_count) {
+  if (!m) {
+    return;
+  }
+  @autoreleasepool {
+    OttselMetalRenderer* r = (__bridge OttselMetalRenderer*)m;
+    [r setMercActorMesh:vertices
+            vertexCount:vertex_count
+         triangleIndices:triangle_indices
+              indexCount:index_count
+                  draws:draws
+              drawCount:draw_count];
   }
 }
 
@@ -2086,8 +2536,29 @@ void ottsel_metal_append_sprite_mesh_n(OttselMetal* m,
                 vertexCount:vertex_count
                        rgba:rgba
                       width:width
-                     height:height
-                    blended:blended != 0];
+                    height:height
+                   blended:blended != 0];
+  }
+}
+
+void ottsel_metal_append_sky_mesh_n(OttselMetal* m,
+                                    const OttselMetalSpriteVertex* vertices,
+                                    unsigned int vertex_count,
+                                    const unsigned char* rgba,
+                                    unsigned int width,
+                                    unsigned int height,
+                                    int blended) {
+  if (!m || !vertices || vertex_count == 0) {
+    return;
+  }
+  @autoreleasepool {
+    OttselMetalRenderer* r = (__bridge OttselMetalRenderer*)m;
+    [r appendSkyMeshNow:vertices
+            vertexCount:vertex_count
+                  rgba:rgba
+                 width:width
+                height:height
+               blended:blended != 0];
   }
 }
 

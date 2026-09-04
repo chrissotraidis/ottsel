@@ -28,11 +28,56 @@ index 2262e162a..e0aba9cd1 100644
      ;; set up some texture stuff
      (set! (-> arg0 tex1) (new 'static 'gs-tex1 :mmag #x1 :mmin #x1))
      (set! (-> arg0 tex0 tfx) 0)
+     ;; get the default adgif settings for this txture
+-    (if a1-1 (adgif-shader<-texture! arg0 a1-1)))
++    (if a1-1 (adgif-shader<-texture! arg0 a1-1))
++    ;; Capture the resolved texture-object family and generated TEX0 after
++    ;; lookup/login. This is producer-side only: it does not rewrite either
++    ;; the texture id or the AdGif state.
++    (when (and a1-1 (< *ottsel-particle-adgif-trace-count* 32))
++      (format 0 "OTTSEL PARTICLE TEX OBJECT: page=~f index=~f dest=~f size=~f~%"
++              (the float (-> arg1 page))
++              (the float (-> arg1 index))
++              (the float (-> a1-1 dest))
++              (the float (-> a1-1 size)))
++      (format 0 "OTTSEL PARTICLE TEX SHAPE: w=~f h=~f psm=~f~%"
++              (the float (-> a1-1 w))
++              (the float (-> a1-1 h))
++              (the float (-> a1-1 psm)))
++      (format 0 "OTTSEL PARTICLE TEX0 OBJECT: tbp=~f tw=~f th=~f psm=~f tcc=~f~%"
++              (the float (-> arg0 tex0 tbp0))
++              (the float (-> arg0 tex0 tw))
++              (the float (-> arg0 tex0 th))
++              (the float (-> arg0 tex0 psm))
++              (the float (-> arg0 tex0 tcc))))
++    )
 diff --git a/goal_src/jak1/engine/gfx/texture/texture.gc b/goal_src/jak1/engine/gfx/texture/texture.gc
 index ca5c19002..0f744bdbd 100644
 --- a/goal_src/jak1/engine/gfx/texture/texture.gc
 +++ b/goal_src/jak1/engine/gfx/texture/texture.gc
-@@ -1803,9 +1803,29 @@
+@@ -1725,11 +1725,21 @@
+   (set! *texture-page-dir* this)
+   (none))
+ 
++(define *ottsel-texture-relocate-trace-count* 0)
++
+ (defmethod relocate-dests! ((this texture-page) (new-dest int) (seg-id int))
+   "Update a texture-page so all the textures point to a new location"
+   (let ((v1-0 (shr new-dest 6))
+         (dst-block (shr (-> this segment seg-id dest) 6)))
+     (when (!= v1-0 dst-block) ;; skip if already correct
++      (when (and (= (-> this id) 2) (< *ottsel-texture-relocate-trace-count* 64))
++        (format 0 "OTTSEL TEX RELOCATE: page-id=~f seg=~f old=~f new=~f size=~f~%"
++                (the float (-> this id))
++                (the float seg-id)
++                (the float (-> this segment seg-id dest))
++                (the float new-dest)
++                (the float (-> this segment seg-id size)))
++        (+! *ottsel-texture-relocate-trace-count* 1))
+       (dotimes (tex-id (-> this length)) ;; iterate through all textures
+         (when (-> this data tex-id) ;; only if we have a texture
+           (let* ((tex (-> this data tex-id))
+@@ -1803,9 +1813,48 @@
      (set! (-> gp-0 memcpy) #f))
    #f)
  
@@ -58,11 +103,30 @@ index ca5c19002..0f744bdbd 100644
 +              (the float (-> id index))
 +              (if (-> probe-entry page) "yes" "no")
 +              (the float alloc-id))
++      (when (-> probe-entry page)
++        (let ((resident-page (-> probe-entry page)))
++          (format 0 "OTTSEL TEX PAGE STATE: index=~f dir-length=~f entry-length=~f entry-status=~f page-id=~f page-length=~f~%"
++                  (the float (-> id index))
++                  (the float (-> *texture-page-dir* length))
++                  (the float (-> probe-entry length))
++                  (the float (-> probe-entry status))
++                  (the float (-> resident-page id))
++                  (the float (-> resident-page length)))
++          (format 0 "OTTSEL TEX PAGE SEGMENTS: index=~f seg0-size=~f seg0-dest=~f seg1-size=~f seg1-dest=~f~%"
++                  (the float (-> id index))
++                  (the float (-> resident-page segment 0 size))
++                  (the float (-> resident-page segment 0 dest))
++                  (the float (-> resident-page segment 1 size))
++                  (the float (-> resident-page segment 1 dest)))
++          (format 0 "OTTSEL TEX PAGE SEGMENTS: index=~f seg2-size=~f seg2-dest=~f~%"
++                  (the float (-> id index))
++                  (the float (-> resident-page segment 2 size))
++                  (the float (-> resident-page segment 2 dest)))))
 +      (+! *ottsel-texture-login-trace-count* 1)))
    ;; make sure its a valid entry
    (when (and (nonzero? (-> id page)) (< (the-as uint (-> id page)) (the-as uint (-> *texture-page-dir* length))))
      ;; look up current entry
-@@ -1827,14 +1847,33 @@
+@@ -1827,14 +1857,33 @@
            (set! (-> *texture-pool* allocate-func) old-alloc-func)))
        dir-entry)))
  
@@ -98,3 +162,37 @@ index ca5c19002..0f744bdbd 100644
  
  (defmethod unload! ((this texture-pool) (arg0 texture-page))
    "Unload the texture from the directory"
+diff --git a/goal_src/jak1/engine/gfx/sprite/sprite.gc b/goal_src/jak1/engine/gfx/sprite/sprite.gc
+index b7805d60b..f7900efb0 100644
+--- a/goal_src/jak1/engine/gfx/sprite/sprite.gc
++++ b/goal_src/jak1/engine/gfx/sprite/sprite.gc
+@@ -87,6 +87,8 @@
+ 
+ (define *sprite-aux-list* (new 'global 'sprite-aux-list 256))
+ 
++(define *ottsel-sprite-frame-trace-count* 0)
++
+ (defun clear-sprite-aux-list ()
+   "Remove everything from the sprite aux list"
+   (set! (-> *sprite-aux-list* entry) 0)
+@@ -521,6 +523,19 @@
+       (set! (-> pkt vif0) (new 'static 'vif-tag :imm #x404 :cmd (vif-cmd stcycl)))
+       (set! (-> pkt vif1) (new 'static 'vif-tag :imm #x3d4 :cmd (vif-cmd unpack-v4-32) :num s5-0))
+       (set! (-> v1-0 base) (&+ (the-as pointer pkt) 16)))
+-    (sprite-setup-frame-data (the-as sprite-frame-data (-> dma-buff base)) (the-as int tbp-offset))
++    (let ((frame-data (the-as sprite-frame-data (-> dma-buff base))))
++      (sprite-setup-frame-data frame-data (the-as int tbp-offset))
++      (when (< *ottsel-sprite-frame-trace-count* 2048)
++        (format 0 "OTTSEL SPRITE FRAME: fbp=~f tbp=~f pfog0=~f inv-area=~f~%"
++                (the float tbp-offset)
++                (the float (-> frame-data screen-shader tex0 tbp0))
++                (the float (-> frame-data pfog0))
++                (the float (-> frame-data inv-area)))
++        (format 0 "OTTSEL SPRITE FRAME HMGE: x=~f y=~f z=~f w=~f~%"
++                (the float (-> frame-data hmge-scale x))
++                (the float (-> frame-data hmge-scale y))
++                (the float (-> frame-data hmge-scale z))
++                (the float (-> frame-data hmge-scale w)))
++        (+! *ottsel-sprite-frame-trace-count* 1)))
+     (&+! (-> dma-buff base) (* s5-0 16)))
+   (none))

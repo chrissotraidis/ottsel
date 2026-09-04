@@ -163,6 +163,7 @@ u32 g_mobile_chain_no = 0;
 u32& g_chain_no = g_mobile_chain_no;
 bool g_mobile_generic_probe_pending = false;
 bool g_mobile_merc_trace = false;
+bool g_mobile_merc_clip_ledger = false;
 constexpr u32 kMobileDirectTraceChains = 900;
 
 // CPU-side level data shared with the desktop PC renderer.  iOS keeps this
@@ -195,6 +196,8 @@ struct OttselPcPortData {
 };
 static_assert(sizeof(OttselPcPortData) == 16 * 25, "PC-port packet layout");
 
+void log_mobile_eichar_village_clip(const OttselPcPortData& camera);
+
 OttselPcPortData g_mobile_camera{};
 u64 g_mobile_camera_packet_count = 0;
 u32 g_mobile_camera_last_chain = 0;
@@ -203,6 +206,8 @@ std::string g_mobile_camera_level;
 std::unordered_set<std::string> g_mobile_camera_levels_logged;
 bool g_mobile_camera_transition_trace = false;
 u32 g_mobile_camera_transition_trace_count = 0;
+std::vector<std::array<float, 3>> g_mobile_eichar_clip_vertices;
+u32 g_mobile_eichar_village_clip_logs = 0;
 std::string g_mobile_tie_level;
 u32 g_mobile_tie_geo = 0;
 u32 g_mobile_tie_tree = 0;
@@ -229,6 +234,8 @@ bool g_mobile_tfrag_visibility_ready = false;
 bool g_mobile_tfrag_normal_only_probe = false;
 std::array<float, 16> g_mobile_tfrag_cull_planes{};
 std::array<float, 16> g_mobile_tie_cull_planes{};
+bool g_mobile_tfrag_no_cull_probe = false;
+bool g_mobile_tfrag_no_cull_probe_armed = false;
 bool g_mobile_tie_visibility_ready = false;
 std::string g_mobile_tie_visibility_level;
 std::array<float, 4> g_mobile_fog_color = {29.f / 255.f, 80.f / 255.f, 200.f / 255.f,
@@ -287,6 +294,17 @@ void set_mobile_tie_colors(const OttselPcPortData& packet) {
   }
   u32 total_color_count = 0;
   for (const auto& range : g_mobile_tie_color_ranges) {
+    if (!ottsel_mobile_scene_geometry_range_is_valid(
+            range.geo, range.tree, (unsigned int)level_it->second->tie_trees.size(),
+            range.geo < level_it->second->tie_trees.size()
+                ? (unsigned int)level_it->second->tie_trees[range.geo].size()
+                : 0u)) {
+      lg::warn("OTTSEL TIE: dropping stale color range geo={} tree={} level='{}'", range.geo,
+               range.tree, g_mobile_tie_level);
+      g_mobile_tie_color_ranges.clear();
+      g_mobile_tie_itimes_valid = false;
+      return;
+    }
     const auto& colors = level_it->second->tie_trees[range.geo][range.tree].colors;
     total_color_count = std::max(total_color_count, range.color_offset + colors.color_count);
   }
@@ -349,6 +367,17 @@ void set_mobile_tfrag_colors(const OttselPcPortData& packet) {
   }
   u32 total_color_count = 0;
   for (const auto& range : g_mobile_tfrag_color_ranges) {
+    if (!ottsel_mobile_scene_geometry_range_is_valid(
+            range.geo, range.tree, (unsigned int)level_it->second->tfrag_trees.size(),
+            range.geo < level_it->second->tfrag_trees.size()
+                ? (unsigned int)level_it->second->tfrag_trees[range.geo].size()
+                : 0u)) {
+      lg::warn("OTTSEL TFRAG: dropping stale color range geo={} tree={} level='{}'", range.geo,
+               range.tree, g_mobile_tfrag_level);
+      g_mobile_tfrag_color_ranges.clear();
+      g_mobile_tfrag_itimes_valid = false;
+      return;
+    }
     const auto& colors = level_it->second->tfrag_trees[range.geo][range.tree].colors;
     total_color_count = std::max(total_color_count, range.color_offset + colors.color_count);
   }
@@ -398,19 +427,43 @@ void set_mobile_tie_camera(const OttselPcPortData& packet) {
   }
   pc_camera[3 * 4 + 2] = fog_constant * packet.perspective[3][2] / 8388608.f;
   const float fog_params[4] = {packet.hvdf_off[3], packet.fog[1], packet.fog[2], 1.f / 255.f};
-  ottsel_metal_set_tie_camera(g_metal, pc_camera, packet.trans, fog_params,
+  static u32 camera_submit_trace_count = 0;
+  if (camera_submit_trace_count < 8) {
+    lg::info("OTTSEL CAMERA SUBMIT: before metal wrapper level='{}' g_metal={} fog={}",
+             g_mobile_tie_level, (void*)g_metal, fog_constant);
+    ++camera_submit_trace_count;
+  }
+  ottsel_metal_set_tie_camera(g_metal, pc_camera, &packet.perspective[0][0], packet.trans, fog_params,
                                g_mobile_fog_color.data(), packet.hvdf_off, fog_constant);
+  static u32 camera_return_trace_count = 0;
+  if (camera_return_trace_count < 8) {
+    lg::info("OTTSEL CAMERA SUBMIT: returned from metal wrapper level='{}'", g_mobile_tie_level);
+    ++camera_return_trace_count;
+  }
 
   static bool clip_equation_logged = false;
   if (!clip_equation_logged && g_mobile_tie_level == "village1") {
     const auto level_it = g_mobile_levels.find(g_mobile_tie_level);
-    if (level_it != g_mobile_levels.end() && !level_it->second->tie_trees.empty() &&
-        !level_it->second->tie_trees[g_mobile_tie_geo].empty()) {
-      const auto& ledger_vertex = level_it->second->tie_trees[g_mobile_tie_geo][g_mobile_tie_tree]
+    const auto* tie_trees = level_it != g_mobile_levels.end() ? &level_it->second->tie_trees : nullptr;
+    if (tie_trees &&
+        ottsel_mobile_scene_geometry_range_is_valid(g_mobile_tie_geo, g_mobile_tie_tree,
+                                                    tie_trees->size(),
+                                                    tie_trees->size() > g_mobile_tie_geo
+                                                        ? (*tie_trees)[g_mobile_tie_geo].size()
+                                                        : 0) &&
+        !(*tie_trees)[g_mobile_tie_geo].empty()) {
+      const auto& ledger_vertex = (*tie_trees)[g_mobile_tie_geo][g_mobile_tie_tree]
                                       .unpacked.vertices.front();
       const float vx = ledger_vertex.x - packet.trans[0];
       const float vy = ledger_vertex.y - packet.trans[1];
       const float vz = ledger_vertex.z - packet.trans[2];
+      lg::info("OTTSEL CLIP INPUT: vertex=({:.3f},{:.3f},{:.3f}) packet-trans=({:.3f},{:.3f},{:.3f}) "
+               "pc-row0=({:.6f},{:.6f},{:.6f},{:.6f}) pc-row1=({:.6f},{:.6f},{:.6f},{:.6f}) "
+               "pc-row2=({:.6f},{:.6f},{:.6f},{:.6f}) pc-row3=({:.6f},{:.6f},{:.6f},{:.6f})",
+               ledger_vertex.x, ledger_vertex.y, ledger_vertex.z, packet.trans[0], packet.trans[1],
+               packet.trans[2], pc_camera[0], pc_camera[1], pc_camera[2], pc_camera[3], pc_camera[4],
+               pc_camera[5], pc_camera[6], pc_camera[7], pc_camera[8], pc_camera[9], pc_camera[10],
+               pc_camera[11], pc_camera[12], pc_camera[13], pc_camera[14], pc_camera[15]);
       const auto project_reference = [&](float sign) {
         float transformed[4] = {
             sign * pc_camera[12], sign * pc_camera[13], sign * pc_camera[14], sign * pc_camera[15]};
@@ -463,6 +516,123 @@ void set_mobile_tie_camera(const OttselPcPortData& packet) {
     }
   }
 
+  // Trigger-gated companion ledger for the live NORMAL TFRAG mesh. This uses
+  // the exact packet/camera equation but never changes the submitted draw.
+  static bool tfrag_clip_trigger_armed = false;
+  static std::string tfrag_clip_logged_for;
+  if (!tfrag_clip_trigger_armed) {
+    const std::string trigger = ottsel_ios_writable_dir() +
+                                "ottsel-trace-metal-tfrag-clip-ledger";
+    if (access(trigger.c_str(), F_OK) == 0) {
+      unlink(trigger.c_str());
+      tfrag_clip_trigger_armed = true;
+      lg::info("OTTSEL TFRAG: CPU clip ledger enabled");
+    }
+  }
+  if (tfrag_clip_trigger_armed && tfrag_clip_logged_for != g_mobile_tfrag_level &&
+      !g_mobile_tfrag_level.empty()) {
+    const auto tfrag_level_it = g_mobile_levels.find(g_mobile_tfrag_level);
+    if (tfrag_level_it != g_mobile_levels.end()) {
+      const auto& tfrag_trees = tfrag_level_it->second->tfrag_trees;
+      const u32 geo = (u32)std::clamp(Gfx::g_global_settings.lod_tfrag, 0,
+                                      (int)tfrag_trees.size() - 1);
+      if (geo < tfrag_trees.size()) {
+        std::vector<const tfrag3::PreloadedVertex*> candidate_vertices;
+        for (const auto& tree : tfrag_trees[geo]) {
+          if (tree.kind != tfrag3::TFragmentTreeKind::NORMAL) {
+            continue;
+          }
+          std::vector<unsigned char> node_visibility(tree.bvh.vis_nodes.size(), 0);
+          for (size_t node_index = 0; node_index < tree.bvh.vis_nodes.size(); ++node_index) {
+            const auto& node = tree.bvh.vis_nodes[node_index];
+            bool in_view = true;
+            for (int component = 0; component < 4; ++component) {
+              const float distance = packet.planes[0][component] * node.bsphere[0] +
+                                     packet.planes[1][component] * node.bsphere[1] +
+                                     packet.planes[2][component] * node.bsphere[2] -
+                                     packet.planes[3][component];
+              if (distance <= -node.bsphere[3]) {
+                in_view = false;
+                break;
+              }
+            }
+            node_visibility[node_index] = in_view ? 1 : 0;
+          }
+          for (const auto& draw : tree.draws) {
+            size_t index_offset = draw.unpacked.idx_of_first_idx_in_full_buffer;
+            for (const auto& group : draw.vis_groups) {
+              const bool visible = ottsel_mobile_visibility_group_is_visible(
+                  group.vis_idx_in_pc_bvh, node_visibility.data(),
+                  (unsigned int)node_visibility.size());
+              if (visible && index_offset + group.num_inds <= tree.unpacked.indices.size()) {
+                for (u32 i = 0; i < group.num_inds; ++i) {
+                  const u32 index = tree.unpacked.indices[index_offset + i];
+                  if (index < tree.unpacked.vertices.size()) {
+                    candidate_vertices.push_back(&tree.unpacked.vertices[index]);
+                  }
+                }
+              }
+              index_offset += group.num_inds;
+            }
+          }
+        }
+        const size_t candidate_count = candidate_vertices.size();
+        if (candidate_count) {
+          u64 finite = 0, gl_visible = 0, metal_visible = 0;
+          float min_ndc_x = 1e30f, max_ndc_x = -1e30f;
+          float min_ndc_y = 1e30f, max_ndc_y = -1e30f;
+          float min_ndc_z = 1e30f, max_ndc_z = -1e30f;
+          const size_t stride = std::max<size_t>(1, candidate_count / 4096);
+          for (size_t candidate_index = 0; candidate_index < candidate_vertices.size();
+               ++candidate_index) {
+              if ((candidate_index % stride) != 0) {
+                continue;
+              }
+              const auto& v = *candidate_vertices[candidate_index];
+              const float x = v.x - packet.trans[0];
+              const float y = v.y - packet.trans[1];
+              const float z = v.z - packet.trans[2];
+              float clip[4] = {-pc_camera[12], -pc_camera[13], -pc_camera[14], 0.f};
+              for (int c = 0; c < 4; ++c) {
+                clip[c] -= pc_camera[c] * x + pc_camera[4 + c] * y + pc_camera[8 + c] * z;
+              }
+              if (!std::isfinite(clip[0]) || !std::isfinite(clip[1]) ||
+                  !std::isfinite(clip[2]) || !std::isfinite(clip[3]) ||
+                  std::abs(clip[3]) < 1e-6f) {
+                continue;
+              }
+              ++finite;
+              const float ndc_x = clip[0] / clip[3];
+              const float ndc_y = (clip[1] * (512.f / 448.f)) / clip[3];
+              const float ndc_z = ((clip[2] + clip[3]) * 0.5f) / clip[3];
+              min_ndc_x = std::min(min_ndc_x, ndc_x);
+              max_ndc_x = std::max(max_ndc_x, ndc_x);
+              min_ndc_y = std::min(min_ndc_y, ndc_y);
+              max_ndc_y = std::max(max_ndc_y, ndc_y);
+              min_ndc_z = std::min(min_ndc_z, ndc_z);
+              max_ndc_z = std::max(max_ndc_z, ndc_z);
+              if (std::abs(clip[0]) <= std::abs(clip[3]) &&
+                  std::abs(clip[1]) <= std::abs(clip[3]) &&
+                  std::abs(clip[2]) <= std::abs(clip[3])) {
+                ++gl_visible;
+                const float metal_z = (clip[2] + clip[3]) * 0.5f;
+                if (metal_z >= 0.f && metal_z <= clip[3]) {
+                  ++metal_visible;
+                }
+              }
+          }
+          tfrag_clip_logged_for = g_mobile_tfrag_level;
+          lg::info("OTTSEL TFRAG: CPU clip ledger level='{}' geo={} finite={}/{} "
+                   "gl-clip-visible={} metal-clip-visible={} ndc-x=({:.4f},{:.4f}) "
+                   "ndc-y=({:.4f},{:.4f}) ndc-z=({:.4f},{:.4f})",
+                   g_mobile_tfrag_level, geo, finite,
+                   (candidate_count + stride - 1) / stride, gl_visible, metal_visible,
+                   min_ndc_x, max_ndc_x, min_ndc_y, max_ndc_y, min_ndc_z, max_ndc_z);
+        }
+      }
+    }
+  }
+
   // A single CPU projection summary is the falsifiable companion to the
   // Metal draw. If no vertices are inside clip space here, debug camera math
   // or mesh selection; if they are, debug the encoder/pipeline instead.
@@ -474,8 +644,15 @@ void set_mobile_tie_camera(const OttselPcPortData& packet) {
   if (level_it == g_mobile_levels.end()) {
     return;
   }
-  const auto& vertices = level_it->second->tie_trees[g_mobile_tie_geo][g_mobile_tie_tree]
-                             .unpacked.vertices;
+  const auto& tie_trees = level_it->second->tie_trees;
+  if (!ottsel_mobile_scene_geometry_range_is_valid(
+          g_mobile_tie_geo, g_mobile_tie_tree, tie_trees.size(),
+          g_mobile_tie_geo < tie_trees.size() ? tie_trees[g_mobile_tie_geo].size() : 0)) {
+    lg::info("OTTSEL TIE: clip sample skipped stale geometry geo={} tree={} geos={}",
+             g_mobile_tie_geo, g_mobile_tie_tree, tie_trees.size());
+    return;
+  }
+  const auto& vertices = tie_trees[g_mobile_tie_geo][g_mobile_tie_tree].unpacked.vertices;
   u64 finite = 0;
   u64 metal_visible = 0;
   u64 gl_visible = 0;
@@ -661,6 +838,10 @@ void build_visible_mobile_tie_mesh(const std::string& level_name,
     return;
   }
   const auto& level = *level_it->second;
+  if (!ottsel_mobile_scene_has_geometry((unsigned int)level.tie_trees.size())) {
+    lg::info("OTTSEL TIE: level='{}' has no tie geometry; keeping TIE pass empty", level_name);
+    return;
+  }
   const u32 texture_base = g_mobile_level_texture_bases.at(&level);
   std::vector<tfrag3::PreloadedVertex> vertices;
   std::vector<u32> triangles;
@@ -714,8 +895,8 @@ void build_visible_mobile_tie_mesh(const std::string& level_name,
                                   (int)level.tie_trees.size() - 1);
   for (u32 tree_idx = 0; tree_idx < level.tie_trees[geo].size(); ++tree_idx) {
       const auto& tree = level.tie_trees[geo][tree_idx];
-    const u32 first = tree.category_draw_indices[(u32)tfrag3::TieCategory::NORMAL];
-    const u32 last = tree.category_draw_indices[(u32)tfrag3::TieCategory::TRANS];
+    const u32 first = tree.category_draw_indices[0];
+    const u32 last = tree.category_draw_indices[tfrag3::kNumTieCategories];
     if (first == last || tree.unpacked.vertices.empty() ||
         color_offset + tree.colors.color_count > UINT16_MAX + 1u) {
       continue;
@@ -724,19 +905,45 @@ void build_visible_mobile_tie_mesh(const std::string& level_name,
     // rebuilding this 500k+ vertex mesh on every frustum change causes severe
     // stalls and races a camera-dependent mesh against a newer camera.
     total_nodes += tree.bvh.vis_nodes.size();
-    visible_nodes += tree.bvh.vis_nodes.size();
+    std::vector<unsigned char> node_visibility(tree.bvh.vis_nodes.size(), 0);
+    for (size_t node_index = 0; node_index < tree.bvh.vis_nodes.size(); ++node_index) {
+      const auto& node = tree.bvh.vis_nodes[node_index];
+      bool in_view = true;
+      for (int component = 0; component < 4; ++component) {
+        const float distance = packet.planes[0][component] * node.bsphere[0] +
+                               packet.planes[1][component] * node.bsphere[1] +
+                               packet.planes[2][component] * node.bsphere[2] -
+                               packet.planes[3][component];
+        if (ottsel_mobile_scene_should_cull(false) && distance <= -node.bsphere[3]) {
+          in_view = false;
+          break;
+        }
+      }
+      node_visibility[node_index] = in_view ? 1 : 0;
+    }
+    visible_nodes += std::count(node_visibility.begin(), node_visibility.end(), 1);
     const u32 vertex_base = (u32)vertices.size();
     const u32 triangle_start = (u32)triangles.size();
-    for (u32 draw_idx = first; draw_idx < last; ++draw_idx) {
+    for (u32 category = 0; category < tfrag3::kNumTieCategories; ++category) {
+      if (!ottsel_mobile_tie_category_is_supported(category)) {
+        continue;
+      }
+      const u32 category_first = tree.category_draw_indices[category];
+      const u32 category_last = tree.category_draw_indices[category + 1];
+      for (u32 draw_idx = category_first; draw_idx < category_last; ++draw_idx) {
       const auto& draw = tree.static_draws[draw_idx];
       std::vector<u32> selected_indices;
+      u32 expected_triangles = 0;
       u32 index_offset = draw.unpacked.idx_of_first_idx_in_full_buffer;
       bool strip_run_open = false;
       for (const auto& group : draw.vis_groups) {
         total_groups++;
-        const bool is_visible = true;
+        const bool is_visible = ottsel_mobile_visibility_group_is_visible(
+            group.vis_idx_in_pc_bvh, node_visibility.data(),
+            (unsigned int)node_visibility.size());
         if (is_visible) {
           visible_groups++;
+          expected_triangles += group.num_tris;
           selected_indices.insert(selected_indices.end(),
                                   tree.unpacked.indices.begin() + index_offset,
                                   tree.unpacked.indices.begin() + index_offset + group.num_inds);
@@ -753,6 +960,12 @@ void build_visible_mobile_tie_mesh(const std::string& level_name,
       const u32 batch_start = (u32)triangles.size();
       append_indices(selected_indices, vertex_base, tree.use_strips);
       const u32 batch_count = (u32)triangles.size() - batch_start;
+      if (batch_count / 3 != expected_triangles) {
+        lg::warn("OTTSEL TIE: flattened draw triangle mismatch geo={} tree={} draw={} "
+                 "expected={} emitted={} source-indices={} mode=0x{:x}",
+                 geo, tree_idx, draw_idx, expected_triangles, batch_count / 3,
+                 selected_indices.size(), draw.mode.as_int());
+      }
       if (batch_count) {
         batches.push_back(
             {batch_start, batch_count,
@@ -783,6 +996,7 @@ void build_visible_mobile_tie_mesh(const std::string& level_name,
         if (draw.tree_tex_id >= 0 && (size_t)draw.tree_tex_id < used_textures.size()) {
           used_textures[draw.tree_tex_id] = true;
         }
+      }
       }
     }
       if ((u32)triangles.size() == triangle_start) {
@@ -846,8 +1060,28 @@ void build_visible_mobile_tfrag_mesh(const std::string& level_name,
   if (level_it == g_mobile_levels.end()) {
     return;
   }
+  if (!g_mobile_tfrag_no_cull_probe_armed) {
+    const std::string trigger = ottsel_ios_writable_dir() +
+                                "ottsel-trace-metal-scene-tfrag-no-cull";
+    if (access(trigger.c_str(), F_OK) == 0) {
+      unlink(trigger.c_str());
+      g_mobile_tfrag_no_cull_probe = true;
+      lg::info("OTTSEL TFRAG: no-cull probe enabled");
+    }
+    g_mobile_tfrag_no_cull_probe_armed = true;
+  }
   const auto& level = *level_it->second;
   const u32 texture_base = g_mobile_level_texture_bases.at(&level);
+  bool draw_ledger = false;
+  if (level_name == "village1") {
+    const std::string trigger = ottsel_ios_writable_dir() +
+                                "ottsel-trace-mobile-tfrag-draw-ledger";
+    if (access(trigger.c_str(), F_OK) == 0) {
+      unlink(trigger.c_str());
+      draw_ledger = true;
+      lg::info("OTTSEL TFRAG: per-draw index ledger enabled");
+    }
+  }
   if (!g_mobile_tfrag_normal_only_probe) {
     const std::string trigger = ottsel_ios_writable_dir() +
                                 "ottsel-trace-metal-scene-tfrag-normal-only";
@@ -867,6 +1101,8 @@ void build_visible_mobile_tfrag_mesh(const std::string& level_name,
   u32 visible_nodes = 0;
   u32 total_groups = 0;
   u32 visible_groups = 0;
+  u32 negative_texture_draws = 0;
+  u32 nonnegative_texture_draws = 0;
   std::unordered_map<u32, u32> mode_counts;
   const auto append_strip = [&triangles](const std::vector<u32>& indices, u32 vertex_base) {
     size_t run_start = 0;
@@ -895,6 +1131,12 @@ void build_visible_mobile_tfrag_mesh(const std::string& level_name,
   // treating them as opaque normal geometry.
   const u32 geo = (u32)std::clamp(Gfx::g_global_settings.lod_tfrag, 0,
                                   (int)level.tfrag_trees.size() - 1);
+  if (!ottsel_mobile_scene_geometry_slot_is_populated(
+          (unsigned int)level.tfrag_trees[geo].size())) {
+    lg::info("OTTSEL TFRAG: level='{}' geo={} has no geometry; keeping TFRAG pass empty", level_name,
+             geo);
+    return;
+  }
   for (u32 tree_idx = 0; tree_idx < level.tfrag_trees[geo].size(); ++tree_idx) {
       const auto& tree = level.tfrag_trees[geo][tree_idx];
     if ((tree.kind != tfrag3::TFragmentTreeKind::NORMAL &&
@@ -906,24 +1148,61 @@ void build_visible_mobile_tfrag_mesh(const std::string& level_name,
       continue;
     }
     total_nodes += tree.bvh.vis_nodes.size();
-    visible_nodes += tree.bvh.vis_nodes.size();
+    // Match upstream's sphere-frustum test for this immutable level snapshot.
+    // Camera motion changes uniforms; a later experiment can promote per-draw
+    // visibility if snapshot-time culling proves too stale during movement.
+    std::vector<unsigned char> node_visibility(tree.bvh.vis_nodes.size(), 0);
+    for (size_t node_index = 0; node_index < tree.bvh.vis_nodes.size(); ++node_index) {
+      const auto& node = tree.bvh.vis_nodes[node_index];
+      bool in_view = true;
+      for (int component = 0; component < 4; ++component) {
+        const float distance = packet.planes[0][component] * node.bsphere[0] +
+                               packet.planes[1][component] * node.bsphere[1] +
+                               packet.planes[2][component] * node.bsphere[2] -
+                               packet.planes[3][component];
+        if (ottsel_mobile_scene_should_cull(g_mobile_tfrag_no_cull_probe) &&
+            distance <= -node.bsphere[3]) {
+          in_view = false;
+          break;
+        }
+      }
+      node_visibility[node_index] = in_view ? 1 : 0;
+    }
+    visible_nodes += std::count(node_visibility.begin(), node_visibility.end(), 1);
     const u32 vertex_base = (u32)vertices.size();
     const u32 triangle_start = (u32)triangles.size();
     for (const auto& draw : tree.draws) {
+      if (draw.tree_tex_id >= 0 &&
+          !ottsel_mobile_positive_texture_id_is_valid(draw.tree_tex_id,
+                                                      (unsigned int)level.textures.size())) {
+        static u32 invalid_texture_draw_logs = 0;
+        if (invalid_texture_draw_logs < 8) {
+          lg::warn("OTTSEL TFRAG: dropping out-of-range positive texture id={} level='{}' count={}",
+                   draw.tree_tex_id, level_name, level.textures.size());
+          ++invalid_texture_draw_logs;
+        }
+        continue;
+      }
+      if (draw.tree_tex_id < 0) {
+        ++negative_texture_draws;
+      } else {
+        ++nonnegative_texture_draws;
+      }
       std::vector<u32> selected_indices;
+      u32 expected_triangles = 0;
       u32 index_offset = draw.unpacked.idx_of_first_idx_in_full_buffer;
       bool strip_run_open = false;
       for (const auto& group : draw.vis_groups) {
         ++total_groups;
-        const bool is_visible = true;
+        const bool is_visible = ottsel_mobile_visibility_group_is_visible(
+            group.vis_idx_in_pc_bvh, node_visibility.data(),
+            (unsigned int)node_visibility.size());
         if (is_visible) {
           ++visible_groups;
+          expected_triangles += group.num_tris;
           selected_indices.insert(selected_indices.end(),
                                   tree.unpacked.indices.begin() + index_offset,
                                   tree.unpacked.indices.begin() + index_offset + group.num_inds);
-          // Keep adjacent visible groups in one strip, matching OpenGL's
-          // contiguous multidraw run. Insert a restart only at a visibility
-          // transition, not after every visible group.
           strip_run_open = tree.use_strips;
         } else if (tree.use_strips && strip_run_open) {
           selected_indices.push_back(UINT32_MAX);
@@ -942,6 +1221,12 @@ void build_visible_mobile_tfrag_mesh(const std::string& level_name,
         }
       }
       const u32 batch_count = (u32)triangles.size() - batch_start;
+      if (batch_count / 3 != expected_triangles) {
+        lg::warn("OTTSEL TFRAG: flattened draw triangle mismatch tree={} draw={} "
+                 "expected={} emitted={} source-indices={} mode=0x{:x}",
+                 tree_idx, &draw - tree.draws.data(), expected_triangles, batch_count / 3,
+                 selected_indices.size(), draw.mode.as_int());
+      }
       if (batch_count) {
         batches.push_back(
             {batch_start, batch_count,
@@ -968,6 +1253,7 @@ void build_visible_mobile_tfrag_mesh(const std::string& level_name,
     lg::warn("OTTSEL TFRAG: visible opaque mesh produced no geometry for '{}'", level_name);
     return;
   }
+  u32 texture_ledger_count = 0;
   for (u32 texture_idx = 0; texture_idx < level.textures.size(); ++texture_idx) {
     if (!used_textures[texture_idx]) {
       continue;
@@ -976,6 +1262,21 @@ void build_visible_mobile_tfrag_mesh(const std::string& level_name,
     if (texture.data.size() == (size_t)texture.w * texture.h) {
       ottsel_metal_set_tie_texture(g_metal, texture_base + texture_idx, texture.data.data(),
                                    texture.w, texture.h);
+      static constexpr u32 kTextureLedgerLimit = 8;
+      if (texture_ledger_count < kTextureLedgerLimit) {
+        u8 alpha_min = 255;
+        u8 alpha_max = 0;
+        for (const u32 pixel : texture.data) {
+          const u8 alpha = (u8)(pixel >> 24);
+          alpha_min = std::min(alpha_min, alpha);
+          alpha_max = std::max(alpha_max, alpha);
+        }
+        lg::info("OTTSEL TFRAG TEXTURE LEDGER: local={} metal={} name='{}' size={}x{} "
+                 "first=0x{:08x} alpha=({},{})",
+                 texture_idx, texture_base + texture_idx, texture.debug_name, texture.w,
+                 texture.h, texture.data.front(), alpha_min, alpha_max);
+        ++texture_ledger_count;
+      }
     }
   }
   std::vector<u8> default_colors((size_t)color_offset * 4, 128);
@@ -989,10 +1290,11 @@ void build_visible_mobile_tfrag_mesh(const std::string& level_name,
   g_mobile_tfrag_visibility_level = level_name;
   memcpy(g_mobile_tfrag_cull_planes.data(), packet.planes, sizeof(packet.planes));
   lg::info("OTTSEL TFRAG: stable level snapshot lod=0 geos={} trees={} nodes={}/{} groups={}/{} "
-           "batches={} vertices={} triangles={}",
+           "batches={} vertices={} triangles={} tex-negative={} tex-nonnegative={}",
            level.tfrag_trees.size(), g_mobile_tfrag_color_ranges.size(), visible_nodes, total_nodes,
            visible_groups,
-           total_groups, batches.size(), vertices.size(), triangles.size() / 3);
+           total_groups, batches.size(), vertices.size(), triangles.size() / 3,
+           negative_texture_draws, nonnegative_texture_draws);
   std::vector<std::pair<u32, u32>> sorted_modes(mode_counts.begin(), mode_counts.end());
   std::sort(sorted_modes.begin(), sorted_modes.end(),
             [](const auto& a, const auto& b) { return a.second > b.second; });
@@ -1075,9 +1377,6 @@ void load_mobile_level(const std::string& level_name) {
   g_mobile_level_texture_bases[level_ptr] = g_mobile_next_texture_base;
   g_mobile_next_texture_base += level->textures.size();
   g_mobile_levels.emplace(level_name, std::move(level));
-  if (level_name != "GAME") {
-    build_mobile_tie_mesh(level_name);
-  }
 }
 
 void request_mobile_levels(const std::vector<std::string>& levels, const char* source) {
@@ -1141,9 +1440,27 @@ void capture_mobile_camera(const void* packet, size_t size) {
     }
   }
   ++g_mobile_camera_packet_count;
-  if (g_mobile_tie_level.empty() || level == g_mobile_tie_level) {
+  // Level loading is a residency operation. The PC_PORT packet is the source
+  // of truth for which resident level owns the next scene snapshot; this
+  // prevents the last asynchronously loaded TIE level from hijacking it.
+  if (level != g_mobile_tie_level) {
+    g_mobile_tie_level = level;
+    g_mobile_tie_visibility_ready = false;
+    g_mobile_tie_itimes_valid = false;
+    g_mobile_tie_color_ranges.clear();
+    g_mobile_tfrag_color_ranges.clear();
+    g_mobile_tfrag_level.clear();
+    g_mobile_tfrag_visibility_level.clear();
+    g_mobile_tfrag_visibility_ready = false;
+    g_mobile_tfrag_itimes_valid = false;
+    lg::info("OTTSEL TIE: packet-level owner='{}'", level);
+  }
+  if (ottsel_mobile_scene_snapshot_owner_is_packet_level(level == g_mobile_tie_level)) {
     g_mobile_camera = candidate;
     g_mobile_camera_level = level;
+    if (level == "village1" && g_mobile_eichar_village_clip_logs < 32) {
+      log_mobile_eichar_village_clip(candidate);
+    }
   }
   if (finite && level == g_mobile_tie_level) {
     const auto planes_changed = [](const std::array<float, 16>& previous,
@@ -1172,11 +1489,30 @@ void capture_mobile_camera(const void* packet, size_t size) {
       g_mobile_tie_visibility_ready = false;
       g_mobile_tie_itimes_valid = false;
     }
+    const bool trace_scene_calls = g_mobile_camera_packet_count <= 8;
+    if (trace_scene_calls) {
+      lg::info("OTTSEL SCENE CALL: before tfrag level='{}'", level);
+    }
     build_visible_mobile_tfrag_mesh(level, candidate);
+    if (trace_scene_calls) {
+      lg::info("OTTSEL SCENE CALL: after tfrag level='{}'", level);
+    }
     build_visible_mobile_tie_mesh(level, candidate);
+    if (trace_scene_calls) {
+      lg::info("OTTSEL SCENE CALL: after tie level='{}'", level);
+    }
     set_mobile_tie_camera(candidate);
+    if (trace_scene_calls) {
+      lg::info("OTTSEL SCENE CALL: after camera level='{}'", level);
+    }
     set_mobile_tfrag_colors(candidate);
+    if (trace_scene_calls) {
+      lg::info("OTTSEL SCENE CALL: after tfrag colors level='{}'", level);
+    }
     set_mobile_tie_colors(candidate);
+    if (trace_scene_calls) {
+      lg::info("OTTSEL SCENE CALL: after tie colors level='{}'", level);
+    }
   }
   if (g_mobile_camera_levels_logged.insert(level).second) {
     lg::info("OTTSEL FR3: camera '{}' finite={} trans=({:.3f},{:.3f},{:.3f}) fog={:.3f}",
@@ -1219,16 +1555,37 @@ bool capture_mobile_merc(const DmaTransfer& setup) {
 
   const tfrag3::Level* level = nullptr;
   const tfrag3::MercModel* model = nullptr;
-  for (const auto& [level_name, level_ptr] : g_mobile_levels) {
-    for (const auto& candidate : level_ptr->merc_data.models) {
+  std::string model_level_key;
+  const auto find_model_in_level = [&](const std::string& level_key) {
+    const auto level_it = g_mobile_levels.find(level_key);
+    if (level_it == g_mobile_levels.end()) {
+      return;
+    }
+    for (const auto& candidate : level_it->second->merc_data.models) {
       if (candidate.name == name) {
-        level = level_ptr.get();
+        level = level_it->second.get();
         model = &candidate;
-        break;
+        model_level_key = level_key;
+        return;
       }
     }
-    if (model) {
-      break;
+  };
+  // Loader::get_merc_model returns the first registered reference. Common
+  // GAME data is registered before streamed levels, so do not let unordered
+  // map iteration choose a different duplicate model on mobile.
+  find_model_in_level("GAME");
+  if (!model && !g_mobile_camera_level.empty()) {
+    find_model_in_level(g_mobile_camera_level);
+  }
+  if (!model) {
+    for (const auto& [level_name, level_ptr] : g_mobile_levels) {
+      if (level_name == "GAME" || level_name == g_mobile_camera_level) {
+        continue;
+      }
+      find_model_in_level(level_name);
+      if (model) {
+        break;
+      }
     }
   }
   if (!level || !model || level->merc_data.vertices.empty()) {
@@ -1303,10 +1660,148 @@ bool capture_mobile_merc(const DmaTransfer& setup) {
     output.t = source.st[1];
     output.color_index = 0;
   }
+  if (name == "eichar-lod0") {
+    g_mobile_eichar_clip_vertices.clear();
+    g_mobile_eichar_clip_vertices.reserve(vertices.size());
+    float source_min[3] = {std::numeric_limits<float>::infinity(),
+                           std::numeric_limits<float>::infinity(),
+                           std::numeric_limits<float>::infinity()};
+    float source_max[3] = {-std::numeric_limits<float>::infinity(),
+                           -std::numeric_limits<float>::infinity(),
+                           -std::numeric_limits<float>::infinity()};
+    float skinned_min[3] = {std::numeric_limits<float>::infinity(),
+                            std::numeric_limits<float>::infinity(),
+                            std::numeric_limits<float>::infinity()};
+    float skinned_max[3] = {-std::numeric_limits<float>::infinity(),
+                            -std::numeric_limits<float>::infinity(),
+                            -std::numeric_limits<float>::infinity()};
+    for (const auto& source : level->merc_data.vertices) {
+      source_min[0] = std::min(source_min[0], source.x);
+      source_min[1] = std::min(source_min[1], source.y);
+      source_min[2] = std::min(source_min[2], source.z);
+      source_max[0] = std::max(source_max[0], source.x);
+      source_max[1] = std::max(source_max[1], source.y);
+      source_max[2] = std::max(source_max[2], source.z);
+    }
+    for (const auto& vertex : vertices) {
+      g_mobile_eichar_clip_vertices.push_back({vertex.x, vertex.y, vertex.z});
+      skinned_min[0] = std::min(skinned_min[0], vertex.x);
+      skinned_min[1] = std::min(skinned_min[1], vertex.y);
+      skinned_min[2] = std::min(skinned_min[2], vertex.z);
+      skinned_max[0] = std::max(skinned_max[0], vertex.x);
+      skinned_max[1] = std::max(skinned_max[1], vertex.y);
+      skinned_max[2] = std::max(skinned_max[2], vertex.z);
+    }
+    lg::info("OTTSEL MERC MATRIX LEDGER: model={} slots={} valid={} source-bounds=({:.3f},{:.3f},{:.3f})"
+             "..({:.3f},{:.3f},{:.3f}) skinned-bounds=({:.3f},{:.3f},{:.3f})..({:.3f},{:.3f},{:.3f})"
+             " first-tmat-translation=({:.6f},{:.6f},{:.6f},{:.6f})"
+             " last-tmat-translation=({:.6f},{:.6f},{:.6f},{:.6f})",
+             name, slot_count, std::count(matrix_valid.begin(), matrix_valid.end(), true),
+             source_min[0], source_min[1], source_min[2], source_max[0], source_max[1], source_max[2],
+             skinned_min[0], skinned_min[1], skinned_min[2], skinned_max[0], skinned_max[1],
+             skinned_max[2], matrices[slots[0]].tmat[3][0], matrices[slots[0]].tmat[3][1],
+             matrices[slots[0]].tmat[3][2], matrices[slots[0]].tmat[3][3],
+             matrices[slots[slot_count - 1]].tmat[3][0],
+             matrices[slots[slot_count - 1]].tmat[3][1],
+             matrices[slots[slot_count - 1]].tmat[3][2],
+             matrices[slots[slot_count - 1]].tmat[3][3]);
+    size_t mod_effects = 0;
+    size_t mod_draws = 0;
+    for (const auto& effect : model->effects) {
+      if (!effect.has_mod_draw) {
+        continue;
+      }
+      ++mod_effects;
+      mod_draws += effect.mod.mod_draw.size();
+    }
+    lg::info("OTTSEL MERC MOD LEDGER: model={} bitflags=0x{:02x} model-uses-mod={}"
+             " model-uses-blerc={} effects={} mod-effects={} mod-draws={} all-draws={}",
+             name, flags.bitflags, (flags.bitflags & 1) != 0, (flags.bitflags & 4) != 0,
+             model->effects.size(), mod_effects, mod_draws,
+             std::accumulate(model->effects.begin(), model->effects.end(), size_t{0},
+                             [](size_t total, const auto& effect) {
+                               return total + effect.all_draws.size();
+                             }));
+  }
+
+  // Diagnostic-only parity check: evaluate the exact raw-perspective path
+  // used by the Metal Merc vertex shader before material/depth composition.
+  // This answers whether a submitted model is already outside clip space.
+  if (!g_mobile_merc_clip_ledger && name == "eichar-lod0") {
+    const std::string ledger_path = ottsel_ios_writable_dir() + "ottsel-trace-merc-clip-ledger";
+    if (access(ledger_path.c_str(), F_OK) == 0) {
+      unlink(ledger_path.c_str());
+      g_mobile_merc_clip_ledger = true;
+      lg::info("OTTSEL MERC: raw-perspective clip ledger armed");
+    }
+  }
+  if (g_mobile_merc_clip_ledger) {
+    size_t finite = 0;
+    size_t visible = 0;
+    float min_x = std::numeric_limits<float>::infinity();
+    float max_x = -std::numeric_limits<float>::infinity();
+    float min_y = std::numeric_limits<float>::infinity();
+    float max_y = -std::numeric_limits<float>::infinity();
+    float min_z = std::numeric_limits<float>::infinity();
+    float max_z = -std::numeric_limits<float>::infinity();
+    const auto& p = g_mobile_camera.perspective;
+    for (const auto& vertex : vertices) {
+      const float cx = p[0][0] * vertex.x + p[1][0] * vertex.y + p[2][0] * vertex.z + p[3][0];
+      const float cy = p[0][1] * vertex.x + p[1][1] * vertex.y + p[2][1] * vertex.z + p[3][1];
+      const float cz = p[0][2] * vertex.x + p[1][2] * vertex.y + p[2][2] * vertex.z + p[3][2];
+      const float cw = p[0][3] * vertex.x + p[1][3] * vertex.y + p[2][3] * vertex.z + p[3][3];
+      if (!std::isfinite(cx) || !std::isfinite(cy) || !std::isfinite(cz) ||
+          !std::isfinite(cw) || cw == 0.f) {
+        continue;
+      }
+      const float q = g_mobile_camera.fog[0] / cw;
+      const float clip_x = (cx * q + g_mobile_camera.hvdf_off[0] - 2048.f) / 256.f;
+      const float clip_y = (cy * q + g_mobile_camera.hvdf_off[1] - 2048.f) / -128.f;
+      const float clip_z = (cz * q + g_mobile_camera.hvdf_off[2]) / 8388608.f - 1.f;
+      if (!std::isfinite(clip_x) || !std::isfinite(clip_y) || !std::isfinite(clip_z)) {
+        continue;
+      }
+      ++finite;
+      min_x = std::min(min_x, clip_x);
+      max_x = std::max(max_x, clip_x);
+      min_y = std::min(min_y, clip_y);
+      max_y = std::max(max_y, clip_y);
+      min_z = std::min(min_z, clip_z);
+      max_z = std::max(max_z, clip_z);
+      if (clip_x >= -1.f && clip_x <= 1.f && clip_y >= -1.f && clip_y <= 1.f &&
+          clip_z >= -1.f && clip_z <= 1.f) {
+        ++visible;
+      }
+    }
+    lg::info("OTTSEL MERC: clip ledger model='{}' level='{}' vertices={} finite={} visible={} "
+             "clip-x=({}, {}) clip-y=({}, {}) clip-z=({}, {}) camera-level='{}'",
+             name, level->level_name, vertices.size(), finite, visible, min_x, max_x, min_y, max_y,
+             min_z, max_z, g_mobile_camera_level);
+    g_mobile_merc_clip_ledger = false;
+  }
 
   std::vector<u32> indices;
   std::vector<OttselMetalTieDraw> draws;
   std::vector<bool> used_textures(level->textures.size());
+  const auto append_merc_strip = [&indices](const u32* source, u32 count) {
+    size_t run_start = 0;
+    for (size_t i = 0; i <= count; ++i) {
+      if (i != count && source[i] != UINT32_MAX) {
+        continue;
+      }
+      const size_t run_count = i - run_start;
+      for (size_t j = 2; j < run_count; ++j) {
+        u32 a = source[run_start + j - 2];
+        u32 b = source[run_start + j - 1];
+        const u32 c = source[run_start + j];
+        if (j & 1) {
+          std::swap(a, b);
+        }
+        indices.insert(indices.end(), {a, b, c});
+      }
+      run_start = i + 1;
+    }
+  };
   for (u32 effect_index = 0; effect_index < effect_count; ++effect_index) {
     if (!(flags.enable_mask & (u64(1) << effect_index))) {
       continue;
@@ -1318,13 +1813,20 @@ bool capture_mobile_merc(const DmaTransfer& setup) {
         continue;
       }
       const u32 index_offset = indices.size();
-      indices.insert(indices.end(), level->merc_data.indices.begin() + source_draw.first_index,
-                     level->merc_data.indices.begin() + source_draw.first_index +
-                         source_draw.index_count);
-      draws.push_back(
-          {index_offset, source_draw.index_count,
-           ottsel_mobile_scene_texture_slot(texture_base, source_draw.tree_tex_id),
-           source_draw.mode.as_int()});
+      const u32* source_indices = level->merc_data.indices.data() + source_draw.first_index;
+      if (source_draw.no_strip) {
+        indices.insert(indices.end(), source_indices, source_indices + source_draw.index_count);
+      } else {
+        append_merc_strip(source_indices, source_draw.index_count);
+      }
+      const u32 native_index_count = indices.size() - index_offset;
+      if (!native_index_count) {
+        continue;
+      }
+      draws.push_back({index_offset, native_index_count,
+                       ottsel_mobile_scene_texture_slot(texture_base, source_draw.tree_tex_id),
+                       source_draw.mode.as_int(),
+                       static_cast<u32>(std::hash<std::string>{}(name))});
       used_textures[(size_t)source_draw.tree_tex_id] = true;
     }
   }
@@ -1341,16 +1843,75 @@ bool capture_mobile_merc(const DmaTransfer& setup) {
                                    texture.w, texture.h);
     }
   }
-  ottsel_metal_append_merc_mesh(g_metal, vertices.data(), vertices.size(), indices.data(),
-                                indices.size(), draws.data(), draws.size());
+  if (name == "eichar-lod0") {
+    // Eichar is emitted before the Village1 camera packet, and later title
+    // Merc snapshots replace the transient aggregate. Keep the player actor
+    // in a dedicated presentation slot so it survives that transition.
+    ottsel_metal_set_merc_actor_mesh(g_metal, vertices.data(), vertices.size(), indices.data(),
+                                     indices.size(), draws.data(), draws.size());
+  } else {
+    ottsel_metal_append_merc_mesh(g_metal, vertices.data(), vertices.size(), indices.data(),
+                                  indices.size(), draws.data(), draws.size());
+  }
   static std::unordered_set<std::string> merc_submit_names;
   if (merc_submit_names.insert(name).second && merc_submit_names.size() <= 32) {
     lg::info("OTTSEL MERC NATIVE: model='{}' level='{}' slots={} effects={} vertices={} "
              "triangles={} draws={}",
-             name, level->level_name, slot_count, effect_count, vertices.size(), indices.size() / 3,
+             name, model_level_key, slot_count, effect_count, vertices.size(), indices.size() / 3,
              draws.size());
   }
   return true;
+}
+
+void log_mobile_eichar_village_clip(const OttselPcPortData& camera) {
+  ++g_mobile_eichar_village_clip_logs;
+  if (g_mobile_eichar_clip_vertices.empty()) {
+    lg::info("OTTSEL MERC: Village1 clip ledger has no retained Eichar vertices");
+    return;
+  }
+  size_t finite = 0;
+  size_t visible = 0;
+  float min_x = std::numeric_limits<float>::infinity();
+  float max_x = -std::numeric_limits<float>::infinity();
+  float min_y = std::numeric_limits<float>::infinity();
+  float max_y = -std::numeric_limits<float>::infinity();
+  float min_z = std::numeric_limits<float>::infinity();
+  float max_z = -std::numeric_limits<float>::infinity();
+  for (const auto& vertex : g_mobile_eichar_clip_vertices) {
+    const float cx = camera.perspective[0][0] * vertex[0] + camera.perspective[1][0] * vertex[1] +
+                     camera.perspective[2][0] * vertex[2] + camera.perspective[3][0];
+    const float cy = camera.perspective[0][1] * vertex[0] + camera.perspective[1][1] * vertex[1] +
+                     camera.perspective[2][1] * vertex[2] + camera.perspective[3][1];
+    const float cz = camera.perspective[0][2] * vertex[0] + camera.perspective[1][2] * vertex[1] +
+                     camera.perspective[2][2] * vertex[2] + camera.perspective[3][2];
+    const float cw = camera.perspective[0][3] * vertex[0] + camera.perspective[1][3] * vertex[1] +
+                     camera.perspective[2][3] * vertex[2] + camera.perspective[3][3];
+    if (!std::isfinite(cx) || !std::isfinite(cy) || !std::isfinite(cz) ||
+        !std::isfinite(cw) || cw == 0.f) {
+      continue;
+    }
+    const float q = camera.fog[0] / cw;
+    const float x = (cx * q + camera.hvdf_off[0] - 2048.f) / 256.f;
+    const float y = (cy * q + camera.hvdf_off[1] - 2048.f) / -128.f;
+    const float z = (cz * q + camera.hvdf_off[2]) / 8388608.f - 1.f;
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
+      continue;
+    }
+    ++finite;
+    min_x = std::min(min_x, x);
+    max_x = std::max(max_x, x);
+    min_y = std::min(min_y, y);
+    max_y = std::max(max_y, y);
+    min_z = std::min(min_z, z);
+    max_z = std::max(max_z, z);
+    if (x >= -1.f && x <= 1.f && y >= -1.f && y <= 1.f && z >= -1.f && z <= 1.f) {
+      ++visible;
+    }
+  }
+  lg::info("OTTSEL MERC: Village1 clip ledger vertices={} finite={} visible={} clip-x=({}, {}) "
+           "clip-y=({}, {}) clip-z=({}, {})",
+           g_mobile_eichar_clip_vertices.size(), finite, visible, min_x, max_x, min_y, max_y,
+           min_z, max_z);
 }
 
 // Fake GS VRAM (4 MB).  The game stores every texture pre-scrambled so it can
@@ -1959,6 +2520,14 @@ struct OttselRaster {
   }
 };
 
+struct OttselNativeDirectPrimitive {
+  std::vector<OttselMetalSpriteVertex> vertices;
+  std::shared_ptr<std::vector<u8>> texture;
+  u32 texture_width = 0;
+  u32 texture_height = 0;
+  bool blended = false;
+};
+
 // The draw decoder: tracks GS registers and emits completed prims.
 struct OttselGifDecoder {
   OttselDrawState st;
@@ -1980,6 +2549,92 @@ struct OttselGifDecoder {
   ottsel::DirectIrStateSnapshot last_direct_snapshot;
   bool have_direct_snapshot = false;
   bool direct_scissor_seen = false;
+  bool native_capture = false;
+  std::vector<OttselNativeDirectPrimitive> native_primitives;
+  std::unordered_map<u64, std::shared_ptr<std::vector<u8>>> native_texture_cache;
+  u32 native_primitive_candidates = 0;
+  u32 native_primitive_rejected = 0;
+  u32 native_texture_misses = 0;
+  u32 native_prim_starts = 0;
+  u32 native_vertex_words = 0;
+
+  void capture_native_primitive(int count) {
+    if (!native_capture) {
+      return;
+    }
+    ++native_primitive_candidates;
+    if (count < 3 || count > vert_count) {
+      ++native_primitive_rejected;
+      return;
+    }
+    const GsPrim gp(st.prim);
+    const GsTex0 tex0(st.tex0);
+    auto texture = native_texture_cache[st.tex0];
+    u32 texture_width = 0;
+    u32 texture_height = 0;
+    if (!texture) {
+      const auto relocated_it = g_direct_relocated_textures.find(
+          direct_texture_cache_key(tex0.tbp0(), (u32)tex0.psm()));
+      if (relocated_it != g_direct_relocated_textures.end() &&
+          !relocated_it->second.rgba.empty()) {
+        texture_width = relocated_it->second.width;
+        texture_height = relocated_it->second.height;
+        texture = std::make_shared<std::vector<u8>>(relocated_it->second.rgba);
+        native_texture_cache[st.tex0] = texture;
+      }
+    }
+    if (!texture) {
+      bool used_vram = false;
+      auto decoded = decode_direct_vram_texture(st.tex0, texture_width, texture_height, used_vram);
+      if (decoded.empty()) {
+        ++native_texture_misses;
+        static u32 missing_native_texture_logs = 0;
+        if (missing_native_texture_logs < 8) {
+          ++missing_native_texture_logs;
+          lg::info("OTTSEL SKY PRODUCT: primitive texture unavailable tex0=0x{:016x} prim=0x{:x}",
+                   st.tex0, st.prim);
+        }
+        return;
+      }
+      texture = std::make_shared<std::vector<u8>>(std::move(decoded));
+      native_texture_cache[st.tex0] = texture;
+    } else {
+      texture_width = 1u << tex0.tw();
+      texture_height = 1u << tex0.th();
+    }
+    if (!texture || texture_width == 0 || texture_height == 0 ||
+        native_primitives.size() >= 2048) {
+      return;
+    }
+    OttselNativeDirectPrimitive primitive;
+    primitive.texture = texture;
+    primitive.texture_width = texture_width;
+    primitive.texture_height = texture_height;
+    primitive.blended = gp.abe();
+    primitive.vertices.reserve((size_t)count);
+    for (int i = 0; i < count; ++i) {
+      const auto& source = verts[i];
+      const float nx = ((source.x / 65536.f - 0.5f) * 8.f + 0.5f);
+      const float clip_y = -(source.y / 65536.f - 0.5f) * 32.f * (512.f / 448.f);
+      const float ny = 0.5f - clip_y * 0.5f;
+      OttselMetalSpriteVertex vertex{};
+      vertex.pos[0] = nx * 2.f - 1.f;
+      vertex.pos[1] = 1.f - ny * 2.f;
+      if (source.has_uv) {
+        vertex.uv[0] = (source.uv_u >> 4) / (float)texture_width;
+        vertex.uv[1] = (source.uv_v >> 4) / (float)texture_height;
+      } else if (source.has_st) {
+        vertex.uv[0] = source.s;
+        vertex.uv[1] = source.t;
+      }
+      vertex.color[0] = source.r / 255.f;
+      vertex.color[1] = source.g / 255.f;
+      vertex.color[2] = source.b / 255.f;
+      vertex.color[3] = source.a / 255.f;
+      primitive.vertices.push_back(vertex);
+    }
+    native_primitives.push_back(std::move(primitive));
+  }
 
   void record_ir(ottsel::DirectIrKind kind, u64 value = 0) {
     if (g_mobile_direct_trace.active && g_mobile_direct_trace.decoding_direct &&
@@ -2052,6 +2707,9 @@ struct OttselGifDecoder {
   void on_prim_start(u64 prim) {
     st.prim = prim;
     vert_count = 0;
+    if (native_capture) {
+      ++native_prim_starts;
+    }
     record_ir(ottsel::DirectIrKind::Prim, prim);
   }
 
@@ -2095,10 +2753,16 @@ struct OttselGifDecoder {
       GsTexa gta(st.texa);
       rst->load_tex(gt.tbp0(), gt.tw(), gt.th(), (u32)gt.psm(), gt.cbp(), gt.cpsm());
       rst->sprite(verts[0], verts[1], gp.tme(), gp.fst(), gp.abe(), gta.ta0());
+    }
+    if (gp.kind() == GsPrim::Kind::SPRITE && vert_count >= 2) {
+      capture_native_primitive(2);
     } else if (rst && vert_count >= 3) {
       GsTexa gta(st.texa);
       rst->load_tex(gt.tbp0(), gt.tw(), gt.th(), (u32)gt.psm(), gt.cbp(), gt.cpsm());
       rst->tri(verts[0], verts[1], verts[2], gp.tme(), gp.fst(), gp.abe(), gta.ta0());
+    }
+    if (gp.kind() != GsPrim::Kind::SPRITE && vert_count >= 3) {
+      capture_native_primitive(3);
     }
     if (prims_logged >= 300) {
       vert_count = 0;
@@ -2129,6 +2793,9 @@ struct OttselGifDecoder {
       rst->load_tex(gt.tbp0(), gt.tw(), gt.th(), (u32)gt.psm(), gt.cbp(), gt.cpsm());
       rst->tri(verts[0], verts[1], verts[2], gp.tme(), gp.fst(), gp.abe(), gta.ta0());
     }
+    if (vert_count >= 3) {
+      capture_native_primitive(3);
+    }
     if (prims_logged >= 300) {
       return;
     }
@@ -2150,6 +2817,9 @@ struct OttselGifDecoder {
   // emits a UINT32_MAX index for these).  Dropping the strip on a restart
   // keeps only real triangles.
   void push_vertex(u32 x, u32 y, u32 z, bool restart = false) {
+    if (native_capture) {
+      ++native_vertex_words;
+    }
     if (restart) {
       // restart marker: begin a fresh primitive with this vertex.
       vert_count = 0;
@@ -2585,6 +3255,60 @@ void decode_transfer(const DmaTransfer& t, OttselGifDecoder& dec) {
       gif_qwc = direct_or_nop(VifCode(vif));
     }
   }
+}
+
+static u32 submit_mobile_native_sky_bucket(const void* data,
+                                           u32 start_offset,
+                                           u32 next_bucket,
+                                           OttselGifDecoder& decoder) {
+  DmaFollower dma(data, start_offset);
+  const bool saved_capture = decoder.native_capture;
+  OttselRaster* saved_raster = decoder.rst;
+  const auto saved_trace = g_mobile_direct_trace;
+  g_mobile_direct_trace = {};
+  g_mobile_direct_trace.active = true;
+  decoder.native_capture = true;
+  decoder.rst = nullptr;
+  decoder.native_primitives.clear();
+  decoder.native_texture_cache.clear();
+  decoder.native_primitive_candidates = 0;
+  decoder.native_primitive_rejected = 0;
+  decoder.native_texture_misses = 0;
+  decoder.native_prim_starts = 0;
+  decoder.native_vertex_words = 0;
+  decoder.st = OttselDrawState{};
+  decoder.vert_count = 0;
+  decoder.prims_logged = 0;
+  decoder.direct_scissor_seen = false;
+  u32 transfers = 0;
+  while (!dma.ended() && dma.current_tag_offset() != next_bucket && transfers < 4096) {
+    decode_transfer(dma.read_and_advance(), decoder);
+    ++transfers;
+  }
+  u32 submitted = 0;
+  for (const auto& primitive : decoder.native_primitives) {
+    if (!primitive.texture || primitive.vertices.empty()) {
+      continue;
+    }
+    ottsel_metal_append_sky_mesh_n(
+        g_metal, primitive.vertices.data(), (unsigned int)primitive.vertices.size(),
+        primitive.texture->data(), primitive.texture_width, primitive.texture_height,
+        primitive.blended ? 1 : 0);
+    ++submitted;
+  }
+  lg::info("OTTSEL SKY PRODUCT: transfers={} direct-transfers={} gif-tags={} prim-starts={} "
+           "vertex-words={} candidates={} rejected={} texture-misses={} primitives={} "
+           "submitted={} end=0x{:x} expected=0x{:x}",
+           transfers, g_mobile_direct_trace.direct_transfers, g_mobile_direct_trace.gif_tags,
+           decoder.native_prim_starts, decoder.native_vertex_words, decoder.native_primitive_candidates,
+           decoder.native_primitive_rejected, decoder.native_texture_misses,
+           decoder.native_primitives.size(), submitted, dma.current_tag_offset(), next_bucket);
+  decoder.native_primitives.clear();
+  decoder.native_texture_cache.clear();
+  decoder.native_capture = saved_capture;
+  decoder.rst = saved_raster;
+  g_mobile_direct_trace = saved_trace;
+  return submitted;
 }
 
 // Jak 1's PC path deliberately omits Sprite3 VU microcode; the desktop
@@ -3730,7 +4454,8 @@ static u32 render_mobile_sprite_bucket(const void* data,
                                        bool* frame_valid_out = nullptr,
                                        bool* matrix_valid_out = nullptr,
                                        bool* hud_valid_out = nullptr) {
-  if (!g_mobile_sprite_parser_trace) {
+  if (!g_mobile_sprite_parser_trace &&
+      ottsel_mobile_sprite_trace_trigger_may_consume(mobile_sprite_village1_phase())) {
     const std::string trace_path = ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite";
     if (access(trace_path.c_str(), F_OK) == 0) {
       g_mobile_sprite_parser_trace = true;
@@ -4258,6 +4983,60 @@ static void trace_mobile_direct_bucket(const void* data,
   }
 }
 
+// Decode one complete Direct-capable bucket for ownership analysis. Unlike
+// the title glyph probe above, this accepts every DIRECT/DIRECTHL transfer and
+// never activates a Metal fixture. Sky is the first consumer because it is a
+// large missing composition region and its upstream renderer is Direct-based.
+static void trace_mobile_direct_ir_bucket(const void* data,
+                                          u32 start_offset,
+                                          u32 next_bucket,
+                                          OttselGifDecoder& decoder,
+                                          u32 bucket_id) {
+  DmaFollower dma(data, start_offset);
+  u32 transfers = 0;
+  u32 direct_transfers = 0;
+  const auto saved_decoder = decoder;
+  const auto saved_trace = g_mobile_direct_trace;
+  g_mobile_direct_trace = {};
+  g_mobile_direct_trace.active = true;
+  g_mobile_direct_trace.decoding_direct = false;
+  decoder.rst = nullptr;
+  decoder.ordered_ir.clear();
+  decoder.st = OttselDrawState{};
+  decoder.vert_count = 0;
+  decoder.reset_direct_geometry();
+  while (!dma.ended() && dma.current_tag_offset() != next_bucket && transfers < 4096) {
+    const DmaTransfer transfer = dma.read_and_advance();
+    ++transfers;
+    const VifCode vif0 = transfer.vifcode0();
+    const VifCode vif1 = transfer.vifcode1();
+    if (vif0.kind == VifCode::Kind::DIRECT || vif0.kind == VifCode::Kind::DIRECTHL ||
+        vif1.kind == VifCode::Kind::DIRECT || vif1.kind == VifCode::Kind::DIRECTHL) {
+      ++direct_transfers;
+    }
+    decode_transfer(transfer, decoder);
+  }
+  u32 errors = 0;
+  for (const auto& event : decoder.ordered_ir) {
+    if (event.kind == ottsel::DirectIrKind::Error) {
+      ++errors;
+    }
+  }
+  if (dma.current_tag_offset() == next_bucket) {
+    lg::info("OTTSEL SKY IR: bucket={} transfers={} direct-transfers={} gif-tags={} "
+             "prims={} tri={} tri-strip={} sprites={} errors={}",
+             bucket_id, transfers, direct_transfers, g_mobile_direct_trace.gif_tags,
+             decoder.prims_logged, g_mobile_direct_trace.triangles,
+             g_mobile_direct_trace.strips, g_mobile_direct_trace.sprites,
+             errors);
+  } else {
+    lg::warn("OTTSEL SKY IR: bucket={} bounded walk stopped transfers={} at=0x{:x} expected=0x{:x}",
+             bucket_id, transfers, dma.current_tag_offset(), next_bucket);
+  }
+  decoder = saved_decoder;
+  g_mobile_direct_trace = saved_trace;
+}
+
 // Bucket 67 also contains title/progress text as standalone VIF DIRECT GIF
 // packets.  The PC renderer consumes these after its Sprite3 blocks; they do
 // not have a Sprite3 VU program to run on PC_PORT.  Decode only that bucket
@@ -4290,6 +5069,7 @@ void trace_mobile_generic_buckets(const void* data, u32 chain_offset) {
 
   for (u32 bucket_id = 0; bucket_id < 70; ++bucket_id) {
     const bool generic = ottsel_mobile_is_jak1_generic_bucket(bucket_id);
+    const bool merc_ledger = ottsel_mobile_is_jak1_merc_ledger_bucket(bucket_id);
     const u32 next_boundary =
         ottsel_mobile_jak1_bucket_boundary(chain_offset, bucket_id + 1);
     u32 transfers = 0;
@@ -4302,11 +5082,26 @@ void trace_mobile_generic_buckets(const void* data, u32 chain_offset) {
 
     while (!dma.ended() && dma.current_tag_offset() != next_boundary && transfers < 4096) {
       const DmaTransfer transfer = dma.read_and_advance();
-      if (generic) {
+      if (generic || merc_ledger) {
         ++transfers;
         bytes += transfer.size_bytes;
         const VifCode v0 = transfer.vifcode0();
         const VifCode v1 = transfer.vifcode1();
+        if (merc_ledger && (v0.kind == VifCode::Kind::PC_PORT ||
+                            v1.kind == VifCode::Kind::PC_PORT)) {
+          const size_t name_len = transfer.size_bytes
+                                      ? strnlen((const char*)transfer.data,
+                                                std::min<size_t>(128, transfer.size_bytes))
+                                      : 0;
+          bool printable = name_len > 0 && name_len < 128;
+          for (size_t i = 0; printable && i < name_len; ++i) {
+            printable = std::isprint((unsigned char)transfer.data[i]);
+          }
+          lg::info("OTTSEL MERC LEDGER: bucket={} transfer={} size={} name='{}' printable={}",
+                   bucket_id, transfers, transfer.size_bytes,
+                   printable ? std::string((const char*)transfer.data, name_len) : "<non-text>",
+                   printable);
+        }
         if (v1.kind == VifCode::Kind::UNPACK_V4_32) {
           ++unpack_v4_32;
           if (transfer.size_bytes > 160) {
@@ -4331,7 +5126,7 @@ void trace_mobile_generic_buckets(const void* data, u32 chain_offset) {
       return;
     }
 
-    if (generic) {
+    if (generic || merc_ledger) {
       std::string entry_text;
       for (u32 i = 0; i < entry_count; ++i) {
         entry_text += i ? "," : "";
@@ -4342,6 +5137,74 @@ void trace_mobile_generic_buckets(const void* data, u32 chain_offset) {
                bucket_id, transfers, bytes, unpack_v4_32, fragment_uploads, mscal, entry_text);
     }
   }
+}
+
+// Capture the complete Jak 1 bucket surface once, without decoding or
+// submitting it.  The native product path currently owns only a subset of the
+// desktop bucket handlers; this census makes that boundary explicit before a
+// new handler is implemented.  Keep it one-shot and bounded so it cannot
+// become another per-frame pacing cost.
+static void trace_mobile_bucket_coverage(const void* data, u32 chain_offset) {
+  DmaFollower dma(data, chain_offset);
+  if (dma.ended()) {
+    return;
+  }
+  // Skip the initial CALL and its two dispatch records, matching the normal
+  // bucket walk and the generic-bucket trace above.
+  for (int i = 0; i < 3 && !dma.ended(); ++i) {
+    dma.read_and_advance();
+  }
+  const u32 bucket_zero = ottsel_mobile_jak1_bucket_boundary(chain_offset, 0);
+  if (dma.current_tag_offset() != bucket_zero) {
+    lg::warn("OTTSEL BUCKET COVERAGE: dispatch mismatch got=0x{:x} expected=0x{:x}",
+             dma.current_tag_offset(), bucket_zero);
+    return;
+  }
+
+  u32 nonempty = 0;
+  for (u32 bucket_id = 0; bucket_id < 70; ++bucket_id) {
+    const u32 next_boundary =
+        ottsel_mobile_jak1_bucket_boundary(chain_offset, bucket_id + 1);
+    u32 transfers = 0;
+    u32 direct = 0;
+    u32 pc_port = 0;
+    u32 unpack = 0;
+    u32 mscal = 0;
+    u64 bytes = 0;
+    while (!dma.ended() && dma.current_tag_offset() != next_boundary &&
+           transfers < 4096) {
+      const DmaTransfer transfer = dma.read_and_advance();
+      ++transfers;
+      bytes += transfer.size_bytes;
+      const VifCode commands[2] = {transfer.vifcode0(), transfer.vifcode1()};
+      for (const auto& command : commands) {
+        if (command.kind == VifCode::Kind::DIRECT ||
+            command.kind == VifCode::Kind::DIRECTHL) {
+          ++direct;
+        } else if (command.kind == VifCode::Kind::PC_PORT) {
+          ++pc_port;
+        } else if (command.kind == VifCode::Kind::UNPACK_V4_32) {
+          ++unpack;
+        } else if (command.kind == VifCode::Kind::MSCAL ||
+                   command.kind == VifCode::Kind::MSCALF) {
+          ++mscal;
+        }
+      }
+    }
+    if (dma.current_tag_offset() != next_boundary) {
+      lg::warn("OTTSEL BUCKET COVERAGE: bounded walk bucket={} transfers={} limit=4096",
+               bucket_id, transfers);
+      return;
+    }
+    if (transfers != 0) {
+      ++nonempty;
+      lg::info("OTTSEL BUCKET COVERAGE: bucket={} transfers={} bytes={} direct={} pc-port={} "
+               "unpack-v4-32={} mscal={}",
+               bucket_id, transfers, bytes, direct, pc_port, unpack, mscal);
+    }
+  }
+  lg::info("OTTSEL BUCKET COVERAGE: complete nonempty={} total=70 chain=0x{:x}",
+           nonempty, chain_offset);
 }
 }  // namespace
 
@@ -4355,6 +5218,8 @@ void gfx_send_chain(const void* data, u32 offset) {
   // incomplete fragment list makes the microcode loop to its safety cap.
   const bool run_cpu_vu_diagnostics =
       !g_metal || std::getenv("OTTSEL_ENABLE_CPU_VU_DIAGNOSTICS") != nullptr;
+  const bool cpu_vu_dumps_enabled =
+      std::getenv("OTTSEL_ENABLE_CPU_VU_DIAGNOSTICS") != nullptr;
   static bool cpu_vu_policy_logged = false;
   if (!cpu_vu_policy_logged) {
     cpu_vu_policy_logged = true;
@@ -4385,6 +5250,17 @@ void gfx_send_chain(const void* data, u32 offset) {
       }
     }
   }
+  static bool bucket_coverage_consumed = false;
+  if (!bucket_coverage_consumed) {
+    const std::string coverage_path =
+        ottsel_ios_writable_dir() + "ottsel-trace-mobile-bucket-coverage";
+    if (access(coverage_path.c_str(), F_OK) == 0 && mobile_sprite_village1_phase()) {
+      unlink(coverage_path.c_str());
+      bucket_coverage_consumed = true;
+      lg::info("OTTSEL BUCKET COVERAGE: armed chain=0x{:x}", offset);
+      trace_mobile_bucket_coverage(data, offset);
+    }
+  }
   static OttselGifDecoder g_dec;
   static OttselRaster g_raster;
   if (g_raster.fb.empty()) {
@@ -4393,6 +5269,15 @@ void gfx_send_chain(const void* data, u32 offset) {
   g_dec.rst = &g_raster;
   g_mobile_chain_no++;
   g_dec.chain_no = g_mobile_chain_no;
+  static bool native_sky_product_requested = false;
+  const std::string native_sky_product_path =
+      ottsel_ios_writable_dir() + "ottsel-enable-native-sky-product";
+  if (!native_sky_product_requested && mobile_sprite_village1_phase() &&
+      access(native_sky_product_path.c_str(), F_OK) == 0) {
+    unlink(native_sky_product_path.c_str());
+    native_sky_product_requested = true;
+    lg::info("OTTSEL SKY PRODUCT: enabled at vsync={}", g_ottsel_ios_vsync_count);
+  }
   const std::string direct_trace_path = ottsel_ios_writable_dir() + "ottsel-trace-mobile-direct";
   const std::string direct_product_path =
       ottsel_ios_writable_dir() + "ottsel-enable-native-direct-product";
@@ -4513,7 +5398,7 @@ void gfx_send_chain(const void* data, u32 offset) {
   // the VU1 interpreter can be tested offline with the real data.
   static FILE* g_tfrag_dump = nullptr;
   static u32 g_tfrag_dump_recs = 0;
-  if (!g_tfrag_dump) {
+  if (cpu_vu_dumps_enabled && !g_tfrag_dump) {
     std::string path = ottsel_ios_writable_dir() + "tfrag-vu-data.bin";
     g_tfrag_dump = fopen(path.c_str(), "wb");
     if (g_tfrag_dump) {
@@ -4528,7 +5413,7 @@ void gfx_send_chain(const void* data, u32 offset) {
   // no UNPACK writes directly.
   static FILE* g_vif_replay = nullptr;
   static u32 g_vif_replay_recs = 0;
-  if (!g_vif_replay) {
+  if (cpu_vu_dumps_enabled && !g_vif_replay) {
     std::string rpath = ottsel_ios_writable_dir() + "tfrag-vif-replay.bin";
     g_vif_replay = fopen(rpath.c_str(), "wb");
   }
@@ -4641,7 +5526,9 @@ void gfx_send_chain(const void* data, u32 offset) {
         // PC-port TFRAG/TIE path below remains unchanged.
         if (g_mobile_generic_probe_pending && v.immediate == 46) {
           g_mobile_generic_probe_pending = false;
-          memcpy(g_vu_generic.data, g_vu.data, sizeof(g_vu.data));
+          if (cpu_vu_dumps_enabled) {
+            memcpy(g_vu_generic.data, g_vu.data, sizeof(g_vu.data));
+          }
           memset(g_vu_generic.vf, 0, sizeof(g_vu_generic.vf));
           memset(g_vu_generic.vi, 0, sizeof(g_vu_generic.vi));
           memset(g_vu_generic.acc, 0, sizeof(g_vu_generic.acc));
@@ -4742,6 +5629,9 @@ void gfx_send_chain(const void* data, u32 offset) {
       case VifCode::Kind::UNPACK_V4_8:
       case VifCode::Kind::UNPACK_V3_32:
       case VifCode::Kind::UNPACK_V2_16: {
+        if (!run_cpu_vu_diagnostics) {
+          break;
+        }
         // dest = (addr?TOPS:TOP) + (imm & 0x3ff); the VIF UNPACK addr/flg
         // flag is bit 15 (0x8000) of the command word, not bit 21 (which
         // lives inside the num field).  BOT21g verified against the live
@@ -4810,7 +5700,7 @@ void gfx_send_chain(const void* data, u32 offset) {
     DmaTransfer t = dma.read_and_advance();
     count++;
     if (t.size_bytes == 0) {
-      if (g_vif_replay && g_vif_replay_recs < 200000) {
+      if (cpu_vu_dumps_enabled && g_vif_replay && g_vif_replay_recs < 200000) {
         u32 rec[4] = {t.vif0(), t.vif1(), 0, 0};
         fwrite(rec, 16, 1, g_vif_replay);
         g_vif_replay_recs++;
@@ -4819,8 +5709,10 @@ void gfx_send_chain(const void* data, u32 offset) {
       // update BASE/OFFSET/STCYCL before the following payload/MSCAL tag.
       // Skipping them left the mobile VU decoder on stale addressing and
       // detached the generated frag header from its dispatcher call.
-      ottsel_handle_vif(t.vif0(), t.data, 0);
-      ottsel_handle_vif(t.vif1(), t.data, 0);
+      if (run_cpu_vu_diagnostics) {
+        ottsel_handle_vif(t.vif0(), t.data, 0);
+        ottsel_handle_vif(t.vif1(), t.data, 0);
+      }
       VifCode v0(t.vif0());
       VifCode v1(t.vif1());
       static u32 ottsel_vifctl = 0;
@@ -4835,7 +5727,8 @@ void gfx_send_chain(const void* data, u32 offset) {
       }
       continue;
     }
-    if (g_vif_replay && g_vif_replay_recs < 200000 && t.size_bytes <= 8192) {
+    if (cpu_vu_dumps_enabled && g_vif_replay && g_vif_replay_recs < 200000 &&
+        t.size_bytes <= 8192) {
       u32 rec[4] = {t.vif0(), t.vif1(), t.size_bytes, 0};
       fwrite(rec, 16, 1, g_vif_replay);
       fwrite(t.data, t.size_bytes, 1, g_vif_replay);
@@ -4848,18 +5741,23 @@ void gfx_send_chain(const void* data, u32 offset) {
     // consumer in the observed tfrag chains (STCYCL+UNPACK, FLUSHA+DIRECT,
     // MSCALF+STMOD); process vif0 first (control), then vif1 with the
     // payload.
-    ottsel_handle_vif(t.vif0(), t.data, t.size_bytes);
-    ottsel_handle_vif(t.vif1(), t.data, t.size_bytes);
+    if (run_cpu_vu_diagnostics) {
+      ottsel_handle_vif(t.vif0(), t.data, t.size_bytes);
+      ottsel_handle_vif(t.vif1(), t.data, t.size_bytes);
+    }
     VifCode v1(t.vif1());
     VifCode v0(t.vif0());
     if (v0.kind == VifCode::Kind::PC_PORT || v1.kind == VifCode::Kind::PC_PORT) {
+      // Camera packets establish the scene owner and view used by the
+      // following native actor submissions. Consume them first so a Merc
+      // captured in the same PC_PORT phase cannot be clipped with a stale
+      // title/previous-level camera.
+      if (t.size_bytes == sizeof(OttselPcPortData)) {
+        g_mobile_camera_last_chain = g_chain_no;
+        g_mobile_camera_last_transfer = count;
+        capture_mobile_camera(t.data, t.size_bytes);
+      }
       capture_mobile_merc(t);
-    }
-    if ((v0.kind == VifCode::Kind::PC_PORT || v1.kind == VifCode::Kind::PC_PORT) &&
-        t.size_bytes == sizeof(OttselPcPortData)) {
-      g_mobile_camera_last_chain = g_chain_no;
-      g_mobile_camera_last_transfer = count;
-      capture_mobile_camera(t.data, t.size_bytes);
     }
     static u32 native_merc_trace_count = 0;
     static u32 native_merc_trace_invalid_count = 0;
@@ -4930,7 +5828,7 @@ void gfx_send_chain(const void* data, u32 offset) {
     // at vi14 = 0x2a0 (the VU1 reads count@+1, pointers@+2/+4, matrix rows
     // @+5..+8); the previous window began at record 4000 (after the DIRECT
     // captures) and missed it, so the interpreter never saw a real frag list.
-    if (g_tfrag_dump && g_tfrag_dump_recs < 12000 &&
+    if (cpu_vu_dumps_enabled && g_tfrag_dump && g_tfrag_dump_recs < 12000 &&
         (v1.kind == VifCode::Kind::UNPACK_V4_32 || v1.kind == VifCode::Kind::UNPACK_V4_16 ||
          v1.kind == VifCode::Kind::UNPACK_V4_8 || v1.kind == VifCode::Kind::UNPACK_V3_32 ||
          v1.kind == VifCode::Kind::UNPACK_V2_16 || v0.kind == VifCode::Kind::UNPACK_V4_8 ||
@@ -4942,7 +5840,8 @@ void gfx_send_chain(const void* data, u32 offset) {
     }
     // Also capture the small DIRECT GIF transfers (BOT18e: mostly
     // uninitialized DMA gaps, kept for reference after the UNPACKs).
-    if (g_tfrag_dump && g_tfrag_dump_recs >= 12000 && g_tfrag_dump_recs < 14000 &&
+    if (cpu_vu_dumps_enabled && g_tfrag_dump && g_tfrag_dump_recs >= 12000 &&
+        g_tfrag_dump_recs < 14000 &&
         t.size_bytes <= 256 &&
         (v1.kind == VifCode::Kind::DIRECT || v0.kind == VifCode::Kind::DIRECT ||
          v1.kind == VifCode::Kind::DIRECTHL || v0.kind == VifCode::Kind::DIRECTHL ||
@@ -5312,7 +6211,7 @@ void gfx_send_chain(const void* data, u32 offset) {
         }
       }
     }
-    if (g_tfrag_dump && g_tfrag_dump_recs < 4000 &&
+    if (cpu_vu_dumps_enabled && g_tfrag_dump && g_tfrag_dump_recs < 4000 &&
         (v1.kind == VifCode::Kind::MSCAL || v1.kind == VifCode::Kind::MSCALF ||
          v0.kind == VifCode::Kind::MSCAL || v0.kind == VifCode::Kind::MSCALF)) {
       u32 rec[4] = {0xffffffff, v1.num, v1.immediate, 0};
@@ -5388,29 +6287,38 @@ void gfx_send_chain(const void* data, u32 offset) {
     decode_transfer(t, g_dec);
   }
   // Gameplay chains can put the live background camera and foreground Merc
-  // requests after the expensive decoder's 512-transfer budget. Continue a
-  // lightweight bounded walk that handles only those native PC_PORT packets;
-  // running the full VIF/GIF diagnostics through this tail tanks frame pacing.
-  while (ottsel_mobile_pc_port_scan_can_continue(dma.ended(), count)) {
-    DmaTransfer t = dma.read_and_advance();
-    ++count;
-    const VifCode v0(t.vif0());
-    const VifCode v1(t.vif1());
-    if (v0.kind != VifCode::Kind::PC_PORT && v1.kind != VifCode::Kind::PC_PORT) {
+  // requests after the expensive decoder's 512-transfer budget. Jump to the
+  // bounded Jak 1 bucket windows that own those PC_PORT packets; do not walk
+  // unrelated transfers through the 4096-entry tail.
+  for (u32 bucket_id = 0; bucket_id < 70; ++bucket_id) {
+    if (!ottsel_mobile_jak1_pc_port_bucket_candidate(bucket_id)) {
       continue;
     }
-    capture_mobile_merc(t);
-    if (t.size_bytes == sizeof(OttselPcPortData)) {
-      g_mobile_camera_last_chain = g_chain_no;
-      g_mobile_camera_last_transfer = count;
-      capture_mobile_camera(t.data, t.size_bytes);
+    DmaFollower bucket_dma(data, ottsel_mobile_jak1_bucket_boundary(offset, bucket_id));
+    const u32 next_boundary = ottsel_mobile_jak1_bucket_boundary(offset, bucket_id + 1);
+    u32 bucket_transfers = 0;
+    while (!bucket_dma.ended() && bucket_dma.current_tag_offset() != next_boundary &&
+           bucket_transfers < kOttselMobilePcPortScanBudget) {
+      DmaTransfer t = bucket_dma.read_and_advance();
+      ++bucket_transfers;
+      const VifCode v0(t.vif0());
+      const VifCode v1(t.vif1());
+      if (v0.kind != VifCode::Kind::PC_PORT && v1.kind != VifCode::Kind::PC_PORT) {
+        continue;
+      }
+      if (t.size_bytes == sizeof(OttselPcPortData)) {
+        g_mobile_camera_last_chain = g_chain_no;
+        g_mobile_camera_last_transfer = bucket_transfers;
+        capture_mobile_camera(t.data, t.size_bytes);
+      }
+      capture_mobile_merc(t);
     }
-  }
-  if (!dma.ended()) {
-    static unsigned int truncated_dma_logs = 0;
-    if (ottsel_mobile_log_within_budget(truncated_dma_logs++, 4)) {
-      lg::warn("OTTSEL DMA: PC_PORT tail scan hit bounded limit {} on chain {}",
-               kOttselMobilePcPortScanBudget, g_chain_no);
+    if (!bucket_dma.ended() && bucket_dma.current_tag_offset() != next_boundary) {
+      static unsigned int truncated_bucket_logs = 0;
+      if (ottsel_mobile_log_within_budget(truncated_bucket_logs++, 4)) {
+        lg::warn("OTTSEL DMA: PC_PORT bucket scan hit bounded limit bucket={} limit={} chain={}",
+                 bucket_id, kOttselMobilePcPortScanBudget, g_chain_no);
+      }
     }
   }
   // Jak 1's bucket-66 table entry carries Sprite3 setup; the populated
@@ -5422,6 +6330,18 @@ void gfx_send_chain(const void* data, u32 offset) {
   const DmaTag sprite_bucket(*(const u64*)((const u8*)data + offset + 66 * 16));
   const DmaTag debug_bucket(*(const u64*)((const u8*)data + offset + 67 * 16));
   const DmaTag next_bucket(*(const u64*)((const u8*)data + offset + 68 * 16));
+  static bool sky_ir_trace_consumed = false;
+  const std::string sky_ir_trace_path =
+      ottsel_ios_writable_dir() + "ottsel-trace-mobile-sky-ir";
+  if (!sky_ir_trace_consumed && mobile_sprite_village1_phase() &&
+      access(sky_ir_trace_path.c_str(), F_OK) == 0) {
+    unlink(sky_ir_trace_path.c_str());
+    sky_ir_trace_consumed = true;
+    trace_mobile_direct_ir_bucket(data,
+                                  ottsel_mobile_jak1_bucket_boundary(offset, 3),
+                                  ottsel_mobile_jak1_bucket_boundary(offset, 4),
+                                  g_dec, 3);
+  }
   struct SpriteFrameAggregate {
     bool active = false;
     u32 vsync = 0;
@@ -5471,6 +6391,18 @@ void gfx_send_chain(const void* data, u32 offset) {
     sprite_frame_aggregate.active = false;
   }
   if (sprite_bucket.addr && debug_bucket.addr) {
+    static u32 native_sky_product_vsync = UINT32_MAX;
+    static u32 native_sky_product_submissions = 0;
+    if (native_sky_product_requested && mobile_sprite_village1_phase() &&
+        native_sky_product_vsync != g_ottsel_ios_vsync_count &&
+        native_sky_product_submissions < 1) {
+      native_sky_product_vsync = g_ottsel_ios_vsync_count;
+      submit_mobile_native_sky_bucket(
+          data, ottsel_mobile_jak1_bucket_boundary(offset, 3),
+          ottsel_mobile_jak1_bucket_boundary(offset, 4), g_dec);
+      ++native_sky_product_submissions;
+      native_sky_product_requested = false;
+    }
     MobileSpriteFrameJak1 inherited_frame{};
     MobileSpriteMatrix inherited_matrix{};
     MobileSpriteHudMatrix inherited_hud{};
@@ -5527,6 +6459,19 @@ void gfx_send_chain(const void* data, u32 offset) {
       sprite_trace_requested = false;
     }
     if (have_inherited_frame && have_inherited_matrix) {
+      // The screen-space Sprite3 group is walked in the inherited second
+      // bucket. Keep its parser trace independent from the world bucket so a
+      // one-shot diagnostic can inspect the MSCAL=109 producer contract.
+      if (mobile_sprite_village1_phase() && !g_mobile_sprite_parser_trace) {
+        const std::string bucket67_parser_path =
+            ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite-bucket67-parser";
+        if (access(bucket67_parser_path.c_str(), F_OK) == 0) {
+          unlink(bucket67_parser_path.c_str());
+          g_mobile_sprite_parser_trace = true;
+          g_mobile_sprite_parser_trace_logged = false;
+          lg::info("OTTSEL SPRITE TRACE: bucket67 parser probe armed");
+        }
+      }
       const u32 bucket67_sprite_drawn = render_mobile_sprite_bucket(
           data, debug_bucket.addr, next_bucket.addr, g_raster, g_chain_no, &inherited_frame,
           &inherited_matrix, have_inherited_hud ? &inherited_hud : nullptr);

@@ -202,6 +202,7 @@ KERNEL_SRC="
   game/overlord/common/isocommon.cpp
   game/overlord/common/soundcommon.cpp
   game/overlord/common/srpc.cpp
+  game/overlord/jak1/srpc.cpp
   game/overlord/jak1/fake_iso.cpp
   game/system/Deci2Server.cpp
   game/ios_stubs.cpp

@@ -7,6 +7,8 @@
 // no-emit linker; code pages flip RW -> RX exactly like the host H3 proof.
 
 #include "ios_boot.h"
+#include "goal_pointer_policy.h"
+#include "game/sound/sdshim.h"
 
 #include <cstdarg>
 #include <cstdint>
@@ -609,6 +611,19 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
   raw_write_hex(lr);
   raw_write_lit("\nOTTSEL_IOS: fault sp=");
   raw_write_hex(sp);
+  if (ottsel_ios_pc_is_in_spu_memory(pc, (uintptr_t)spu_memory, sizeof(spu_memory))) {
+    raw_write_lit("\nOTTSEL_IOS: fault target is spu_memory offset=");
+    raw_write_dec((unsigned)(pc - (uintptr_t)spu_memory));
+  }
+  const uintptr_t ee_base = (uintptr_t)g_ee_main_mem;
+  if (pc >= ee_base && pc - ee_base <= UINT32_MAX) {
+    const u32 pc_offset = (u32)(pc - ee_base);
+    raw_write_lit("\nOTTSEL_IOS: fault GOAL offset=");
+    raw_write_hex(pc_offset);
+    raw_write_lit(" code-range=");
+    raw_write_lit(ottsel_ios_goal_code_offset_is_valid(pc_offset) ? "valid" : "invalid");
+  }
+  raw_write_lit("\n");
   raw_write_lit("\nOTTSEL_IOS: regs x0=");
   raw_write_hex(uc->uc_mcontext->__ss.__x[0]);
   raw_write_lit(" x1=");
@@ -627,6 +642,14 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
   raw_write_hex(uc->uc_mcontext->__ss.__x[7]);
   raw_write_lit(" x8=");
   raw_write_hex(uc->uc_mcontext->__ss.__x[8]);
+  raw_write_lit(" x9=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[9]);
+  raw_write_lit(" x10=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[10]);
+  raw_write_lit(" x11=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[11]);
+  raw_write_lit(" x12=");
+  raw_write_hex(uc->uc_mcontext->__ss.__x[12]);
   raw_write_lit(" x19=");
   raw_write_hex(uc->uc_mcontext->__ss.__x[19]);
   raw_write_lit(" x16=");
@@ -1320,8 +1343,8 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
   {
     const uintptr_t flr = uc->uc_mcontext->__ss.__lr;
     const u32 lr_off = (u32)(flr - (uintptr_t)g_ee_main_mem);
-    const u32 code_lo = 0x3ebc000;
-    const u32 code_hi = 0x4ee0000;
+    const u32 code_lo = kOttselIosGoalCodeOffsetMin;
+    const u32 code_hi = kOttselIosGoalCodeOffsetMax;
     const u32 s7_val = s7.offset;
     const u32 queries[] = {lr_off,
                            (u32)uc->uc_mcontext->__ss.__x[0],
@@ -1883,6 +1906,12 @@ void ottsel_ios_run_boot() {
     gated_fail("mmap of EE main memory failed");
   }
   lg::debug("OTTSEL_IOS: EE main memory mapped at 0x{:016x}", (u64)g_ee_main_mem);
+  const uintptr_t ee_begin = (uintptr_t)g_ee_main_mem;
+  const uintptr_t spu_begin = (uintptr_t)spu_memory;
+  const uintptr_t spu_end = spu_begin + sizeof(spu_memory);
+  lg::info("OTTSEL_IOS: address map ee=[0x{:016x},0x{:016x}) spu=[0x{:016x},0x{:016x}) overlap={}",
+           (u64)ee_begin, (u64)(ee_begin + EE_MAIN_MEM_SIZE), (u64)spu_begin, (u64)spu_end,
+           (ee_begin < spu_end && spu_begin < ee_begin + EE_MAIN_MEM_SIZE));
   memset(g_ee_main_mem, 0, EE_MAIN_MEM_SIZE);
   lg::info("OTTSEL BOOT PHASE: selecting iOS data root");
   // Resolve and durably promote a Files-imported pack before kernel setup.

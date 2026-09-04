@@ -21,6 +21,7 @@ typedef struct OttselMetalTieDraw {
   unsigned int index_count;
   int texture_index;
   unsigned int mode;
+  unsigned int owner_tag;
 } OttselMetalTieDraw;
 
 typedef struct OttselMetalSpriteVertex {
@@ -82,6 +83,7 @@ void ottsel_metal_set_tie_colors(OttselMetal* m,
                                  unsigned int color_count);
 void ottsel_metal_set_tie_camera(OttselMetal* m,
                                  const float pc_camera[16],
+                                 const float merc_perspective[16],
                                  const float camera_trans[4],
                                  const float fog_params[4],
                                  const float fog_color[4],
@@ -110,6 +112,16 @@ void ottsel_metal_append_merc_mesh(OttselMetal* m,
                                    unsigned int index_count,
                                    const OttselMetalTieDraw* draws,
                                    unsigned int draw_count);
+// Keep the Jak player model independent from transient title/logo Merc
+// snapshots. The game emits its setup packet before the Village1 camera
+// packet, so replacing the whole presentation batch can otherwise erase it.
+void ottsel_metal_set_merc_actor_mesh(OttselMetal* m,
+                                      const void* vertices,
+                                      unsigned int vertex_count,
+                                      const unsigned int* triangle_indices,
+                                      unsigned int index_count,
+                                      const OttselMetalTieDraw* draws,
+                                      unsigned int draw_count);
 
 // R1 bounded Sprite3 proof: upload one expanded native quad/triangle list.
 // Positions are already in drawable clip space; no CPU frame is produced.
@@ -139,6 +151,17 @@ void ottsel_metal_append_sprite_mesh_n(OttselMetal* m,
                                        unsigned int width,
                                        unsigned int height,
                                        int blended);
+
+// Append Direct/GIF geometry to the background pass. These batches render
+// before TFRAG/TIE so Sky and other pre-world Direct buckets preserve the
+// desktop renderer's ordering.
+void ottsel_metal_append_sky_mesh_n(OttselMetal* m,
+                                    const OttselMetalSpriteVertex* vertices,
+                                    unsigned int vertex_count,
+                                    const unsigned char* rgba,
+                                    unsigned int width,
+                                    unsigned int height,
+                                    int blended);
 
 // T1 first increment: draw the visible touch overlay above the native scene.
 // The shared ShellPadInput seam remains the input owner; this only supplies

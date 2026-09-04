@@ -1,0 +1,39 @@
+diff --git a/game/mips2c/jak1_functions/sparticle_launcher.cpp b/game/mips2c/jak1_functions/sparticle_launcher.cpp
+--- a/game/mips2c/jak1_functions/sparticle_launcher.cpp
++++ b/game/mips2c/jak1_functions/sparticle_launcher.cpp
+@@ -210,3 +210,4 @@
+ struct Cache {
+   void* level; // *level*
++  void* sp_frame_time; // *sp-frame-time*
+   void* sp_launcher_enable; // *sp-launcher-enable*
+@@ -289,3 +289,25 @@
+     }
++    const u32 control_addr = c->gprs[t0].du32[0];
++    u32 control_length = 0;
++    u32 control_allocated_length = 0;
++    u32 control_local_clock = 0;
++    u32 control_last_spawn_frame = 0;
++    u32 control_last_spawn_time = 0;
++    if (control_addr != 0) {
++      control_length = *reinterpret_cast<u32*>(g_ee_main_mem + control_addr + 4);
++      control_allocated_length = *reinterpret_cast<u32*>(g_ee_main_mem + control_addr + 8);
++      control_local_clock = *reinterpret_cast<u32*>(g_ee_main_mem + control_addr + 24);
++      control_last_spawn_frame = *reinterpret_cast<u32*>(g_ee_main_mem + control_addr + 36);
++      control_last_spawn_time = *reinterpret_cast<u32*>(g_ee_main_mem + control_addr + 40);
++    }
++    c->load_symbol(v1, cache.sp_frame_time);
++    const u32 frame_time_addr = c->gprs[v1].du32[0];
++    const u32 frame_time_x = frame_time_addr ? *reinterpret_cast<u32*>(g_ee_main_mem + frame_time_addr) : 0;
++    const u32 frame_time_y = frame_time_addr ? *reinterpret_cast<u32*>(g_ee_main_mem + frame_time_addr + 4) : 0;
+     lg::info("OTTSEL SPARTICLE LAUNCH OWNER: system=0x{:08x} launcher=0x{:08x} launcher-id={} table=0x{:08x}",
+              system_addr, launcher_addr, launcher_id, table_addr);
++    lg::info("OTTSEL SPARTICLE CONTROL: addr=0x{:08x} length={} allocated-length={} local-clock={} "
++             "last-spawn-frame={} last-spawn-time={} frame-time-x=0x{:08x} frame-time-y=0x{:08x}",
++             control_addr, control_length, control_allocated_length, control_local_clock,
++             control_last_spawn_frame, control_last_spawn_time, frame_time_x, frame_time_y);
++    ++ottsel_sp_launch_owner_trace_count;
+@@ -983,3 +983,4 @@
+ void link() {
+   cache.level = intern_from_c("*level*").c();
++  cache.sp_frame_time = intern_from_c("*sp-frame-time*").c();
+   cache.sp_launcher_enable = intern_from_c("*sp-launcher-enable*").c();

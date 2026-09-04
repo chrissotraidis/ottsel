@@ -1,0 +1,18 @@
+diff --git a/game/system/hid/input_manager.cpp b/game/system/hid/input_manager.cpp
+--- a/game/system/hid/input_manager.cpp
++++ b/game/system/hid/input_manager.cpp
+@@ -180,3 +180,6 @@ void InputManager::process_sdl_event(const SDL_Event& event) {
+ void InputManager::process_sdl_event(const SDL_Event& event) {
++  if (event.type == SDL_EVENT_WINDOW_FOCUS_LOST || event.type == SDL_EVENT_WINDOW_MINIMIZED) {
++    clear_inputs();
++  }
+   // TODO - perhaps should handle `SDL_CONTROLLERDEVICEREMAPPED`?
+   // Detect controller connections and disconnects
+@@ -755,3 +755,7 @@ void InputManager::clear_inputs() {
+ void InputManager::clear_inputs() {
+   // Reset inputs as this device won't be able to be read from again!
++  if (m_data.find(m_keyboard_and_mouse_port) != m_data.end()) {
++    m_keyboard.clear_actions(m_data.at(m_keyboard_and_mouse_port));
++    m_mouse.clear_actions(m_data.at(m_keyboard_and_mouse_port));
++  }
+   for (auto& [port, data] : m_data) {

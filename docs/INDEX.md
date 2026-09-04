@@ -37,6 +37,7 @@ The original plan-only question is retained at
 | [13-current-state.md](13-current-state.md) | Detailed implementation snapshot | current (2026-08-18) |
 | [15-macos-to-mobile-goal-loop.md](15-macos-to-mobile-goal-loop.md) | Cross-platform implementation gates and evidence discipline | **current** |
 | [reports/2026-08-19-ipad-iphone-blocker-investigation.md](reports/2026-08-19-ipad-iphone-blocker-investigation.md) | Source-rooted renderer decision, proof design, risks, and completion definitions | **current decision** |
+| [reports/2026-09-03-ipad-village1-render-audit.md](reports/2026-09-03-ipad-village1-render-audit.md) | iPad Village1 render audit: confirmed causes (level latch, inverted depth, Merc camera, missing sky/HUD, dropped sound RPC), falsified assumptions, next experiments | **current (2026-09-03)** |
 | [reports/2026-08-20-jak2-macos-arm64-transfer-research.md](reports/2026-08-20-jak2-macos-arm64-transfer-research.md) | Jak 2 Apple ARM64 implementation audit, Ottsel reuse matrix, exclusions, and bounded adoption gates | **current supplemental research** |
 | [BOT33_PROMPT.md](BOT33_PROMPT.md) | Paste-ready goal loop from Direct attribution through device readiness | **current continuation prompt** |
 | [14-progress-review.md](14-progress-review.md) | Progress review: why the loop stalled + S1 sub-gate plan | done |

@@ -20,6 +20,18 @@ This section is the canonical current board. The dated material below is
 preserved evidence history; where it conflicts with this section, it is
 historical and must not be used as a release or playability claim.
 
+2026-08-22 operating corrections are now permanent in root `AGENTS.md`: one
+bounded SIGINT video recorder under `/tmp`, disk/tmp-pack gates, no large video
+artifacts in the worktree, and concise evidence limits. The orphaned recorder
+was closed and 18 temporary packs totaling about 15 GB were removed. A fresh
+signed restart stayed alive with a zero-byte fault log, but the new report was
+SimMetalHost XPC teardown at native Sprite3 allocation, not the original
+encoder assertion. `RenderEncoderEndGuard` now closes the encoder on normal and
+exception unwinding; a fresh signed PID 97598 survived 30 seconds plus a
+bounded 10-second H.264 capture with zero fault bytes and no encoder/command-
+buffer marker. The frame remains visibly incomplete; this is crash stability,
+not playability, and the next source-defined composition gate remains open.
+
 | Product stage | Audited status | What is actually proven | What still prevents completion |
 |---|---|---|---|
 | ARM64/no-emit foundation | **PASS** | OpenGOAL code runs from signed Mach-O `__TEXT` without runtime-created executable code; native host and Simulator boot evidence exists. | Nothing at this layer unless new contradictory evidence appears. |
@@ -42,6 +54,229 @@ progression, mobile audio, iPhone parity, and physical-device gates open. See
 The platform split and this audio boundary are recorded directly in
 `docs/evidence/M1/m1-platform-split-and-audio-boundary-2026-08-20.md`.
 
+A second fresh macOS replay on 2026-08-21 retained raw stdout/stderr, reached
+title-wait → overwrite confirmation → Village1 with real keyboard events, and
+recorded nonzero mixed PCM windows (`pcm-peak=2174`, `984`, `415`, `413`, and
+`140`). A System Events visibility false/true cycle left the process alive and
+produced before/after screenshots; the bounded retained-log fault scan found no
+crash, assertion, signal, or Metal command-buffer marker. This is still only a
+PARTIAL M1 increment: no human-audible acceptance, physical-controller soak,
+or complete neutral background/resume proof was obtained. See
+`docs/evidence/M1/m1-macos-coldstart-lifecycle-replay-2026-08-21.md`.
+
+The iPad shell control follow-up now accumulates multiple SDL relative-mouse
+events within one event-loop frame before neutralizing the camera impulse. The
+signed rebuild passed strict codesign (`OttselShell` SHA-256
+`e162c1d42c3a7ad8bb92d3d456d38c96303b2c2b651300cf04b83de95bfd3b4c`) and the
+focused input suite passed 4/4. A fresh installed-app Start/Cross/Down×4/Cross
+replay reached Village1 twice with a zero-byte fault log; its screenshot is
+still visibly partial/corrupted, so controls are build/route verified but not
+human-playability verified. See
+`docs/evidence/R1/r1-controls-and-lookup-replay-2026-08-21.md`.
+
+## 2026-08-22 — fresh macOS cold-start/audio increment
+
+One fresh Windowed native `gk` run from the current checkout reached
+`title-wait-ready`, produced page-2 lookup hits, opened SDL output-only audio,
+observed the callback after 2,048 frames, and recorded nonzero PCM windows
+including peaks 2547, 1045, 170, and 40. The retained runtime log is
+`out/jak-project/log/jak1.2026-08-22T05-47-49.log` with SHA-256
+`f557b798663f13748e7cd06da48cbfc11e4412d9e5b3f931a47b09a97e91dd79`; its
+bounded scan found no crash, signal, Metal command-buffer, or runtime-fault
+marker. The iPad device was shut down and the Simulator GUI closed before the
+Mac runtime started, preserving the one-runtime rule.
+
+This is only a fresh M1 cold-start/audio liveness increment. No live keyboard
+or mouse edge was delivered during this particular replay, and human
+audibility, neutral background/resume, physical-controller soak, and longer
+stability remain open. iPad remains diagnostic-only with the blank/partial
+Simulator warning explicit. See
+`docs/evidence/M1/m1-macos-coldstart-audio-2026-08-22.md`.
+
+## 2026-08-22 — R1 pre-armed source parity branch
+
+The signed iPad app was rebuilt with the canonical lookup trace and replayed
+on the one booted iPad Pro 11-inch (M4) Simulator using the durable validated
+pack. A pre-armed raw MIPS2C particle/AdGif trace captured the aligned early
+families: `0x00203500 -> 0x2004d0e59930a506`,
+`0x00200400 -> 0x2004cfe55530a518`, `0x00201200 ->
+0x2004d0e59930a506`, and `0x00200f00 -> 0x2004c8e55530a5d2`, matching the
+macOS source evidence. The post-Start lookup prefix was `54,49,48,42,44` on
+both platforms; page 2 remained a 1,610-entry resident object with segment
+destinations `601152/632576/633664`.
+
+This closes the page-directory/lookup/allocation branch as the first
+divergence. The later iPad native 3D family remains `TBP=0x24d2/0x2525` with
+TEX0 `0x2004d2e59930a4d2`/`0x2014cd655530a525`, versus the macOS `0x24f2`
+world oracle and `0x2004d1e59930a4f2`. R1 therefore remains open at producer
+phase/data-family ownership and native composition. No TBP, camera, shader,
+or Metal-policy remap was made. Fault log was 0 bytes; the Simulator frame
+remains explicitly partial/corrupted/blank and audio remains unproven. See
+`docs/evidence/R1/r1-fresh-prearmed-source-parity-2026-08-22.md`.
+
+The follow-up replay pre-armed the phase-window trigger as well. At
+`chain=146/vsync=147`, bucket 67 was world-only and its first item was
+`TBP=0x2506`, TEX0 `0x2004d0e59930a506`; the same run later emitted the
+recurring `0x24d2/0x2525` native family. This makes the remaining boundary
+chain/vsync-dependent producer/DMA phase ownership rather than a static
+lookup/allocation mismatch. The next experiment is complete phase-list and
+DMA-interval alignment at the first `MSCAL=211`/`MSCAL=3` transition. See
+`docs/evidence/R1/r1-prearmed-phase-owner-2026-08-22.md`.
+
+## 2026-08-22 — macOS live route and native input increment
+
+The next single-runtime Windowed macOS replay used the existing route seam and
+accepted Start → Cross → Down×4 → Cross. It logged `GAMEPLAY: enter village1`
+twice, accepted a bounded left-stick hold for 180 pad reads, and logged the
+release to neutral. The focused native Sprite3/platform/keyboard suite passed
+24/24 and the canonical mouse-controls patch reverse-check passed. A fresh
+raw log and full-desktop screenshot pair are preserved under
+`docs/evidence/M1/artifacts-2026-08-22-macos-route/`.
+
+This remains a bounded M1 partial pass. The screenshots are not clean gameplay
+frames, human audibility was not listener-accepted, physical controller and
+background/resume neutrality remain unproven, and a longer soak is still
+required. No Simulator was booted and no iPad playability claim follows; the
+blank/partial Simulator warning remains explicit. See
+`docs/evidence/M1/m1-macos-live-route-input-2026-08-22.md`.
+
+## 2026-08-21 — camera-dependent visibility snapshot invalidation
+
+The exact signed iPad route reached Village1 twice after native TFRAG/TIE
+visibility snapshots were made camera-dependent. Fresh rebuilds varied from
+12,450 to 61,192 TFRAG triangles and from 37,214 to 344,500 TIE triangles as
+the frustum changed, eliminating the prior stale-snapshot top-strip/black-region
+failure. Signed executable SHA-256 is
+`46349ecd296294bb830dd73bd36a61c3012989952369e4c827a508b7618fbdb7`.
+
+The fresh screenshot is
+`/tmp/ottsel-cull-invalidation-route.png` (SHA-256
+`9f5641022df832e09a9e2a7a1681b7b6689ac7b9c5863cae91045ecff42f3c27`); fault
+log is empty. The scene is now coherent without the touch overlay, but
+player/HUD/Direct coverage, audio (`pcm-peak=0`), lifecycle, human controls,
+iPhone, and physical-device gates remain open. Preserve the explicit
+blank/partial Simulator warning and iPad-first completion goal.
+
+## 2026-08-21 — native TRANS/DIRT TFRAG coverage increment
+
+The native consumer now uploads the loaded Village1 NORMAL, TRANS, and DIRT
+TFRAG families and selects source-alpha/depth-write behavior from DrawMode.
+Signed executable SHA-256 is
+`b4134cc63319fd2cbcd156be0a55b7a5fe63889316bfdf132d20a447687c9e20`;
+focused Sprite3/input/keyboard tests passed 21/21; and deep codesign passed.
+Fresh evidence increased visible TFRAG output to 76,264 vertices / 53,524
+triangles across 81 batches, with 2,168 TFRAG TOD colors. Fault log remained
+empty.
+
+The fresh screenshot includes the touch overlay because no native input event
+had yet been delivered; it is not a clean composition comparison. The
+underlying scene still has missing regions and `pcm-peak=0`; this is a partial
+composition increment, not an iPad playability pass. Continue with a clean
+native-input capture, material-state/order, and remaining Direct/Sprite
+composition, preserving the blank/partial Simulator warning and fixed
+iPad-first goal.
+
+## 2026-08-21 — native TFRAG/TIE Y-space parity correction
+
+After the source/resource comparison and native consumer probe produced a
+falsifiable composition boundary, the Metal TIE vertex shader was aligned with
+the upstream Jak 1 `tfrag3.vert` Y-space expansion (`512/448`). The signed
+build passed strict codesign; executable SHA-256 is
+`e7a8d74c1a05afb48771ca0b90624c397e021afc04e25cbac02cb9234839e0f6`; focused
+Sprite3/input/keyboard regressions passed 21/21; and the canonical patch
+reverse-check passed. This is a narrow source-side correction, not a camera,
+TBP, texture, or Metal-policy rewrite.
+
+No playability claim follows yet: the required fresh post-change screenshot,
+input acceptance, audio, lifecycle, iPhone, and physical-device gates remain
+open. Keep the Simulator blank/partial warning explicit and preserve the
+iPad-first completion goal.
+
+## 2026-08-21 — fresh Y-space replay and TFRAG coverage boundary
+
+The latest signed build produced a materially more coherent fresh native scene
+after the Jak 1 `512/448` Y-space correction. The host arrow-key path did not
+deliver D-pad events, so the app's own writable file triggers were used to send
+four Down taps and Cross through the native keyboard state path. The fresh
+fault log was empty; screenshot SHA-256 is
+`c955d2f9c4e7ab60be1b8cbdf25637eb6b7ca8ca9469f84dcb87d05456bd1801`; audio
+still reported `pcm-peak=0`; and no clean Village1 gameplay marker was reached.
+
+Current FR3 evidence shows Village1 has normal, TRANS, and DIRT TFRAG
+families, while the native composition consumer currently uploads only normal
+TFRAG geometry. The next source-side experiment is bounded TRANS/DIRT coverage
+with correct alpha/depth ordering. Playability remains OPEN, and the
+Simulator blank/partial warning, iPad-first goal, ROM safety, and
+signed-native/no-runtime-codegen constraints remain unchanged.
+
+## 2026-08-21 — fresh sprite-frame/producer-order discriminator
+
+The R1 canonical trace now includes a bounded GOAL-side
+`sprite-add-frame-data` handoff trace. After a full ARM64 `(mi)` regeneration
+of all 546 targets, a signed iPad rebuild passed strict codesign and the
+focused native suite passed 20/20. The exact validated-pack route reached
+Village1 twice on both macOS and iPad.
+
+The fresh ordered page-2 lookup streams differ in particle/spec order, but
+shared page/index objects resolve to matching source-side TBP and shape values
+on both platforms. The iPad source boundary begins `MSCAL=211` at
+`TBP=0x24d2`, TEX0 `0x2004d2e59930a4d2`, then `0x2525`; this is a concrete
+producer-phase/order mismatch against the macOS first 3D/world phase, not a
+TBP allocator failure or a reason to alter camera, shader, or Metal policy.
+
+The fresh screenshot `/tmp/ottsel-r1-sprite-frame-discriminator.png` remains
+severely triangular/corrupted with a large blank region, the fault log is
+empty, and audio reports `pcm-peak=0`. The Simulator warning and iPad
+playability gate remain explicit. See
+`docs/evidence/R1/r1-controls-and-lookup-replay-2026-08-21.md` for the full
+sequence/object comparison and exact hashes.
+
+## 2026-08-21 — narrow native Sprite3 post-divide correction
+
+The source comparison authorized one small composition fix: the CPU
+`sprite_raster_vertex` path was retaining homogeneous `w` after the reference
+shader's perspective divide. A regression failed before the change and the
+focused Sprite3/platform/keyboard suite passed 21/21 after it. The signed
+rebuild and exact route were healthy at the lifecycle/fault level, but the
+fresh frame remained largely blank/triangular and audio still reported
+`pcm-peak=0`. This is a verified narrow contract correction, not an iPad
+playability pass. The next blocker remains native Sprite3 composition/phase
+alignment; no TBP, camera, shader, or Metal-policy compensation is justified.
+
+## 2026-08-21 — producer-object/TEX0 trace regenerated
+
+The R1 diagnostic now records the resolved texture object shape and generated
+TEX0 immediately after `particle-setup-adgif` login. A full ARM64 `(mi)`
+regeneration rebuilt all 546 targets, and the signed iPad app was rebuilt and
+strictly signed. The fresh exact route consumed Start, Cross, Down×4, and
+Cross, entered Village1 twice, and captured page-2 object/TEX0 state plus raw
+particle/AdGif output. The fault log was empty.
+
+This is a stronger source-side discriminator for the known lookup-hit but
+producer-family/phase-divergence boundary. It still does not prove a composed
+or playable iPad frame: `/tmp/ottsel-r1-producer-object-route.png` remains
+partial/corrupted and audio reports `pcm-peak=0`. The next gate is the matching
+macOS producer-object capture; preserve the explicit blank/partial Simulator
+warning and do not alter TBP, camera, shader, or Metal policy before that
+comparison.
+
+The follow-up native-input replay also made the shell overlay input-aware: the
+first keyboard/mouse event hides the diagnostic touch rectangles instead of
+letting them cover the game frame. A fresh Simulator screenshot confirms the
+colored blocks are gone and textured village geometry is clearer, but large
+missing/rotated regions remain and the frame is still non-playable. This
+narrows the visual boundary to native composition/layout; it does not close
+the iPad gate. See the overlay follow-up in
+`docs/evidence/R1/r1-controls-and-lookup-replay-2026-08-21.md`.
+
+The same capture's raw Simulator framebuffer is `1668x2420` portrait despite
+the signed bundle's landscape-only plist. A 90-degree rotated inspection copy
+shows the scene in landscape but leaves the missing geometry unchanged, so no
+SDL orientation or camera change is justified from this artifact. The runtime
+retained substantial native TFRAG/TIE geometry; the remaining visual blocker
+is still native composition/layout. The Simulator blank-screen and
+non-playability warning remains explicit.
+
 The 2026-08-21 macOS follow-up completed the missing half of the particle
 producer trace. At the shared Village1 target marker, macOS producer IDs map
 directly to its own AdGif/TEX0 family (`0x...a518`, `0x...a4f2`, `0x...a5ee`,
@@ -61,6 +296,69 @@ differ. The native consumer therefore is not the first divergence, but the
 exact producer lookup/resource owner remains open. No texture substitution or
 TBP remap is allowed without that source-side comparison. See
 `docs/evidence/R1/r1-sparticle-source-texture-page-comparison-2026-08-21.md`.
+
+The latest trigger-gated iPad capture now preserves the full producer IDs:
+`0x00200f00` maps to `TEX0=0x2005a0455530ac8d`, while the mobile-only
+`0x00203600` maps to `TEX0=0x20159da4cd40abd2`; macOS maps its corresponding
+producer family to `0x2004...` TEX0 values. The page entries are resident hits
+and the allocator attribution remains default allocation for the mobile-only
+family, so R1 is narrowed to producer phase/data-family or DMA handoff
+ownership. See `docs/evidence/R1/r1-particle-adgif-same-route-capture-2026-08-21.md`.
+The fresh screenshot remains visibly partial/corrupted and audio `pcm-peak=0`,
+so no playability claim follows. The shared desktop input seam also now clears
+stale keyboard/mouse active actions on focus loss via
+`patches/r1-input-focus-neutral.patch`.
+
+The next fresh signed iPad R1 replay added page-directory and segment-state
+logging. Page 2 remained a resident hit in a 1,610-entry directory, but its
+segment destinations changed from `601152/632576/633664` under allocator
+selector 1 to `711424/742848/743936` under selector 6 before the Village1
+lookup family. This is an allocation/order discriminator, not permission to
+remap TBP or change camera, shader, or Metal policy. See
+`docs/evidence/R1/r1-page-directory-state-2026-08-21.md`.
+The equivalent Mac trace keeps the original page-2 destinations throughout,
+while its lookup order is `4,53,4,18,15,30,0,28,3,41,24,...` versus the
+iPad's reordered post-Start window beginning `54,49,48,42,44`; the source
+ordering question remains open. The iPad boot now registers the native
+`engine`/`art`/`common` package markers after direct GAME.CGO linking, so the
+duplicate ART.CGO load is gone and page 2 relocates only once at
+`601152/632576/633664`. This fixes allocation ownership but not lookup parity;
+it still makes no TBP or renderer-policy changes. See
+`docs/evidence/R1/r1-page-directory-state-2026-08-21.md`.
+
+## 2026-08-21 — phase-aligned R1 raw producer parity
+
+The prior lookup-order comparison was phase-contaminated: it compared records
+before the Start edge with records after the Start edge. A fresh iPad replay
+armed the particle trace before Start, and the macOS reference was captured
+with the same boundary. The aligned post-Start page-2 window begins
+`54,49,48,42,44` on both platforms.
+
+The aligned raw producer/TEX0 pairs also match, including
+`0x00203500 -> 0x2004d0e59930a506`, `0x00200400 -> 0x2004cfe55530a518`,
+`0x00201200 -> 0x2004d0e59930a506`, and
+`0x00200f00 -> 0x2004c8e55530a5d2`. The iPad page-2 object relocates once at
+`601152/632576/633664`, with no duplicate `ART.CGO` load. This closes the
+current page-directory/texture-object mismatch hypothesis; it does not close
+R1/native composition because the iPad phase/TBP stream and visible frame are
+still not macOS-equivalent. The fresh screenshot remains corrupted and audio
+reports `pcm-peak=0`. See
+`docs/evidence/R1/r1-phase-aligned-raw-parity-2026-08-21.md`.
+
+The next experiment is the first same-transition iPad `MSCAL=211` source item
+with frame/matrix and DMA ownership compared against macOS, followed by the
+smallest before-failing native Sprite/material composition fixture. No TBP,
+camera, shader, or Metal-policy change is justified before that comparison.
+
+That source-boundary capture is now complete. With the trigger armed before
+launch, the first eligible iPad Village1 item was `MSCAL=3`, 48 sprites,
+`TBP=0x2506`, `64x64`, frame transfer 9, matrix transfer 12, and
+`first-tex0=0x2004d0e59930a506`, using the same camera tuple and raw/TEX0
+family as the macOS same-transition reference. This closes the current
+R1 page/TEX0/first-world-boundary hypothesis. The fresh screenshot still has
+large missing regions and diagnostic controls, so the next implementation gate
+is native Direct/Sprite/material composition; audio remains silent. See
+`docs/evidence/R1/r1-first-source-boundary-parity-2026-08-21.md`.
 
 Supplemental Jak 2 ARM64 research was read on 2026-08-20. It shares the
 Ottsel upstream pin and supplies useful regression oracles, but its MAP_JIT,
@@ -1923,3 +2221,1400 @@ soak was about four minutes of active interaction, not an endurance test.
 iPadOS/iPhone therefore remain paused behind those explicit macOS clauses.
 See `docs/evidence/M1/m1-macos-bounded-stability-increment-2026-08-21.md` and
 `docs/evidence/M1/artifacts-2026-08-21-macos-stability-gate/`.
+
+## 2026-08-21 — fresh exact iPad R1 replay and native composition boundary
+
+The fixed iPad-first product goal remains in force: the current iPad result is
+diagnostic and not playable. A fresh signed build from the canonical R1 trace
+patch was installed into one iPad Pro 11-inch (M4) Simulator with one runtime
+and a validated user pack imported through F1. The exact route title-wait →
+Start → Cross → Down×4 → Cross reached Village1 twice.
+
+The raw page-2 lookup sequence was `54,49,48,42,44`, followed later by
+`24,25,10,41,30,34,9`. Same-route particle/AdGif records resolved, among
+others, `0x00201200` → TEX0 `0x2004d0e59930a506`, `0x00200000` →
+`0x2004c1259930a6e1`, and `0x00200f00` → `0x2004c8e55530a5d2`; native source
+boundary chain 1643/VSYNC 1644 produced 512 world sprites, and the native
+Sprite3 consumer was live. This is evidence against a current page-directory
+or simple lookup remap failure, not proof of macOS parity for every later
+producer phase.
+
+The fresh screenshot `/tmp/ottsel-r1-exact-route.png` has SHA-256
+`5b8d6820ee0e4fac8aa1b3f88694a96bda6f101198164b5ede1414045c5a466f` and still
+contains large missing/triangular corrupted regions. The fault log was empty;
+audio transport ran but reported `pcm-peak=0`. Therefore the iPad playability
+gate remains OPEN. Preserve the explicit blank/partial Simulator warning and
+do not change camera, shader, TBP, or Metal policy until a same-phase macOS
+producer comparison identifies a concrete contract mismatch. Full details:
+`docs/evidence/R1/r1-controls-and-lookup-replay-2026-08-21.md`.
+
+## 2026-08-21 — fresh signed native-input route
+
+The signed executable `46349ecd296294bb830dd73bd36a61c3012989952369e4c827a508b7618fbdb7`
+was installed into the one booted iPad Simulator and replayed through
+title-wait → Start → Cross → Down×4 → Cross. The route reached Village1 twice,
+produced eight bounded Sprite source items (`world=512`), and uploaded one
+native textured Sprite3 candidate (`texture=0x26d1`, 64×64). The fresh
+screenshot `/tmp/ottsel-fresh-controls-r1.png` has SHA-256
+`246e587053a160d46dd062e56b352c08c93b486f5a5da74584a857c17ba7b508`.
+
+The Simulator image is still blank/partial and not playability proof; audio
+continues to report `pcm-peak=0`, while the fault output remains empty. Native
+mouse/keyboard handling is implemented and the focused Sprite3/platform/
+keyboard suite passes 21/21, but human WASD/mouse acceptance remains OPEN.
+Player/HUD/Direct coverage, lifecycle, iPhone parity, and physical-device
+readiness also remain OPEN.
+
+## 2026-08-21 — scene depth-state falsification probe
+
+A trigger-gated `ottsel-trace-metal-scene-no-depth` diagnostic was exercised
+on signed executable
+`8c96bdbe1542f74bee6cf944d512846924816ece1a3f7d7e126b2410cee41d82`. The exact
+iPad route reached Village1 twice. Normal depth testing produced an almost
+empty frame even though CPU projection found `1876/4097` sampled TIE vertices
+inside Metal clip space and the native backend submitted large TFRAG/TIE
+meshes. Disabling only the scene depth test produced a full, though heavily
+corrupted, Village1 scene in
+`/tmp/ottsel-scene-no-depth-landscape.png` (SHA-256
+`7e0c802cdf89c67daf512ba49064c611b04e2f392015ddb23868cc9629e2f184`).
+
+This localizes the next source-side fix to native depth compare/depth mapping
+or ordering. Normal product depth policy remains unchanged pending that
+falsifiable comparison. Fault output was zero bytes and audio remained
+`pcm-peak=0`; iPad playability, controls acceptance, Direct/Sprite/HUD
+composition, iPhone parity, and physical-device readiness remain OPEN.
+
+## 2026-08-21 — native forward-Z depth correction
+
+The depth probe established that the native shader already remaps desktop
+OpenGL depth into Metal's forward `[0,1]` range. Normal Metal composition now
+uses `LESS_EQUAL` with a clear depth of `1.0`; the no-depth path remains a
+trigger-gated diagnostic. Signed executable SHA-256:
+`75d8832486032639e0bc334f95ae88ff4ec4a30627d52d268defdca4c7b09e51`.
+
+A fresh exact route without a probe reached Village1 twice and produced the
+normal-depth screenshot `/tmp/ottsel-forward-depth-route-landscape.png`
+(SHA-256 `5844373b7145dfde018210a799b050415899d65b610320da00fa4809216dba9a`).
+The frame now contains the full native scene rather than the prior nearly
+empty image, but it remains heavily corrupted and is not playability proof.
+The lookup tail remains `24,25,10,41,30,34,9`; fault output is empty and audio
+still reports `pcm-peak=0`. Direct/Sprite/HUD composition, human controls
+acceptance, lifecycle, iPhone parity, and physical-device readiness remain
+OPEN.
+
+## 2026-08-21 — fresh signed iPad owner-correlation replay
+
+The current no-emit arm64 iPad app was rebuilt and passed strict deep
+codesign (executable SHA-256
+`c6fb92017247db7ff7d816f6fa844579adc3a3ded7fec4ccdbb099a4becc64af`). The
+single booted iPad Pro 11-inch (M4) Simulator consumed the exact
+title-wait → Start → Cross → Down×4 → Cross route through the native keyboard
+seam and reached `GAMEPLAY: enter village1` twice. The fresh page-2 lookup tail
+was `25,24,10,41,30,34`, all resident hits; fault output was 0 bytes and audio
+mix windows remained non-audible at `pcm-peak=0`.
+
+Screenshot `/tmp/ottsel-r1-signed-owner-route.png` remains severely
+rotated/distorted and is not playability evidence. The iPad mips2c `/tmp`
+owner trigger did not emit a separate launch-owner trace in this replay, so no
+owner parity claim is made. Source/resource and native-composition gates,
+human mouse/keyboard acceptance, lifecycle, iPhone, and physical-device gates
+remain OPEN. See
+`docs/evidence/R1/r1-launch-owner-correlation-2026-08-21.md`.
+
+## 2026-08-21 — fresh native keyboard/mouse delivery evidence
+
+A fresh install of signed executable
+`60d2d93f22ef427146f16c8a16b438584122dcc20fa89da1c59421b3afa3663a` replayed
+title-wait → Start → Cross → Down×4 → Cross and reached Village1 twice. The
+post-route screenshot `/tmp/ottsel-continuation-route2.png` has SHA-256
+`700d196499884210c81e4c094161c5a2f303e995b9e4ffe1bb9a4e24f7c5a7d4`; the
+fault log is 0 bytes. The raw post-transition lookup tail was
+`24,25,10,41,0,30,34,9`, all resident hits, and still differs from the macOS
+phase/order oracle.
+
+Actual Simulator Capture Keyboard delivery produced native `w/a/s/d` records
+with left-stick states `(127,0)`, `(0,127)`, `(127,255)`, `(255,127)`, each
+returning to neutral `(127,127)`. Captured pointer motion reached the native
+mouse-motion path and left-click reached Cross with pressure 255. Right-click
+remains unproven because this Simulator gesture synthesized touch/Cross.
+The scene remains visibly distorted and audio remains `pcm-peak=0`; the
+Simulator is still blank/partial relative to the playability gate. This proves
+input delivery, not a playable build. HUD/Direct/3D, lifecycle, iPhone, and
+physical-device gates remain OPEN.
+
+## 2026-08-21 — native layer isolation and camera-layout falsification
+
+Trigger-gated layer probes show the remaining corruption is shared by both
+native scene families. The no-TIE frame
+`/tmp/ottsel-no-tie-landscape.png` (SHA-256
+`eae214c826f36a7a04197a36b3d574193e5aa5d9397b48738b5f17bb00399758`) still
+contains warped TFRAG geometry, and the no-TFRAG frame
+`/tmp/ottsel-no-tfrag-landscape.png` (SHA-256
+`5ff6fc710551acc48662eb0b7ba938e13312c72ca36794b58fa36d6e488a638d`) still
+contains warped TIE geometry. A source-backed camera storage repack was then
+falsified by severe radial distortion in
+`/tmp/ottsel-camera-layout-route-landscape.png` (SHA-256
+`20d9d3364d8681c611c4668faf231bb5b33dd64530f31bf2baa4a57711334601`) and was
+reverted. The forward-Z depth correction remains the product state; camera
+policy was not changed by the failed experiment. Playability and all later
+gates remain OPEN.
+
+## 2026-08-21 — valid post-Village1 Sprite3 product ledger
+
+The product-window, frame-aggregate, source-boundary, and bounded-record
+triggers were armed only after the first fresh `GAMEPLAY: enter village1`
+marker. The valid frame recorded five groups: world `48 @ TBP 0x2506` with raw
+TEX0 `0x2004d0e59930a506`, a zero-text 16-sprite placeholder, then HUD groups
+`48 @ 0x2517`, `48 @ 0x252d`, and `32 @ 0x21fd`. No 3D group appeared in the
+frame.
+
+The first mobile world group matches the synchronized desktop group-0 decoded
+identity, including the 64×64 shape and RGBA hash
+`0xc8679915dfac0e15`. The later macOS world phase continues through the
+`0x24f2` / 9458 family and many more world groups. The remaining R1 gap is
+therefore producer phase/packet-window ownership, not a TBP remap or texture
+decode defect. Screenshot:
+`/tmp/ottsel-product-window-village1-armed.png` (SHA-256
+`7a4e3c40309e63c2dcd4ae4a7e9c888265f706f4a1601ef194f1f0f9c7adc9d7`). Fault
+output is empty and audio remains `pcm-peak=0`; playability remains OPEN.
+
+## 2026-08-21 — restored clean route and remaining R1 ordering mismatch
+
+The falsified camera repack was reverted and the signed app rebuilt as
+`82991f20cb1a6ae7b30d1cb20f6147cce99ebf1ca5543d4044df40c9fb73457a`. A fresh
+route with no diagnostic probes reached Village1 twice. The normalized frame
+`/tmp/ottsel-restored-forward-depth-route-landscape.png` has SHA-256
+`ddf1ea60f37eea802ee60c4c44b4faccb82e5cc0266d846015c7c5ae6093c63d`; it
+confirms the restored forward-Z scene path but remains visibly corrupted and
+not playable.
+
+The current post-transition page-2 lookup tail is
+`8,30,25,10,41,24,34,9`, which differs from the completed macOS oracle's
+phase/order stream. Every observed mobile entry is a resident hit, so the
+remaining R1 mismatch stays upstream of TBP remapping and requires further
+same-phase producer/resource-family ordering correlation. Fault output is
+empty and audio remains `pcm-peak=0`; all playability and later gates remain
+OPEN.
+
+## 2026-08-21 — bounded HUD phase consumer and native mouse tap latch
+
+The desktop Sprite3 reference confirms HUD MSCAL 109 uses a separate 0x500-byte
+matrix upload, `hud_matrix`, and one of 76 HVDF offsets; it must not use the
+World2D camera matrix. The iPad consumer now captures that exact HUD matrix
+shape and routes only MSCAL 109 records with a captured HUD setup through a
+phase-specific raster path. World2D MSCAL 3 and the source/resource lookup
+path are unchanged. A native mouse Cross/Circle press also now uses the same
+bounded eight-pad-read tap latch as keyboard actions, while held state remains
+live.
+
+The signed rebuild executable SHA-256 is
+`60d2d93f22ef427146f16c8a16b438584122dcc20fa89da1c59421b3afa3663a`.
+Strict deep codesign and the canonical R1 patch reverse-check pass. The
+focused Sprite3/platform/keyboard suite remains 21/21. This is an
+implementation increment, not playability proof: the fresh visual gate still
+needs a new post-Village1 screenshot and human WASD/mouse acceptance, and the
+scene remains visibly corrupted with audio at `pcm-peak=0`. HUD, Direct/3D,
+lifecycle, iPhone parity, and physical-device gates remain OPEN.
+
+## 2026-08-21 — first normal-product World2D Metal upload
+
+Signed executable `6937eb1c0cb37e83cc30dfdfcb2273063ed283a49fe359dd53ab607a5c8ef83d`
+was freshly installed and replayed through the required route. Without a
+Sprite3 Metal trigger, the normal product path accepted the validated World2D
+shape contract (`count=48`, PSM19, 64×64) and uploaded `native group=0 index=0`
+using live TBP `0x2506`. No TBP remap or camera/depth/shader policy changed.
+
+Fresh screenshot `/tmp/ottsel-native-world-product-route.png` has SHA-256
+`ec65e31c8cad68e4695b2bb80511c974854c9ad07e14f5e2bbf3f51ce7d773dc`; the
+fault log is 0 bytes. The route reached Village1 twice, but the app still
+shows only a distorted/partial ground-and-sky scene without coherent
+player/HUD composition, and audio remains `pcm-peak=0`. This is a bounded
+native-composition increment, not playability proof; Direct/3D, full Sprite3,
+audio/lifecycle, iPhone, and physical-device gates remain OPEN.
+
+## 2026-08-21 — mixed-TEX0 World2D atlas upload
+
+The validated 48-sprite World2D group contains three live TEX0 identities and
+color-only placeholders, so the single-texture upload boundary was widened to
+assemble a transient 512×512 atlas and submit all 48 quads as 288 native Metal
+vertices. A stale-request guard also prevents a later 16-sprite zero-text
+placeholder from being uploaded as product content.
+
+Fresh signed executable SHA-256:
+`4ab393d28e14ae48b23ff1d7b1e30304d731454d3e49f7740bfcf6851a7d1284`.
+The fresh route reached Village1 twice and logged
+`native World2D atlas vertices=288 sprites=48 textures=3 atlas=512x512`.
+Screenshot `/tmp/ottsel-native-world-atlas-route.png` has SHA-256
+`b9510a2109ce3a5a0fc0b1678f9860354b5ec350ebe8b89df96ca6d44d895886`; fault
+output is 0 bytes. The frame remains distorted/partial without coherent
+player/HUD composition and audio remains `pcm-peak=0`; playability and all
+later Direct/3D, lifecycle, iPhone, and physical-device gates remain OPEN.
+
+## 2026-08-21 — native HUD atlas composition and fresh route
+
+The native Metal Sprite3 presenter now retains the validated World2D batch and
+appends HUD batches for the current present, expiring only transient HUD data
+after encoding. MSCAL 109 uses the existing 0x500-byte HUD matrix, selected
+HVDF offset, live TEX0 decode, and a transient 512×512 atlas; no TBP remap,
+camera, shader, or depth-policy change was made.
+
+Fresh signed executable SHA-256:
+`291b28902ffa7c27d543ad728a91c9e1e171414e016400c158d008a5ce78e37f`.
+The fresh title-wait → Start → Cross → Down×4 → Cross route reached Village1
+twice and logged native HUD batches of 48/48/32 sprites. Raw lookup tail was
+`54,49,48,42,44,25,10,41,24,30,34,9`, all resident hits and still divergent
+from the completed macOS order. Screenshot `/tmp/ottsel-hud-route.png` has
+SHA-256 `02db39251b7f2c3987e097b4a8cafe726bdda634b7ef6d680e005ce83f102fad`;
+fault output is 0 bytes and audio remains `pcm-peak=0`.
+
+The frame is still visibly corrupted and lacks coherent Jak/player/HUD
+composition, so this is a native-composition increment, not playability proof.
+Direct/3D/material completion, audio/lifecycle, iPhone parity, and
+physical-device gates remain OPEN. The Simulator blank/partial-screen warning
+therefore remains explicit.
+
+## 2026-08-21 — phase-window TEX0 ledger
+
+The next source-side ledger now records phase-item AdGif TEX0, `tex0_addr`,
+and first vector alongside TBP/PSM/size. A fresh signed replay with the exact
+route reached Village1 twice. Its phase window saw bucket 66 empty and bucket
+67 world-only (11 groups/512 sprites), first TBP `0x25d2`, TEX0
+`0x2004c8e55530a5d2`; lookup entries remained resident hits. A prior
+same-checkout window captured the alternate bucket-67 prefix of 48 3D sprites
+at `0x24d2`, 16 at `0x2525`, then world `0x25d2`, while macOS begins at
+`0x24f2`. This establishes chain/timing-dependent producer phase ownership,
+not a stable TBP mapping defect.
+
+Fresh executable SHA-256:
+`2b162c85701ca99afb4d3607a064e3b04c9e64e9fa7c30839eaff183600210b4`.
+Screenshot `/tmp/ottsel-r1-phase-tex0-route.png` has SHA-256
+`b0e51cab700270fcb5c68a201208de684334e9bc58bb21f7a2bd5191d32704eb`;
+fault output is 0 bytes and audio remains `pcm-peak=0`. The frame is still
+corrupted/partial and non-playable, so Direct/3D/material, lifecycle, iPhone,
+and physical-device gates remain OPEN. See
+`docs/evidence/R1/r1-phase-window-tex0-ledger-2026-08-21.md`.
+
+The follow-up fresh particle-AdGif trace aligned raw page-2 IDs with the
+native world item: `0x00203500 -> 0x2004d0e59930a506`, `0x00200400 ->
+0x2004cfe55530a518`, `0x00201200 -> 0x2004d0e59930a506`, and the `0x30/0x31`
+family. The current phase window remained world-only; the prior chain-4965
+window showed the alternate 3D prefix. This confirms producer TEX0 continuity
+for the world family while leaving the chain-dependent 3D owner unresolved.
+Fresh screenshot `/tmp/ottsel-r1-particle-phase-route.png` has SHA-256
+`da17573fd3e499fad6d58e33986853eb8cc5faac159ff0d5ccd77c861de72dac`;
+fault output remains 0 bytes and audio remains `pcm-peak=0`.
+
+## 2026-08-21 — inherited bucket-67 Sprite3 pass
+
+The product parser now exports bucket-66 frame/matrix setup and performs a
+bounded bucket-67 Sprite3 pass with that inherited setup. MSCAL=3/109 remain
+the only product consumers; MSCAL=211 remains diagnostic-only pending a proven
+3D material contract.
+
+Fresh signed executable SHA-256:
+`dded8ca510462bcf0b06f739c2f0186ae5bd575282d2201ca837a83f16137883`.
+The exact route reached Village1 twice and logged bucket-67 Sprite3
+consumption (`consumed=64`, inherited frame/matrix/HUD setup). Screenshot
+`/tmp/ottsel-bucket67-pass-final-route.png` has SHA-256
+`4b38a869947d489fca6ff1f859dc0cebb8f1e03ef78bc06efff6d2c00fee18be`;
+fault output is 0 bytes and audio remains `pcm-peak=0`.
+
+The screenshot remains corrupted/partial and is not playability proof. The
+Simulator blank/partial-screen warning remains explicit; Direct/3D/material,
+lifecycle, iPhone, and physical-device gates remain OPEN.
+
+## 2026-08-21 — MSCAL=211 native consumer source-contract correction
+
+The first bounded native consumer for the proven `MSCAL=211` 48/16 Sprite3
+tuple now executes live TEX0/CLUT decoding on the signed iPad build. The
+source-side comparison found and corrected two CPU-port contract errors: the
+quaternion matrix was transposed relative to the maintained GLSL column-major
+`mat3`, and projected-area fade used `Q*Q` instead of the source shader's one
+`Q` before its final alpha multipliers. No TBP remap, camera, shader, or Metal
+policy change was made.
+
+Fresh executable SHA-256:
+`b9840c49aea9c90631ccf645e74524a73884731ce3df3cbceff33af31895672d`.
+Focused Sprite3/input tests passed 21/21 and strict deep codesign passed. The
+fresh screenshot `/tmp/ottsel-native-equation-route.png` has SHA-256
+`86cfb2228efe700ed930340dd37eb9210ecb862f72f01cdbb0d2293ecb562ebc`; it shows
+more decoded village geometry but remains severely miscomposed with missing or
+rotated regions and diagnostic blocks. This is not playability proof. Audio,
+iPhone parity, lifecycle, and physical-device gates remain OPEN. See
+`docs/evidence/R1/r1-native-composition-consumer-boundary-2026-08-21.md`.
+
+The converged-camera follow-up then captured chain 299/VSYNC 300 with the
+macOS-matching `pfog0=-0.036405455`, `inv-area=0.036767285`, and basis
+`(0.25105703,0.14644994)`, but the groups remained world-only `MSCAL=3`; no
+same-chain `MSCAL=211` followed that packet. This rules out treating the
+earlier 3D phase as merely a stale camera scalar. A separate native-z/layout
+experiment regressed to diagnostic blocks and was reverted. The next R1 step
+is producer phase/data-family ownership, not another native depth or camera
+change. Full log: `/tmp/ottsel-converged-phase-route-1787368217.log`.
+
+## 2026-08-21 — Sprite3 depth compare and producer-phase follow-up
+
+The native Sprite3 Metal state now preserves Jak 1's source packet contract:
+`GEQUAL` depth testing with depth writes disabled. TIE remains on its separate
+forward-Z `LessEqual` state. This was a narrow state correction; no TBP,
+camera, shader equation, or resource-selection remap was made.
+
+Fresh signed executable SHA-256:
+`70eb453331663ec8046906c95c085aca703d7bf7450c0614df69dd1df942789b`.
+Codesign passed and focused Sprite3/platform-input/keyboard tests passed 21/21.
+The fresh screenshot `/tmp/ottsel-depthfix-route.png` has SHA-256
+`308aae9e6c4addca4e3d2ffe87d5183bd1cc34d2816380dfbcd9f29970a848b`.
+The frame is materially less corrupted and has no prior diagnostic color
+blocks, but still lacks coherent Jak/player/HUD composition and remains
+non-playable. Fault output was 0 bytes; audio remains unproven/non-audible.
+
+The same run captured early world-only Sprite3 chains with
+`pfog0=-0.046546843`, `inv-area=0.10231715`, basis
+`(0.41880882,0.24430515)`, and `TEX0=0x2004d0e59930a506`. Later camera packets
+converged to the macOS scalar values `pfog0=-0.036405455` and perspective
+`(-0.25105703,-0.14644994,...)`. This localizes the next R1 experiment to
+timing/phase-owned producer/frame state: capture the first `MSCAL=211` group
+after the converged packet and compare its frame/matrix hash and vector with
+macOS before expanding native composition further. See
+`docs/evidence/R1/r1-native-composition-consumer-boundary-2026-08-21.md`.
+### 2026-08-21 — producer-vector trace regenerated and replayed
+
+The documented stale-object refresh plus ARM64 `(mi)` completed all 546 targets
+and the signed iPad app was rebuilt. Fresh title-wait → Start → Cross → Down×4
+→ Cross reached `village1` and now logs the compiled producer vector before
+DMA (`valid=64`, first TBP 9458, first xyz `-575829.5625,147080.3750,
+857026.1250,655.3599`). Lookup/TEX0 pairs remained page 2 with indices 30,
+24, 25, 10, and 41 in the captured route window. The native source-boundary
+consumer did not arm on this replay, so producer→DMA equality is OPEN; no TBP,
+camera, shader, or Metal policy remap was made. The fresh image remains a
+partial composition with blank regions and diagnostic blocks, so it is not
+playability proof. See `docs/evidence/R1/r1-native-composition-consumer-boundary-2026-08-21.md`.
+## 2026-08-21 — 3D producer-to-DMA boundary closes handoff hypothesis
+
+Fresh signed iPad replay with the source-boundary trigger restricted to MSCAL=211
+captured an exact producer/DMA match: producer first TBP `9478`, vector
+`(-553754.5000,199062.4062,879162.4375,24576.0000)`, and native boundary
+TBP `0x2506` with the same vector, flags, RGBA, and TEX0
+`0x2004d0e59930a506`. The selected iPad family is therefore reaching the native
+consumer intact. The completed macOS family begins at TBP `9458` (`0x24f2`),
+and the raw page-2 lookup stream diverges earlier: iPad `18,15,28,27,3...`
+versus macOS `54,49,48,42,44...`. iPad page-directory metadata and segment
+destinations remain identical across these entries, so this is now a
+phase/particle-family selection problem upstream of native Metal; FR3/DGO
+ordering and allocation remain the next trace. No TBP, camera, shader, or
+Metal-policy remap was made. The fresh image remains partial/blank with
+diagnostic blocks, fault log 0 bytes, and audio `pcm-peak=0`; playability and
+all later gates remain OPEN. See
+`docs/evidence/R1/r1-first-source-boundary-parity-2026-08-21.md`.
+## 2026-08-21 — lower-level 3D launch-owner result
+
+The GOAL `sp-queue-launch` wrapper produced no 3D records on the validated
+route, so the trace moved to the actual Jak 1 mips2c
+`sp-launch-particles-var` call immediately before `particle-adgif`. The first
+3D launch IDs were page-2 indices `53,4,18,0,15,28`; the first active output
+was index `18`, TBP `0x2506`. The native MSCAL=211 boundary matched its
+producer vector/TEX0 exactly. The completed macOS reference’s first active 3D
+output is index `30`, TBP `0x24f2`. The source divergence is therefore now
+localized to lower-level 3D launch/particle-family selection before AdGif/TEX0
+generation. `patches/r1-sparticle-mips2c-launch-owner.patch` reverse-checks;
+it is diagnostic-only. The fresh image remains partial/blank, fault log is
+empty, audio remains `pcm-peak=0`, and playability/later platform gates remain
+OPEN.
+
+## 2026-08-21 — level-remap ledger closes remap-result hypothesis
+
+The bounded `level-remap-texture` trace was regenerated into all 546 GOAL
+targets and included in a fresh signed iPad build. Both the current-checkout
+macOS run and the validated-pack iPad replay sampled page-2/index-1 remaps as
+identity mappings: input page 2/index 1 → output page 2/index 1. The iPad
+route reached Village1 twice; its later lookup records remained resident hits
+at indices 24, 25, 10, 41, 0, 30, 34, and 9. Fault output was 0 bytes and
+audio remained `pcm-peak=0`.
+
+This falsifies a differing `level-remap-texture` table result as the cause of
+the raw 3D family divergence. The remaining R1 boundary is particle/data-family
+selection and launch ordering after remap and before AdGif/TEX0/native
+composition. The Simulator screenshot remains distorted/partial and is not
+playability proof. See
+`docs/evidence/R1/r1-level-remap-ledger-2026-08-21.md`.
+
+## 2026-08-21 — particle texture init boundary isolated
+
+The next diagnostic was added immediately after the launcher `spt-texture`
+init-spec is applied by `sp-init-fields!`, before `particle-adgif` consumes the
+initialized field. A fresh native macOS runtime capture showed declared and
+initialized values agreeing for representative 3D families page 2/index
+`53,4,18,41` (`0x203500`, `0x200400`, `0x201200`, `0x202900`). This keeps the
+remaining hypothesis at launcher/DGO allocation or ordering versus later
+texture-object/data-family state. The same boundary still needs the fresh
+signed iPad replay; this is not an R1 parity or playability pass. See
+`docs/evidence/R1/r1-particle-init-texture-boundary-2026-08-21.md` and
+the iOS-sandbox AdGif trigger remains in the intentionally dirty generated
+upstream worktree alongside the maintained R1 trace patches.
+
+The owner-index follow-up added a bounded scan of the GOAL
+`*part-id-table*` at the launch call boundary. The fresh signed iPad replay
+selected indices `336,334,335,331,332,333,341,340,339,338,342,347,346,337`,
+while the same macOS route selected platform-local indices
+`1951,1950,1949,1975,1974,1973` for its initial `0x2035/0x2004` family and
+`485,483,481,480,479,414,510,1972,1971,1970,1969` later. These are not stable
+identities; the differing table positions are a direct launcher/DGO
+registration-order or allocation discriminator. No renderer policy or TBP
+mapping has changed.
+
+The source definitions make the split concrete: iPad indices `331–347` are
+progress/HUD `defpart` entries, while macOS initial indices `1949–1951` and
+`1973–1975` are weather/sun entries; later macOS indices `479–485` and
+`1969–1972` are Village1 particle definitions. This is now a content
+selection/order mismatch before the native Sprite3 consumer. The retained
+macOS owner log is `/tmp/ottsel-owner-id-mac-route2.log`.
+
+The fresh signed iPad replay then added an iOS-sandbox AdGif trigger so the
+source ID, AdGif TEX0, and native Sprite3 boundary could be captured together.
+The route again reached Village1 twice. Its raw page-2 prefix was
+`4,53,4,18,0,15,28,27,3,54,49,48,42,44`; sampled entries were resident hits,
+and declared/initialized particle texture values agreed. Raw `0x00201200`
+resolved to `TEX0=0x2004d0e59930a506`, while the first eligible native
+`MSCAL=211` group was `TBP=0x24d2` / `first-tex0=0x2004d2e59930a4d2`.
+This keeps R1 at producer phase/order and data-family selection before native
+composition. Fault output was 0 bytes, audio remained `pcm-peak=0`, and the
+fresh screenshot remained partial/corrupted; no playability claim follows.
+
+### Phase-aligned owner correction
+
+The startup owner-index comparison was phase-contaminated. A fresh replay armed
+the owner and AdGif traces after the current-boot Village1 marker. iPad then
+selected the same macOS launcher IDs `1951`, `1950`, and `1949` for raw
+`0x00203500`, `0x00203500`, and `0x00200400`, with matching AdGif values
+`0x2004d0e59930a506` and `0x2004cfe55530a518`. This closes the earlier
+progress/HUD-versus-weather interpretation and the matched particle/data
+family for the Village1 phase. R1 now advances to native Sprite3/material
+composition; the iPad screenshot remains corrupted/partial and audio remains
+silent, so playability is still OPEN.
+
+The final phase-aligned iPad replay armed the native source boundary before
+launch and owner/AdGif traces after Village1. It captured the macOS-comparable
+Sprite3 groups `MSCAL=211 count=48 TBP=0x24f2 first-tex0=0x2004d1e59930a4f2`
+and `count=16 TBP=0x2525 first-tex0=0x2014cd655530a525`, while retaining the
+matched owner/TEX0 pair `0x00203500 -> 0x2004d0e59930a506`. This closes the
+current R1 source/resource parity slice. The screenshot remains
+partial/corrupted and audio remains silent, so native composition and the P2
+playability gate remain OPEN.
+## 2026-08-22 — native mouse/keyboard correction and shared-composition probe
+
+The signed iPad Simulator app was rebuilt after a narrow shell correction. Mouse
+buttons remain Cross/Circle actions and no longer inject a forward left-stick
+direction when both are held; native mouse input also enables SDL relative mode
+for camera motion. The executable hash is
+`dec641e5fc776aaada46d67745da78710c166acc87fc2be19d52b61c2b543144`, strict
+deep codesign passed, and the focused Sprite3/platform-input/keyboard suite
+passed 21/21.
+
+A fresh install on the single booted iPad Pro 11-inch (M4) Simulator replayed
+title-wait → Start → Cross → Down×4 → Cross; `GAMEPLAY: enter village1`
+appeared twice and the fault log was 0 bytes. The fresh screenshot
+`/tmp/ottsel-controls-fixed-route.png` has SHA-256
+`81635093b4c750ef1e9c6d7e1380dac00980ca2d7aa8ebb4d88da381bf1e6cbc`.
+It remains partial/corrupted and is explicitly not playability proof.
+
+The existing trigger-gated no-TIE and no-TFRAG probes were also replayed on
+fresh app boots. Each isolated consumer still produced the lower/inverted
+geometry, so neither consumer alone explains the shared distortion. No camera,
+TBP, shader, or Metal policy change was made; the native composition source
+gate remains open.
+## 2026-08-22 — shared-composition culling probe falsified
+
+The maintained desktop TFRAG/TIE transform was compared against the native
+Metal vertex equation and the source matrix packing; they match the upstream
+`tfrag3.vert` contract. A trigger-only Metal back-face-culling probe was then
+run on a fresh signed iPad install through title-wait → Start → Cross →
+Down×4 → Cross. It did not remove the inverted/triangular geometry and instead
+produced a different corrupted frame (`/tmp/ottsel-scene-cull-back.png`,
+SHA-256 `96ef5351b78664e1f97e213eba63a7065e391867142483a0ef34a608179c8f6`).
+The probe was removed; normal product culling policy is unchanged. This
+falsifies missing back-face culling as the shared composition cause. The fresh
+route still reached Village1 twice with a 0-byte fault log; the Simulator
+remains explicitly blank/partial and non-playable.
+The final no-probe rebuild was installed after the diagnostic was removed. A
+fresh exact route again reached `GAMEPLAY: enter village1` twice with a 0-byte
+fault log. Screenshot `/tmp/ottsel-final-no-probe-route.png` has SHA-256
+`95943f547d485896536e3438fea63952375046eb1b5d3ffb03b75f8b975c432d`.
+Audio remained `pcm-peak=0`; the frame is still visibly partial/corrupted and
+not playability proof.
+The final lifecycle-polished executable (`eebaaf2454b326d85144640cb99b5aac0d5775a4265ed5a97c96fe59b9c84785`)
+was installed into the single booted iPad Pro 11-inch (M4) Simulator. The
+fresh exact route reached Village1 twice, hid the overlay on native input, and
+left a 0-byte fault log. Screenshot `/tmp/ottsel-final-installed-route.png`
+has SHA-256 `0b3357d8dfab7fd54c78cbc64f152d288d3c1e5aa9ddf10be2a0f2456c7066ec`;
+audio remained `pcm-peak=0`, and the image remains partial/corrupted rather
+than playable.
+
+## 2026-08-22 — newest pending native mesh/color snapshot experiment
+
+The fresh pre-change runtime repeatedly queued camera-dependent TFRAG/TIE mesh
+and color uploads faster than the presentation thread drained its FIFO budget.
+The shell now coalesces pending uploads independently by TFRAG/TIE family so a
+newer camera snapshot supersedes stale pending geometry and its matching color
+buffer. This is a source-side queue-consistency experiment only; TBP, camera,
+shader, culling, and Metal policy were unchanged.
+
+The signed iPad build passed deep codesign, the focused Sprite3/platform-input/
+keyboard suite passed 21/21, and the exact validated route after
+`title-wait-ready` reached `GAMEPLAY: enter village1` twice. The post-transition
+lookup tail was `24,25,10,41,30,34` (resident hits), the fault log was 0 bytes,
+and the executable SHA-256 was
+`68481f6659d8786d3bb395d7520278fe297d78438f500b2e19f74e822eb6d838`.
+Screenshot `/tmp/ottsel-coalesced-exact-route.png` has SHA-256
+`b3074f046f5e2b00a50b9c087ffab282eae5ca46b27b6637e334380d179223e0`.
+
+The frame changed but remained visibly dislocated/partial and audio remained
+`pcm-peak=0`. This falsifies queue backlog as the complete composition cause;
+the iPad playability gate remains OPEN and the Simulator blank/partial warning
+still applies.
+
+## 2026-08-22 — synchronized native camera-uniform snapshot
+
+The native presenter previously copied the 32-float TIE/TFRAG camera/fog block
+on the game thread while the presentation thread read it during Metal encoding.
+The shell now protects the update and snapshots the complete block once per
+render pass, ensuring both scene families use one stable matrix/fog set. The
+shader equation, camera values, mesh selection, texture identity, depth,
+culling, and draw order were unchanged.
+
+The signed executable SHA-256 was
+`546b283b61c22cf4d7cef7099dd553ae71b8b3f255de431bf4efa8ff40b21bd2`; deep
+codesign passed and the focused Sprite3/platform-input/keyboard suite passed
+21/21. After `title-wait-ready`, the exact validated route reached
+`GAMEPLAY: enter village1` twice, with resident lookup tail
+`24,25,10,41,30,34`, a 0-byte fault log, and native input hiding the overlay.
+Fresh screenshot `/tmp/ottsel-uniform-snapshot-route.png` has SHA-256
+`45481d23b46bdffa9c58e1a8b8e52f2fa776c640a55f4ca98d5079a3ebe83976`.
+
+Rotated landscape inspection still shows severe oversized/dislocated geometry
+and audio remains `pcm-peak=0`. The snapshot removes a data-race hazard but is
+not sufficient to close native composition or the iPad playability gate.
+
+## 2026-08-22 — native-equation projection range ledger
+
+The bounded CPU companion now records the native TIE equation's NDC range after
+the Jak 1 `512/448` Y expansion and Metal depth remap. On the fresh Village1
+route it sampled `4097/4097` finite vertices, with
+`gl-clip-visible=1876` and `metal-clip-visible=1876`. Full sampled ranges were
+`ndc-x=(-422.4563,438.0270)`, `ndc-y=(-851.0743,1606.2456)`, and
+`ndc-z=(-3.9074,2.6576)`.
+
+This confirms finite source data and agreement between the CPU clip predicate
+and the Metal depth-range predicate, but the selected mesh includes very broad
+out-of-range geometry. It does not authorize a camera remap or prove a
+playable frame. Fresh screenshot
+`/tmp/ottsel-native-projection-ledger-route-final.png` has SHA-256
+`14a8ea18f27437d871bde2f039fa05858dfb86c53bbd001716498a02a0d4db9d`; the
+route remained fault-free, visually corrupted, and audio remained
+`pcm-peak=0`. The next composition experiment is the broad mesh's
+material/index/visibility contract, not TBP or camera policy.
+
+## 2026-08-22 — TIE topology contract correction
+
+The first-batch and TIE-only probes showed the malformed frame survived family
+and depth isolation. The maintained FR3 contract identifies Jak 1 TIE trees as
+`use_strips=false`, but the native TIE consumer had been expanding both static
+and visibility-filtered indices as triangle strips. The consumer now honors
+that existing flag and emits direct TIE triangle lists in groups of three;
+strip trees retain the strip path. Camera, TBP, texture lookup, shader,
+culling, and Metal policy were unchanged.
+
+The signed iPad build passed deep codesign and the focused
+Sprite3/platform-input/keyboard suite passed 21/21. Executable SHA-256:
+`cb14908b7c28fca8d3f9d517938892c7e0be7d9d9b4e0c9e0470ec09814f9356`.
+The fresh route followed `title-wait-ready` through Start, Cross, Down four
+times, and Cross; the fault log remained 0 bytes. Screenshot
+`/tmp/ottsel-tie-topology-exact-route.png` has SHA-256
+`45a1fa3b912987970206377e503d1906efad30c4aa696c943cdc27112e3c820e`.
+
+The change materially removed the fragmented-triangle symptom and made terrain,
+foliage, bridges, and the player region identifiable. The Simulator frame is
+still rotated/dislocated with large blank regions and `pcm-peak=0`; it remains
+partial and is not playability proof. Native composition and iPad playability
+remain OPEN. The next experiment is the remaining shared
+transform/material/visibility contract, not a camera or TBP remap. The blank/
+partial Simulator warning remains explicit.
+
+## 2026-08-22 — zero-length link-begin crash guard
+
+The supplied Simulator crash report was a boot-thread `SIGABRT` in
+`private_assert_failed -> link_control::jak1_jak2_begin -> jak1::link_begin`.
+The older binary entered the GOAL object-header parser with a zero-length
+object, producing the version assertion. `link_and_exec` already guarded this
+case, but the GOAL `link-begin` wrapper did not. The wrapper now returns the
+same fast-complete result for `args[2] <= 0` and logs a warning, without
+reading the empty buffer. The nested dirty upstream source and canonical
+`patches/h3-jak1-host-boot.patch` both contain this guard.
+
+The rebuilt signed executable SHA-256 is
+`cfbac6b9a2463a443006c95eddee256d8e9e1d920280264ccd711a1ec768c4b3`; deep
+codesign passed and the focused Sprite3/platform-input/keyboard suite passed
+21/21. A fresh launch reached `title-wait-ready` with a 0-byte fault log and
+did not reproduce the reported abort. The required route was replayed through
+Start, Cross, Down four times, and Cross; fresh screenshot
+`/tmp/ottsel-link-guard-exact-route.png` has SHA-256
+`56a15266c17f185e638c40338313630e576446cac28e51e14154f89a4e26019c`, also
+with a 0-byte fault log.
+
+This fixes the reported boot/link crash, but it does not close native
+composition or playability. The Simulator blank/partial warning remains
+explicit, and iPhone/device work remains gated on an honestly playable iPad
+build.
+
+## 2026-08-22 — visibility-group direct-list correction
+
+The TIE topology correction removed strip expansion for Jak 1 direct-list
+trees, but the next fresh frame still showed quadrant-like fragmentation. The
+visibility path was compared against the maintained TFRAG implementation:
+invisible groups must be omitted for direct triangle lists, because inserting
+`UINT32_MAX` shifts all later groups when indices are consumed in triples.
+The native TIE path now inserts that sentinel only for `tree.use_strips=true`.
+Camera, TBP, texture identity, shader, culling, and Metal policy remain
+unchanged.
+
+The signed iPad build passed deep codesign and the focused
+Sprite3/platform-input/keyboard suite passed 21/21. Executable SHA-256:
+`83529274e65a029fdbd37aa5b7b7489869922a4ef0a004bf7d3a5d17d07e360d`.
+The fresh route followed `title-wait-ready` through Start, Cross, Down four
+times, and Cross; the fault log was 0 bytes. Screenshot
+`/tmp/ottsel-tie-visibility-exact-route.png` has SHA-256
+`06fb01119e94b2ca17e6dd9b013f00356c8bf938312920dd6e5131d630074151`.
+
+The direct-list grouping fault is no longer visible and the frame remains
+stable after the camera settles. Large blank regions and a detached horizontal
+geometry band remain, with `pcm-peak=0`; this is still a partial Simulator
+diagnostic, not playability proof. Native composition and iPad playability
+remain OPEN. The blank/partial Simulator warning remains explicit.
+
+## 2026-08-22 — valid TFRAG NORMAL-only discriminator
+
+The TFRAG data-family probe was corrected to arm before launch, before the
+first camera-dependent visibility snapshot. It excluded TRANS and DIRT trees
+while preserving the NORMAL tree, TIE submission, camera, texture identity,
+shader, culling, and Metal policy. The fresh route followed
+`title-wait-ready` through Start, Cross, Down four times, and Cross; the fault
+log remained 0 bytes.
+
+Screenshot `/tmp/ottsel-tfrag-normal-only-exact-route.png` has SHA-256
+`d67ad931c733a1db58c3a82ebfdd9e3120fc50aaf7fb55d4a78f845849cdb099`.
+The runtime logged `NORMAL-only data-family probe enabled` and one TFRAG tree
+in the resulting visibility snapshot. The detached horizontal band remained,
+falsifying TRANS/DIRT as its sole source. The common NORMAL-TFRAG/TIE
+transform, visibility, or material contract remains OPEN. The probe was
+trigger-gated and is not product behavior.
+
+## 2026-08-22 — controlled TIE/TFRAG family isolation
+
+The same fresh validated route was replayed twice with a family-isolation
+trigger armed before launch: once with TIE disabled and once with TFRAG
+disabled. TIE-off produced `/tmp/ottsel-family-no-tie.png` with SHA-256
+`f48535d5c33741df4a3ff9236b0ae7ce5142726b33587d97aa359bd3956de342`; TFRAG-off
+produced `/tmp/ottsel-family-no-tfrag.png` with SHA-256
+`404c186351226f78b67c38a25c374e61a6d73843945ed94a9b0720227995013b`. Both
+fault logs were 0 bytes on the single booted iPad Pro 11-inch M4 Simulator;
+audio remained `pcm-peak=0`.
+
+TIE-off becomes a giant TFRAG close-up, while TFRAG-off still shows the
+detached band and dislocated TIE geometry. Neither family alone explains the
+failure. This rules out a single-family upload fix and keeps the shared
+camera/viewport/material consumer boundary as the next R1 target. No TBP,
+camera, shader, or Metal depth policy was changed.
+
+## 2026-08-22 — current-checkout macOS route and neutral movement increment
+
+One fresh Windowed native `gk` was launched with audio enabled and retained
+stdout/stderr at `/tmp/ottsel-m1-current3.stdout.log` and
+`/tmp/ottsel-m1-current3.stderr.log`. It reached `title-wait-ready`, consumed
+the documented desktop Start/Cross/Down×4/Cross button masks, and logged
+`GAMEPLAY: enter village1` twice. The current `gk` SHA-256 is
+`5ed65423602db7565ac3ec603f63582fe5455dfcd4d36a20a04a965553fc1533`.
+
+Fresh route and movement captures are `/tmp/ottsel-m1-current3-route-correct.png`
+(`c759a8f7ad4ff39249e952fb8f25723a3aedecdc95057e1dbec730e171b24590`),
+`/tmp/ottsel-m1-current3-before-move.png`
+(`a16844ae041ada81f1261849d2f7e5fd5dfb3ad16799abb6862c8c3415c02b4e`), and
+`/tmp/ottsel-m1-current3-after-neutral.png`
+(`f2c8a8648a94f7e92babfe4e050cd495ed71b948f4377cc7dc9d4c8e5caa8146`). The
+left-stick hold was accepted for 180 reads and released to neutral. Audio
+showed route peaks including 2101 and 2499; targeted crash/signal/panic/assert
+scanning found no matches. This remains an M1 partial increment: human
+audibility, physical-controller soak, longer stability, and complete lifecycle
+proof remain open. The iPad output remains explicitly partial/non-playable.
+
+## 2026-08-22 native mouse fallback and exact lookup comparison
+
+The native shell now falls back from zero SDL `xrel/yrel` to the delta between
+successive absolute mouse positions, clearing that baseline on neutralization.
+Signed executable SHA-256:
+`2a8eac5049a0da1285d05b706cfd5c598485ed2ff785408aa0baa14c60d4ca45`;
+focused Sprite3/platform-input/keyboard tests: 21/21.
+
+The fresh exact route reached Village1 twice with a 0-byte fault log and
+screenshot `/tmp/ottsel-controls-route.png` (SHA-256
+`da214f6c433f5b6e205845662476e71ed558731eb1b5c32224ee24475161606`). Live
+W/A/D samples were `(127,0)`, `(0,127)`, `(255,127)` with neutral releases;
+Space produced Cross pressure 255. Pointer events reached the native seam, but
+the first captured motion was neutral, so human non-neutral camera acceptance
+remains open.
+
+The post-Start lookup window in this iPad run is
+`54,49,48,42,44,24,25,10,41,0,30,34`. That ordered list is not a proven
+iPad-only mismatch: `/tmp/ottsel-r1-particle-phase-runtime.log` from the same
+source era also contains page-2 index `0` in the corresponding later macOS
+route phase, while `/tmp/ottsel-r1-phase-tex0-runtime.log` omits it in that
+later window. Capture timing differs. The decisive sampled source-side object
+matches on both platforms: page 2/index 0 is 64x64 PSM19 with generated TEX0
+`tbp=9953` (`0x26e1`), `tw=6`, `th=6`, `tcc=1`. R1 therefore has no proven
+page-directory/lookup-resource divergence for this family; trace
+texture-object/data-family and native Sprite3 consumer state next. No TBP remap
+is authorized. The Simulator frame is still visibly partial/corrupted and
+audio remains `pcm-peak=0`.
+
+## 2026-08-22 — native MSCAL=211 data-family ledger
+
+The signed iPad build now has a trigger-gated ledger directly at the native
+`MSCAL=211` Sprite3 consumer. It records raw vector/AdGif payload hashes,
+frame/matrix hashes, first-vector values, and decoded texture identity without
+altering uploads or renderer policy. Focused Sprite3/platform-input/keyboard
+tests remained 21/21, deep codesign passed, and the executable SHA-256 is
+`687456a2327ebcb566128d1679a5c150916e76d0e291f610c4bac9eb3255366f`.
+
+The fresh exact route reached Village1 on the single booted iPad Pro 11-inch
+(M4). The first captured family was `TBP=0x2506` / TEX0
+`0x2004d0e59930a506`, 64x64 PSM19, decoded texture hash
+`0xc8679915dfac0e15`; later groups retained the known
+`0x24f2`/`0x2004d1e59930a4f2` and `0x2525` families. These match the
+macOS source-boundary/phase families already captured. The remaining R1
+question is therefore native Sprite3 composition/state consumption, not a
+proven lookup/page-directory/TBP mismatch. No TBP remap, camera, shader, or
+culling change was made.
+
+Fresh screenshot `/tmp/ottsel-r1-3d-family-hash-route2.png` has SHA-256
+`6819f93bf50c2ab9561e8f4ff658e650150429a6d525ed024b1f7b2bc082655d`; it is
+still severely portrait/partial and explicitly not playability proof. Fault
+output was 0 bytes and audio remained `pcm-peak=0`.
+
+## 2026-08-22 — native macOS mouse/keyboard controls
+
+The current Mac input audit found the concrete reason the earlier WASD result
+was unreliable: the persisted profile loaded `keyboard_enabled=false`, while
+the GOAL mouse settings loaded `mouse-enabled? #f` and `mouse-camera? #f`.
+The native input path now enables WASD/actions by default with an explicit
+`OTTSEL_ENABLE_KEYBOARD=0` opt-out, supplies left=Cross/right=Circle defaults
+for an empty mouse map, enables the existing mouse option defaults, and latches
+short mouse button down-edges for eight pad polls. Focus-loss cleanup remains
+bounded and neutralizing.
+
+The focused `KeyboardEventEdge.*:PlatformInput.*:Sprite3Native.*` suite passed
+23/23 after an ARM64 `(mi)` regeneration of 1,068 targets and a fresh `gk`
+link. A fresh no-environment-flag Windowed Mac run logged native keyboard
+enabled; a real `Up` key event moved the menu selection from Load Game to New
+Game. The game-side mouse seam logged `enabled=true camera=true movement=false`.
+However, the available Computer Use pointer action generated no SDL mouse event,
+and the System Events fallback was denied by macOS assistive-access policy, so
+human/native mouse acceptance remains OPEN. This evidence is a controls
+increment, not a complete M1 playability pass. See
+`docs/evidence/M1/m1-native-desktop-controls-2026-08-22.md`.
+
+## 2026-08-22 — fresh signed iPad R1 lookup replay
+
+The fresh signed iPad build was installed with one booted iPad Pro 11-inch
+(M4) Simulator and one runtime. The validated user-data pack passed the F1
+manifest/family/hash validator outside the repository. The exact
+title-wait → Start → Cross → Down×4 → Cross route logged the current-boot
+title marker, incoming completion, and Village1 entry twice. The fresh
+post-route screenshot remains visibly corrupted/partial and is explicitly not
+playability proof; the fault log is 0 bytes and audio mix windows remain
+`pcm-peak=0`. See
+`docs/evidence/R1/r1-fresh-ipad-lookup-replay-2026-08-22.md`.
+
+The complete iPad page-2 stream was
+`4,53,4,18,0,15,28,27,3,54,49,48,42,44,24,10,41,25,30,34,9`.
+The phase-aligned post-Start window `54,49,48,42,44` matches macOS, and page
+2 remains a resident hit with the corrected directory/segment state. The
+first native 3D producer family still differs: iPad `0x24d2` /
+`0x2004d2e59930a4d2`, versus the completed macOS reference `0x24f2` /
+`0x2004d1e59930a4f2`. R1 therefore stays at the producer phase/data-family
+handoff; no TBP remap, camera, shader, or Metal-policy change is justified.
+
+The follow-up iOS sandbox owner trace correlates the selected launcher
+instances with raw 3D IDs. The post-Start iPad route selects `0x00203600`,
+page `0x408` records, `0x00203100`, `0x00201200`, and `0x00203000` under
+launcher IDs `336`, `341`, `347`, and `337`; the completed macOS reference
+selects the accepted first world family `0x00201e00` under a different owner
+sequence. This identifies producer launch/phase ownership as the next source
+boundary before native Sprite3. See
+`docs/evidence/R1/r1-fresh-ipad-owner-correlation-2026-08-22.md`. The fresh
+owner replay remains diagnostic-only: the frame is corrupted/partial, fault
+output is 0 bytes, and audio is not audible.
+
+## 2026-08-22 — native mouse-motion latch and fresh signed replay
+
+The native shell now routes WASD by physical SDL scancode and maps left/right
+mouse buttons to Cross/Circle. Relative mouse motion is held across the
+event-loop/`scePadRead` seam by a bounded `MouseMotionLatch`, fixing the path
+where motion was published and immediately neutralized before the GOAL sample.
+The focused Sprite3/platform-input/keyboard suite passed 24/24, including the
+before-failing motion-lifetime regression, and
+`patches/r1-native-mouse-controls.patch` reverse-checks against the current
+dirty nested checkout.
+
+A fresh signed iPad replay on the single booted iPad Pro 11-inch (M4) consumed
+the scripted native keyboard route and reached Village1 twice. Fault output is
+0 bytes and audio remains `pcm-peak=0`. The fresh screenshot is still severely
+corrupted/partial, so this proves neither human mouse acceptance nor
+playability. Evidence is in
+`docs/evidence/R1/r1-native-mouse-latch-and-fresh-ipad-replay-2026-08-22.md`.
+
+## 2026-08-22 — TFRAG composition isolation
+
+The existing trigger-only scene isolation probes were replayed on the single
+booted iPad Pro Simulator. Disabling TIE left the oversized textured world
+present; disabling TFRAG removed that world and exposed only the remaining
+diagnostic Sprite3/font/color blocks. The normal path remains partial and
+corrupted. This narrows the next source boundary to TFRAG or its composition,
+without authorizing a camera, shader, culling, TBP, or Metal-policy rewrite.
+Fault output remained 0 bytes and audio remained non-audible. See
+`docs/evidence/R1/r1-tfrag-composition-isolation-2026-08-22.md`.
+
+The existing first-batch TFRAG probe also showed fragmented geometry in the
+earliest TFRAG draw. This rules out a defect introduced only by later material
+batches; the next experiment is the first TFRAG mesh/index/transform boundary.
+The diagnostic was cleared and the clean signed app relaunched on the same
+single booted Simulator.
+
+A trigger-only Metal-side integrity check on the first TFRAG draw reported
+`indexCount=3984`, `vertexCount=76264`, index range `592..2921`, and
+`outOfRange=0`. The valid raw mesh positions remain large world coordinates;
+the next boundary is TFRAG transform/material interpretation, not an
+out-of-range index read. The temporary probe was removed after capture.
+
+The widened trigger-only clip probe found finite, bounded projected
+coordinates for every captured TFRAG draw (`x` about `-0.53..1.60`, `y` about
+`-1.47..0.77`, positive finite depth). Together with the valid index range,
+this rules out a gross vertex-transform or out-of-range-index failure. The
+next boundary is triangle connectivity/material submission or composition
+state; the widened probe was removed.
+
+## 2026-08-22 — fresh source-boundary replay and supplied Metal crash attribution
+
+The single booted iPad Pro 11-inch (M4) Simulator replayed the exact
+title-wait → Start → Cross → Down×4 → Cross route with the source-boundary
+trigger armed before launch. At chains 129–130 the native ledger captured the
+same early producer family already seen in the macOS phase: `MSCAL=211`, 48
+sprites, `TBP=0x2506`, and `first-tex0=0x2004d0e59930a506`, followed by the
+16-sprite zero-texture record. Frame/matrix transfers were `9/12` (and an
+earlier setup `4/7`); the source trace also retained the camera-source chain.
+Page-2 samples were resident hits and the fault log remained 0 bytes. This
+does not prove that iPad reaches the later macOS `0x24f2` transition and does
+not identify a lookup/page-directory defect. R1 remains open at ordered
+producer-phase coverage and native composition/data-family consumption. No
+TBP, camera, shader, culling, or Metal-policy remap was made.
+
+Fresh screenshot:
+`docs/evidence/R1/artifacts-2026-08-22-ipad-r1-source-boundary-r2/route.png`
+(`a627e18552bb30cf66adf978676ffe85d1514fa5558cb3b990d29f968673e67b`). It is
+still visibly rotated/dislocated with large blank regions, so the Simulator
+blank/partial warning and non-playability boundary remain explicit. The
+supplied crash report is older (`OttselShell` PID 41979, app UUID
+`c78b4a3e-948f-35a2-8e2b-1a85cf0367d9`) and aborts in Metal's render-encoder
+deallocator from `presentRGBA`; the current PID 43158 replay did not reproduce
+it. Treat it as historical Metal-stability evidence, not a current R1 fault.
+See `docs/evidence/R1/r1-fresh-source-boundary-replay-2026-08-22.md`.
+
+The source-boundary diagnostic was then widened from eight 3D-only records to
+32 recognized 3D/world/HUD records. The fresh signed rebuild and exact route
+captured both `MSCAL=3` world and `MSCAL=211` 3D phases, but all 32 remained in
+the early `TBP=0x2506` / `first-tex0=0x2004d0e59930a506` family; the later Mac
+`0x24f2` transition was not reached in that bounded window. This is stronger
+ordered producer evidence, not a complete phase-transition proof.
+
+Per the visual-evidence requirement, the same run retained a blank pre-input
+screenshot, a live H.264 exact-route video, and an after-route screenshot.
+The after-route frame is visibly rotated/dislocated with detached vertical
+geometry and large blank regions. Artifacts:
+`docs/evidence/R1/artifacts-2026-08-22-ipad-r1-source-boundary-r4-video/`.
+The signed executable SHA-256 is
+`37286db2d68df0080bc0ccf7529e6ebdcfbe9a97f3adda805deba73bd35bdc7e`; the
+fault log is 0 bytes. The Simulator remains explicitly blank/partial and
+non-playable; no renderer-policy remap was made.
+
+## 2026-08-22 — fresh raw particle/AdGif/native producer correlation
+
+The next single-runtime replay armed both the raw particle/AdGif and expanded
+source-boundary diagnostics before the exact validated-pack route. Nonzero raw
+pairs included `0x00200400 -> 0x2004cfe55530a518`,
+`0x00200f00 -> 0x2004c8e55530a5d2`, `0x00201200 ->
+0x2004d0e59930a506`, and `0x00203500 -> 0x2004d0e59930a506`. Native
+consumption repeatedly remained world `MSCAL=3` / 3D `MSCAL=211`, 48 sprites
+at `TBP=0x2506` with `first-tex0=0x2004d0e59930a506`, followed by the
+16-sprite zero-texture record. The frame/matrix hashes changed, but the
+resource family did not transition to the macOS `0x24f2` family in the
+128-record/settled window.
+
+This closes the captured page/lookup/resident-allocation and raw
+particle-to-AdGif branches. R1 remains open at producer phase/data-family
+selection or DMA handoff after source resolution. No TBP, camera, shader,
+culling, or Metal-policy remap was made. Fresh r6 screenshots and logs are in
+`docs/evidence/R1/artifacts-2026-08-22-ipad-r1-source-particle-correlation-r6/`;
+the after-route frame remains visibly rotated/dislocated with large blank
+regions and the fault log is 0 bytes. See
+`docs/evidence/R1/r1-source-particle-correlation-r6-2026-08-22.md`.
+
+## 2026-08-22 — route-valid Village1 owner correlation
+
+A fresh exact-route replay waited for Village1 before arming the particle
+launch-owner trace, then captured paired before/after Simulator frames. The
+active owners were launcher IDs 29 (`0x043c14b4`), 28 (`0x043c1384`), and 27
+(`0x043c11d4`); each repeatedly emitted raw `0x00200f00` (page 2/index 0xf)
+for `is3d=yes`. No route-valid owner emitted the accepted macOS later raw
+family `0x00201e00`, and no native `TBP=0x24f2` /
+`first-tex0=0x2004d1e59930a4f2` transition appeared. This is stronger
+producer launch-owner/phase-selection evidence, not a page-directory,
+allocation, TBP, camera, shader, or Metal-policy result.
+
+The paired frames and a fresh settled H.264 route video remain visibly
+rotated/dislocated with a detached vertical band and large blank/black
+regions. The fault log is 0 bytes. R1 remains open at producer phase/data
+family selection or DMA handoff; see
+`docs/evidence/R1/r1-route-valid-owner-correlation-r8-2026-08-22.md` and
+`docs/evidence/R1/artifacts-2026-08-22-ipad-r1-owner-correlation-r8/`.
+
+## 2026-08-22 — bounded launch timing trace and fresh visual replay
+
+The signed iPad app was rebuilt with a new trace-only patch,
+`patches/r1-sparticle-launch-timing-trace.patch`, and its reverse-check passed.
+The clean route segment on the single booted iPad Pro Simulator logged
+synthetic START, Cross, Down×4, final Cross, and `GAMEPLAY: enter village1`
+twice. After Village1, the bounded owner trace saw launcher IDs 978/977/974/973
+with raw 3D IDs `0x00000000` and `0x00200000` (page 2/index 0). The sampled
+`*sp-frame-time*` words were stable at `0x0080000c` and `0x41400000`.
+
+The newly read launch-control object offsets produced implausible clock values
+and are explicitly untrusted until independently validated; no timing fix was
+made. The result remains at the producer phase/data-family boundary and does
+not support TBP, camera, shader, culling, or Metal-policy changes.
+
+Fresh initial/Village1 screenshots and a live H.264 capture show the same
+rotated/dislocated, oversized-texture and blank/black visual failure. The fault
+log is 0 bytes. See
+`docs/evidence/R1/r1-launch-timing-trace-r9-2026-08-22.md` and
+`docs/evidence/R1/artifacts-2026-08-22-ipad-r1-launch-timing-r9/`.
+
+## 2026-08-22 — R10 launch-owner seam typing correction
+
+The generated `sp-launch-particles-var` signature proves that the owner trace
+entry receives an `sparticle-launcher` in `a1`; it does not receive the
+`sparticle-launch-control` whose `local-clock` and spawn fields were sampled
+by the temporary R9 timing probe. `inline-array-class` reserves the first
+`0x10` bytes, so the control offsets are known (`local-clock=0x18`,
+`last-spawn-frame=0x24`, `last-spawn-time=0x28`) but must be logged at the
+typed `spawn` seam. The invalid timing probe and temporary patch were removed;
+no product renderer/resource policy changed.
+
+R10’s fresh signed iPad replay again reached Village1 twice. It captured the
+transition from title-side owner IDs 1951/1950/1949 and raw
+`0x00203500`/`0x00200400` to Village1 owners 29/28/27 and raw `0x00200f00`,
+which is useful producer-phase evidence but not a launch-control timing
+result. Fresh frames remain visibly non-playable and the fault log is 0 bytes.
+See `docs/evidence/R1/r1-launch-owner-seam-typing-r10-2026-08-22.md` and
+`docs/evidence/R1/artifacts-2026-08-22-ipad-r1-launch-timing-r10/`.
+
+## 2026-08-22 — typed launch-control correlation
+
+The next signed iPad build traced the fifth `sp-launch-particles-var` argument
+(`t0`), the actual `sparticle-launch-control`, using the `inline-array-class`
+layout. Title-side owners 1951/1950/1949 used control `0x00212734`; Village1
+owners 29/28/27 used `0x00212694`. Both control families reported length 3,
+stable frame-time words `0x0080000a` / `0x41200000`, and the expected raw
+producer transition from `0x00203500`/`0x00200400` to `0x00200f00`. The
+control address changes at the phase boundary, but no timing-policy mismatch
+is established. No renderer, TBP, camera, shader, culling, or Metal-policy
+change was made.
+
+Fresh before/after Simulator frames remain visibly rotated/dislocated with a
+detached vertical band, oversized rectangles, and large blank/black regions;
+fault log 0 bytes. See
+`docs/evidence/R1/r1-typed-control-correlation-r11-2026-08-22.md` and
+`docs/evidence/R1/artifacts-2026-08-22-ipad-r1-control-timing-r11/`.
+
+## 2026-08-22 — AdGif/native consumer parity
+
+A fresh post-Village1 capture armed the existing AdGif and native source
+boundary traces on the one active iPad runtime. For raw `0x00200f00` page 2 /
+index `0xf`, AdGif emitted `TEX0=0x2004c8e55530a5d2`; the native source
+boundary consumed the same TEX0, `TEX1=0x120`, and clamp family with
+`TBP=0x25d2`, `MSCAL=3`, and 48 sprites. Page lookup was a hit. The only
+captured state discrepancy at this boundary is alpha (`0x44` AdGif vs `0x48`
+native), which is now the narrow composition/material follow-up; no TBP,
+camera, shader, culling, or Metal-policy remap was made.
+
+The fresh post-trace frame remains visibly rotated/dislocated with detached
+geometry, oversized rectangles, and large blank/black regions; fault log 0
+bytes. See `docs/evidence/R1/r1-adgif-native-consumer-correlation-r12-2026-08-22.md`
+and `docs/evidence/R1/artifacts-2026-08-22-ipad-r1-consumer-correlation-r12/`.
+
+## 2026-08-22 — active Simulator visual replay
+
+The one active iPad Simulator was inspected directly through its UI and a
+fresh screenshot was captured after enabling keyboard capture and sending
+W/A/S/D. The landscape UI view confirms the current failure visually: the
+world is present but split by a horizontal seam with dark/offset sections and
+missing or incorrectly composed geometry. Keyboard capture removed the touch
+overlay, but this is not playability proof. A fresh `simctl io recordVideo`
+attempt was blocked by the host's existing `Resource busy` / `Host recording
+is already in progress` recorder state; no second Simulator or restart was
+used. See `docs/evidence/R1/r1-visual-runtime-replay-r13-2026-08-22.md` and
+the R13 artifacts.
+
+## 2026-08-22 — TIE/TFRAG projection falsification
+
+A signed build containing a bounded desktop-style TIE/TFRAG perspective,
+HVDF, and separate camera-sign experiment was replayed on the same one
+booted iPad Simulator. After Start, the game surface became fully blank. The
+experiment was reverted and the restored source was rebuilt, signed, and
+reinstalled on that same Simulator. R1 remains open; the next step is a CPU
+clip ledger for the actual `pc_camera`/HVDF/fog values before another shader
+change. See `docs/evidence/R1/r1-tie-tfrag-projection-falsification-r14-2026-08-22.md`.
+
+## 2026-08-22 — native mouse accumulation
+
+The native mouse camera latch previously overwrote earlier SDL motion events
+before the next asynchronous pad read. It now accumulates the bounded motion
+impulse. The focused keyboard/platform/Sprite3 suite passed 25/25, the
+canonical mouse patch reverse-check passed, and a fresh signed iPad replay
+logged native mouse Cross (`buttons=0x4000`, pressure 255) and release on the
+single active runtime. W/A/S/D live logs continue to show the expected
+opposing analog states. This is input-boundary proof only; the fresh
+Simulator frame remains a diagnostic/title surface and playability is not
+claimed. See `docs/evidence/R1/r1-native-input-accumulation-r15-2026-08-22.md`.
+
+## 2026-08-22 — TIE-only projection correction
+
+The CPU clip ledger showed the first Village1 TIE vertex at native clip
+`(68.374,-14.092,0.036,34.744)` versus the desktop-equation result
+`(-0.012,-0.005,-0.034,34.744)`. A bounded signed build corrected only the
+TIE Q/HVDF/GS projection and left TFRAG unchanged. The one active Simulator
+replay did not blank; the clean live frame is more recognizable, but still
+has visibly incorrect geometry/material composition and is not playable. The
+next boundary is TFRAG projection/sign/depth and material ordering. See
+`docs/evidence/R1/r1-tie-only-projection-r16-2026-08-22.md`.
+
+## 2026-08-22 — TFRAG sign falsification
+
+A signed build applying the validated TIE camera sign to TFRAG was actively
+inspected in the one booted iPad Simulator. The fresh post-W frame was almost
+entirely black with one stretched strip, despite ongoing TFRAG/Sprite/audio
+logs. The hypothesis that TFRAG shares the TIE projection sign is falsified;
+only that latest source change was reverted. R1 remains open. See
+`docs/evidence/R1/r1-tfrag-sign-falsification-r17-2026-08-22.md`.
+
+## 2026-08-22 — TFRAG strip-run boundary correction
+
+The native TFRAG builder now preserves OpenGL's separate visible
+triangle-strip runs by inserting a restart between visible groups. A fresh
+validated-pack route on the one booted Simulator reached Village1 twice. The
+direct live frame no longer shows the prior long cross-group stretch, but still
+has severe blue/black missing regions; audio remains `pcm-peak=0`, so this is
+composition progress only and not playability proof. See
+`docs/evidence/R1/r1-tfrag-strip-restart-r18-2026-08-22.md`.
+
+## 2026-08-22 — TIE strip-run boundary correction
+
+The same OpenGL-visible-run restart rule was applied to native TIE strip
+groups. Focused Sprite3/platform/keyboard tests passed 25/25, and a fresh
+F1-imported validated-pack route reached Village1 twice on the single booted
+Simulator. The fresh frame remains severely incomplete with no demonstrated
+visual improvement over R18; this is retained source-parity work, not a
+playability pass. See
+`docs/evidence/R1/r1-tie-strip-restart-r19-2026-08-22.md`.
+
+## 2026-08-22 — TIE category coverage falsification
+
+A trigger-gated experiment included Village1 NORMAL/TRANS/WATER TIE ranges;
+the category ledger confirmed substantial non-normal ranges, but the fresh
+validated-pack Simulator frame was unchanged with the same missing blue/black
+regions. The temporary probe was removed. R1 remains open at material/depth
+state or another missing bucket. See
+`docs/evidence/R1/r1-tie-category-probe-r21-2026-08-22.md`.
+
+## 2026-08-22 — native composition CPU-base probe
+
+The signed iPad build was replayed on the single booted iPad Pro Simulator
+through Start → Cross → Down×4 → Cross. A one-shot diagnostic trigger skipped
+the shell's full-screen CPU `presentRGBA` base while leaving native
+TFRAG/TIE/Sprite3 submissions unchanged. The no-CPU frame removed the debug
+text/flat CPU content and showed a more coherent textured Village, proving
+that the CPU base contributes visible artifacts; large native black/missing
+regions remain. This is composition evidence, not playability proof. Audio
+still reports `pcm-peak=0`, fault output is empty, and video capture remains
+host-blocked by `Host recording is already in progress`. See
+`docs/evidence/R1/r1-native-composition-cpu-base-probe-r22-2026-08-22.md`.
+
+The same live route then isolated the native families: no-TIE retained
+substantial Village geometry, TIE-only produced the known stretched/radial
+output, and disabling both native families produced a blank drawable. The
+next falsifiable composition experiment is therefore TFRAG material/strip
+state; no TBP, camera, or global Metal policy change is justified by this
+isolation alone.
+
+## 2026-08-22 — TIE reference-projection probe
+
+The maintained OpenGL path confirms normal TIE uses `ShaderId::TFRAG3` and
+consumes `pc_camera` directly. A signed trigger-gated iPad build tested that
+direct projection for TIE only. The prior TIE-only radial/stretched output was
+not reproduced; the fresh frame retained textured geometry, but the camera was
+a close-up and full Village/playability parity was not established. The
+product default remains unchanged pending a same-phase normal-vs-reference
+replay. See
+`docs/evidence/R1/r1-tie-reference-projection-probe-r23-2026-08-22.md`.
+
+## 2026-08-22 — native all-geometry-slot composition experiment
+
+The native TFRAG/TIE visibility builders now cover every loaded geometry slot,
+matching the maintained OpenGL renderer's `GEOM_MAX` traversal instead of
+hard-coding slot zero. A fresh signed build and exact title-wait → Start →
+Cross → Down×4 → Cross replay reported `TFRAG geos=3` and `TIE geos=4`, but
+fresh no-CPU Simulator frames still showed detached/missing geometry and
+incorrect close framing. R24 is source-aligned composition progress, not
+playability proof. See
+`docs/evidence/R1/r1-native-all-geometry-slots-r24-2026-08-22.md`.
+
+## 2026-08-22 — native TFRAG/TIE alpha-contract experiment
+
+The native material shader now matches the maintained OpenGL time-of-day alpha
+contract: RGB is doubled and alpha is doubled a second time. A fresh signed
+route with the CPU base suppressed showed more visible terrain/material detail
+than the prior baseline, but the frame remains a close-up with detached and
+missing composition. R25 is partial composition progress, not playability
+proof; audio remains unproven and the host video recorder remains busy. See
+`docs/evidence/R1/r1-native-tfrag-alpha-contract-r25-2026-08-22.md`.
+
+## 2026-08-22 — native per-draw fog/decal contract experiment
+
+The native TFRAG/TIE material path now honors OpenGL's per-draw fog and decal
+bits while retaining the corrected alpha and all-geometry traversal. A fresh
+signed route reached Village1 twice on the one booted Simulator; the actively
+inspected frame and 4-second video remain materially incomplete and close
+framed, so R26 is not playability proof. Fault output was empty and mobile
+audio remains unproven. See
+`docs/evidence/R1/r1-native-fog-decal-contract-r26-2026-08-22.md`.
+
+R26 is superseded: its first binary duplicated the alpha/RGB scale while the
+combined shader expression was being introduced. The corrected R27 rebuild
+removed that duplicate and reproduced the exact route; its frame remains
+close-framed and non-playable, with a zero-byte fault log and unproven audio.
+See `docs/evidence/R1/r1-native-fog-decal-contract-r27-2026-08-22.md`.
+
+## 2026-08-22 — native alpha-fail/depth-write contract experiment
+
+The native Metal material loop now reproduces OpenGL's bounded `FB_ONLY`
+alpha-fail behavior: a depth-writing pass followed by a no-depth-write pass,
+plus the `NEVER + FB_ONLY` depth-write exception. The live TFRAG ledger
+confirmed the targeted modes during a fresh exact route, but the actively
+inspected Simulator frame showed no visual/playability improvement. Fault
+output was empty, audio remains unproven, and video capture was host-blocked.
+See `docs/evidence/R1/r1-native-alpha-fail-depth-contract-r28-2026-08-22.md`.
+
+The supplied encoder crash now has an exception-safe `RenderEncoderEndGuard`;
+signed PID 97598 survived a bounded live window and H.264 capture with zero
+fault bytes. The next D0-NORMAL increment added a named native Direct-product
+activation using the existing live IR/TEX0 path. Focused tests passed 31/31 and
+the signed PID 98914 stayed alive, but the retained Village1 phase emitted no
+title/progress Direct packet, so Direct composition remains OPEN. Fresh visual
+artifacts remain partial and are not playability proof.
+
+The fresh pre-armed iPad route now accepted native Direct at chain 1, reached
+title-wait-ready, replayed Start → Cross → Down×4 → Cross, and entered Village1
+twice with a 0-byte fault log. Post-Start lookup order `(2,54),(2,49),(2,48),
+(2,42),(2,44)` matches the completed macOS route and its observed TEX0/TBP
+families; source parity is supported for this slice. Direct composition remains
+OPEN: fresh screenshot/video evidence is still visibly incomplete and non-playable.
+
+The pre-armed consumer ledger now shows a post-lookup family mismatch: iPad
+native 3D repeatedly draws `0x24d2/0x2004d2e59930a4d2` plus `0x2525`, while the
+phase-aligned reference starts `0x24f2/0x2004d1e59930a4f2` plus `0x2525`.
+This is recorded as producer/data-family identity OPEN, not a TBP-remap result;
+the next experiment traces launcher/AdGif/allocation identity before native
+composition changes. Fresh exact-route visuals remain incomplete/non-playable.
+
+The lower-level producer trace now makes the remaining R1 divergence explicit:
+macOS active 3D uses page 2/index 30 and TBP 9458 (`0x24f2`), while current
+iPad Village1 particle setup uses page 2/index 10 and TBP 9426 (`0x24d2`).
+The iPad producer vector/TEX0 matches its native MSCAL consumer exactly, so the
+remaining boundary is launch-owner/phase-family selection before Metal, not a
+TBP or renderer remap.
+
+The texture-login ledger closes the allocation branch for the accepted route:
+iPad/macOS match resident page 2, directory/entry/page lengths 1610/55/55,
+segment sizes `31424/1088/4352`, destinations `601152/632576/633664`, and
+`alloc=1` for indices 54,49,48,42,44. Remaining R1 work is Sprite3 producer /
+AdGif/TEX0 family selection after lookup residency, not FR3/DGO allocation.
+
+The existing scene no-depth discriminator was consumed on the active Village1
+runtime. Fresh frame/video evidence shows cross-group stretched strips becoming
+more prominent, falsifying depth ordering as the primary malformed-TFRAG cause;
+no global depth workaround was retained. Next composition boundary remains
+TFRAG strip/material/projection state.
+
+Normal TIE source audit corrected native camera policy to the OpenGL TFRAG3
+derived-pc-camera path; raw camera is only for wind TIE. Fresh iPad frame/video
+show recognizable hut/tower/palm geometry, but malformed bands/rectangles,
+missing regions, and no Jak remain. Playability is still OPEN.
+
+Fresh signed iPad build now selects the canonical single `lod_tie`/`lod_tfrag`
+slot rather than overlaying all geometry slots; runtime reports 3 TIE and 3
+TFRAG trees in LOD 0, zero faults. Fresh frame/video still show malformed TIE
+bands and no Jak, so composition/playability remain OPEN.
+
+TIE-only first-batch and no-depth probes show the malformed band appears after
+the first TIE batch and survives depth removal; depth ordering is falsified.
+Normal mode was restored, with fresh screenshot/video captured and zero faults.
+Next R1 composition boundary is later TIE batch/index/material state.
+
+A bounded numeric draw-range probe did not reproduce the normal-mode band
+reliably in isolated TIE or TFRAG frames, so no batch/material change was
+promoted. Normal mode was restored with fresh screenshot/video; combined
+TIE/TFRAG phase state remains OPEN.
+
+OpenGL TFRAG3 source multiplies TOD alpha once; native TIE incorrectly used 4x.
+Corrected native factor to 2x, rebuilt/signed/installed, and verified 0 faults.
+Fresh frame/video show a changed but still malformed seam; no playability claim.
+Native W/D replay hid touch controls and logged left-stick values; input tests 8/8.
+Composition remains OPEN; no camera, TBP, depth-policy, or ROM-safety workaround
+was promoted. Evidence: `docs/evidence/R1/r1-tie-alpha-source-parity-2026-08-22.md`.
+
+Fresh stale-marker-controlled route created a new title-wait boundary before
+Start/Cross/Down×4/Cross. Post-Start page-2 lookup prefix was `54,49,48,42,44`,
+all resident hits, matching the macOS prefix. Fresh frame/video remain visibly
+malformed with no Jak; post-route Sprite3/AdGif consumer capture remains OPEN.
+Evidence: `docs/evidence/R1/r1-fresh-valid-route-lookup-prefix-2026-08-22.md`.
+
+Fresh post-title source trace resolved page-2 `54,49,48,42,44` and raw
+particle/AdGif IDs as resident, with matching page-directory/segment state.
+The producer/native family in the validated Village1 window is `0x2506` /
+`0x2004d0e59930a506`, while the macOS world oracle is `0x24f2` /
+`0x2004d1e59930a4f2`; ordering/phase ownership remains the R1 discriminator.
+Fresh Simulator screenshot/video still show a large seam and missing regions;
+the build is diagnostic and not playable. See
+`docs/evidence/R1/r1-post-title-producer-family-2026-08-22.md`.
+
+Fresh post-`GAMEPLAY: enter village1` trace now correlates live owner `2895`
+and raw page-2 index `10` to AdGif/native `TBP=0x24d2`,
+`TEX0=0x2004d2e59930a4d2`; macOS begins the corresponding world phase at
+index `30` / `0x24f2` / `0x2004d1e59930a4f2`. The divergence is producer/DGO
+ordering before Metal. Fresh frame/video remain non-playable; audio peak is 0.
+See `docs/evidence/R1/r1-world-launch-owner-correlation-2026-08-22.md`.
+
+Clean `(mi)` removed 518 stale objects and rebuilt 546 targets; signed iPad replay still
+produces launcher 2895 → page2/index10 → `0x24d2`/`0x2004d2e59930a4d2`, not macOS
+index30 → `0x24f2`/`0x2004d1e59930a4f2`. Fresh Simulator screenshot/video remain
+non-playable; R1 stays a source DGO/link/FR3 ordering investigation. See
+`docs/evidence/R1/r1-clean-dgo-replay-2026-08-22.md`.
+
+Native WASD/mouse input now uses physical scancodes plus a bounded digital latch;
+the focused suite passes 9/9. A fresh one-Simulator iPad replay reaches village1
+and resolves MIS.DGO, but the captured frame remains visibly non-playable with
+missing geometry. See `docs/evidence/I1/i1-native-mouse-keyboard-route-2026-08-22.md`.
+
+Full ARM64 `(mi)` plus a signed one-Simulator replay added a bounded level-ID
+ledger: village1 IDs are present/stable, while post-world page-2 consumer order
+differs from macOS. R1 remains a producer/link/login or consumer-family issue;
+fresh screenshot/video remain non-playable. See
+`docs/evidence/R1/r1-level-login-owner-ledger-2026-08-22.md`.
+
+Generic-VU probe now caps at 50,000 instructions with zero XGKICK/GIF output;
+the first live VU draw also has zeroed input memory. This confirms the missing
+Jak actor is upstream of Metal presentation; R1/native composition remains open.
+
+Cold single-runtime input verification passed: W logged `(127,0)` then neutral
+on key-up; mouse motion and Cross down/up reached the native bridge, and the
+view changed. Input is not the current visual blocker; fresh frame remains
+malformed with no Jak. Evidence: `docs/evidence/I1/i1-native-mouse-keyboard-route-2026-08-22.md`.
+
+The existing reference-camera probe was wired into the signed Metal build and
+falsified: it removed the scene, while restored native derived-pc-camera again
+showed malformed TIE/TFRAG geometry. No camera policy was promoted; composition
+remains OPEN. Evidence: `docs/evidence/R1/r1-native-composition-cpu-base-probe-r22-2026-08-22.md`.
+
+Fresh Cross replay reached Village; five taps changed the live frame but left a
+large missing band and no Jak. Draw-limit=1 produced coherent partial TFRAG;
+no-TIE preserved it, narrowing the next work to full-scene material/coverage.
+Fresh frame: `/tmp/ottsel-video/normal-before-cross-20260822-1703.png`.
+
+Native Merc consumer now parses real FR3 models and PC_PORT bone matrices; the
+signed build submitted `ndi-lod0` meshes up to 67,554 vertices/4,430 triangles
+with zero faults. Exact replay still showed no Jak packet and remains visibly
+non-playable. Evidence: `docs/evidence/R1/r1-native-merc-consumer-2026-08-22.md`.
+
+Unique-model PC_PORT tracing now reaches `GAMEPLAY: enter village1` and sees
+medres/warp-gate/balloonlurker packets; the native consumer accepts those
+world meshes, but no player/Jak packet is emitted. Fresh Simulator frame
+remains malformed/no Jak; fault log is 0 bytes. The trace cap now ignores
+repeated title packets. Evidence: docs/evidence/R1/r1-native-merc-consumer-2026-08-22.md.
+
+The first cold run of the Jak producer-boundary trace exposed an audio/logger
+mutex stall before title. Atomic PCM telemetry moved callback logging to the
+non-audio pump; two fresh signed cold launches reached title/bootstrap with
+output-only playback and 0-byte fault logs. Full audio remains OPEN. The live
+Simulator still shows stretched/fragmented Village geometry with no Jak.
+
+2026-08-23 fresh signed R1 replay: post-Start lookup prefix `54,49,48,42,44`
+and page-2 segments `31424/1088/4352 -> 601152/632576/633664` match macOS.
+The first 3D family still diverges before Metal: iPad index 10/TBP `0x24d2`
+(`0x2004d2e59930a4d2`) versus macOS index 30/TBP `0x24f2`
+(`0x2004d1e59930a4f2`). Corrected owner tracing resolves village1 launchers
+29/28/27 to raw `0x00200f00` (page 2/index `0xf`) and AdGif TEX0
+`0x2004c8e55530a5d2`; the later index-10 owner remains open. No TBP/camera/
+shader change was made. Fresh frame remains non-playable; fault log is 0 bytes.
+
+2026-08-23 crash-boundary regression: Apple SDL playback opener is now
+joinable and teardown destroys late streams before SDL shutdown; platform pad
+state now has process lifetime so exit-time mutex destruction cannot race a
+GOAL reader. Focused input regression is 5/5 and full goalc-test is 733/733.
+Fresh signed iPad launch on the single booted iPad Pro stayed alive through
+30 seconds with callback/mix logs and a 0-byte fault log. Screenshot remains
+diagnostic/non-playable; audio PCM peak is still 0, so audible proof is open.
+
+2026-08-23 unique-owner R1 trace removed the repeated-raw cap: fresh route
+reached Village1 twice and captured later raw page-2/index `0x1e`/`0x22`, both
+AdGif TEX0 `0x2014cd655530a525`, matching native `0x2525`. The first native
+family remains `0x24d2/0x2004d2e59930a4d2`, so producer/DMA ownership is still
+OPEN. Fault log was 0 bytes; fresh frame remains rotated/dislocated and audio
+PCM peak 0. Evidence: `docs/evidence/R1/r1-unique-owner-trace-2026-08-23.md`.
+
+2026-08-23 Mac acceptance replay: ARM64 `(mi)` rebuilt all 546 targets,
+`goalc-test` passed 750/750 after immediate analog key-up release was fixed,
+and a fresh cold start reached coherent title,
+Village1, and Training frames. WASD, action, mouse camera/buttons, neutral
+release, minimize/restore, and five-minute stability evidence passed with no
+crash markers; the SDL callback and nonzero mixer peaks are now routed to the
+active `Jump Desktop Audio` output for this session. M1 remains unpromoted
+pending the user's audible confirmation. The desktop control map now includes
+WASD movement, mouse camera, face-action mouse buttons, and Return/KP Enter/Escape
+Start aliases, with Q/Shift/C/X reserved for L1/R1/L2/R2 within left-hand reach.
+Evidence: `docs/evidence/M1/m1-native-controls-stability-2026-08-23.md`.
+
+2026-09-03 BOT36 audit reconciliation: accepted (a)-(h) against current source,
+logs, and the retained raw-MERC/no-MERC frames; the projection_mode change stays.
+The audit's R18/R19 strip-restart explanation is accepted as a no-op, and the
+portrait-encoded simctl screenshots are not a render defect.
+Reordered experiments: depth -> level ownership -> Merc bucket ledger -> audio
+RPC -> pacing/TOD alpha. Camera math, TBP/lookup, and strip-restart remain frozen;
+I1/I2 are OPEN and no playability claim is made.
+
+2026-09-03 I1 Village1 bucket census: live DMA carries Sky/Ocean, generic,
+shrub, alpha/trans, shadow, prism/water/depth, and Sprite3 payloads beyond the
+currently implemented native TFRAG/TIE/Merc subset. The fresh frame remains
+malformed, so this is OPEN; next work is ordered bucket dispatch/draw-list
+coverage, starting with Sky. Evidence: `docs/evidence/I1/i1-jak1-bucket-coverage-2026-09-03.md`.
+
+2026-09-04 I1 Sky product boundary: a fresh signed run reached 11 Sky
+transfers (6 DIRECT, 24 GIF tags) but 0 PRIM/XYZ callbacks and 0 submissions;
+the native product walk is OPEN and the frame remains malformed. Next session
+must reconcile its bucket start/tag forms with the SKY IR trace before adding
+generated Sky textures. Evidence: `docs/evidence/I1/i1-sky-native-capture-boundary-2026-09-04.md`.

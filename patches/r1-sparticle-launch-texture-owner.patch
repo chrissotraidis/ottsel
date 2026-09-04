@@ -1,0 +1,44 @@
+diff --git a/game/mips2c/jak1_functions/sparticle_launcher.cpp b/game/mips2c/jak1_functions/sparticle_launcher.cpp
+--- a/game/mips2c/jak1_functions/sparticle_launcher.cpp
++++ b/game/mips2c/jak1_functions/sparticle_launcher.cpp
+@@
+ static u32 ottsel_sp_launch_current_system = 0;
+ static u32 ottsel_sp_launch_current_launcher = 0;
+ static u32 ottsel_sp_init_texture_trace_count = 0;
++
++static u32 ottsel_resolve_launcher_texture(u32 launcher_addr, u32* init_specs_addr_out,
++                                            u32* init_specs_count_out) {
++  if (init_specs_addr_out) *init_specs_addr_out = 0;
++  if (init_specs_count_out) *init_specs_count_out = 0;
++  if (launcher_addr == 0) return 0;
++  const u32 init_specs_addr = *reinterpret_cast<u32*>(g_ee_main_mem + launcher_addr + 8);
++  if (init_specs_addr == 0) return 0;
++  const u32 init_specs_count = std::min(*reinterpret_cast<u32*>(g_ee_main_mem + init_specs_addr + 4), 128u);
++  if (init_specs_addr_out) *init_specs_addr_out = init_specs_addr;
++  if (init_specs_count_out) *init_specs_count_out = init_specs_count;
++  for (u32 i = 0; i < init_specs_count; ++i) {
++    const u32 spec_addr = init_specs_addr + 16 + i * 16;
++    const u16 field = *reinterpret_cast<u16*>(g_ee_main_mem + spec_addr);
++    if (field == 1) {  // sp-field-id spt-texture
++      return *reinterpret_cast<u32*>(g_ee_main_mem + spec_addr + 4);
++    }
++  }
++  return 0;
++}
+ 
+ static bool ottsel_sp_launch_trace_trigger() {
+@@
+     const u32 system_addr = c->gprs[a0].du32[0];
+     const u32 launcher_addr = c->gprs[a1].du32[0];
++    u32 init_specs_addr = 0;
++    u32 init_specs_count = 0;
++    const u32 launcher_texture =
++        ottsel_resolve_launcher_texture(launcher_addr, &init_specs_addr, &init_specs_count);
+     u32 launcher_id = 0xffffffff;
+@@
+-    lg::info("OTTSEL SPARTICLE LAUNCH OWNER: system=0x{:08x} launcher=0x{:08x} launcher-id={} table=0x{:08x}",
+-             system_addr, launcher_addr, launcher_id, table_addr);
++    lg::info("OTTSEL SPARTICLE LAUNCH OWNER: system=0x{:08x} launcher=0x{:08x} launcher-id={} "
++             "table=0x{:08x} init-specs=0x{:08x} count={} texture=0x{:08x} page=0x{:x} index=0x{:x}",
++             system_addr, launcher_addr, launcher_id, table_addr, init_specs_addr, init_specs_count,
++             launcher_texture, (launcher_texture >> 20) & 0xfff, (launcher_texture >> 8) & 0xfff);
