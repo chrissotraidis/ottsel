@@ -1,0 +1,7 @@
+lifecycle-start 2026-08-21_14:57:41 pid=47438
+hidden at Friday, August 21, 2026 at 2:57:42 PM
+false
+false
+resume-move requested 14:58:00
+lifecycle-end 2026-08-21_14:58:01
+frontmost=true visible=true

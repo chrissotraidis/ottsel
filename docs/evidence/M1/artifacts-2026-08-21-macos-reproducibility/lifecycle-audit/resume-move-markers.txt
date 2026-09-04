@@ -1,0 +1,26 @@
+[41:03] [[38;2;144;238;144minfo[0m] OTTSEL PAD EDGE: raw=0x8 prior-abs=0x8 prior-rel=0x0 circle-pressure=0 x-pressure=0 frames-left=2
+[41:03] [[38;2;144;238;144minfo[0m] OTTSEL PAD EDGE: raw=0x8 prior-abs=0x8 prior-rel=0x0 circle-pressure=0 x-pressure=0 frames-left=1
+[41:03] [[38;2;144;238;144minfo[0m] OTTSEL PAD EDGE: raw=0x8 prior-abs=0x8 prior-rel=0x0 circle-pressure=0 x-pressure=0 frames-left=0
+[41:08] [[38;2;144;238;144minfo[0m] OTTSEL PAD EDGE: raw=0x4000 prior-abs=0x4000 prior-rel=0x0 circle-pressure=0 x-pressure=0 frames-left=2
+[41:08] [[38;2;144;238;144minfo[0m] OTTSEL PAD EDGE: raw=0x4000 prior-abs=0x4000 prior-rel=0x0 circle-pressure=0 x-pressure=0 frames-left=1
+[41:08] [[38;2;144;238;144minfo[0m] OTTSEL PAD EDGE: raw=0x4000 prior-abs=0x4000 prior-rel=0x0 circle-pressure=0 x-pressure=0 frames-left=0
+[41:12] [[38;2;144;238;144minfo[0m] OTTSEL PAD EDGE: raw=0x40 prior-abs=0x40 prior-rel=0x0 circle-pressure=0 x-pressure=0 frames-left=2
+[41:12] [[38;2;144;238;144minfo[0m] OTTSEL PAD EDGE: raw=0x40 prior-abs=0x40 prior-rel=0x0 circle-pressure=0 x-pressure=0 frames-left=1
+[41:12] [[38;2;144;238;144minfo[0m] OTTSEL PAD EDGE: raw=0x40 prior-abs=0x40 prior-rel=0x0 circle-pressure=0 x-pressure=0 frames-left=0
+[41:15] [[38;2;144;238;144minfo[0m] OTTSEL PAD EDGE: raw=0x40 prior-abs=0x40 prior-rel=0x0 circle-pressure=0 x-pressure=0 frames-left=2
+[41:15] [[38;2;144;238;144minfo[0m] OTTSEL PAD EDGE: raw=0x40 prior-abs=0x40 prior-rel=0x0 circle-pressure=0 x-pressure=0 frames-left=1
+[41:15] [[38;2;144;238;144minfo[0m] OTTSEL PAD EDGE: raw=0x40 prior-abs=0x40 prior-rel=0x0 circle-pressure=0 x-pressure=0 frames-left=0
+[41:18] [[38;2;144;238;144minfo[0m] OTTSEL PAD EDGE: raw=0x40 prior-abs=0x40 prior-rel=0x0 circle-pressure=0 x-pressure=0 frames-left=2
+[41:18] [[38;2;144;238;144minfo[0m] OTTSEL PAD EDGE: raw=0x40 prior-abs=0x40 prior-rel=0x0 circle-pressure=0 x-pressure=0 frames-left=1
+[41:18] [[38;2;144;238;144minfo[0m] OTTSEL PAD EDGE: raw=0x40 prior-abs=0x40 prior-rel=0x0 circle-pressure=0 x-pressure=0 frames-left=0
+[41:21] [[38;2;144;238;144minfo[0m] OTTSEL PAD EDGE: raw=0x40 prior-abs=0x40 prior-rel=0x0 circle-pressure=0 x-pressure=0 frames-left=2
+[41:21] [[38;2;144;238;144minfo[0m] OTTSEL PAD EDGE: raw=0x40 prior-abs=0x40 prior-rel=0x0 circle-pressure=0 x-pressure=0 frames-left=1
+[41:21] [[38;2;144;238;144minfo[0m] OTTSEL PAD EDGE: raw=0x40 prior-abs=0x40 prior-rel=0x0 circle-pressure=0 x-pressure=0 frames-left=0
+[41:24] [[38;2;144;238;144minfo[0m] OTTSEL PAD EDGE: raw=0x4000 prior-abs=0x4000 prior-rel=0x0 circle-pressure=0 x-pressure=0 frames-left=2
+[41:24] [[38;2;144;238;144minfo[0m] OTTSEL PAD EDGE: raw=0x4000 prior-abs=0x4000 prior-rel=0x0 circle-pressure=0 x-pressure=0 frames-left=1
+[41:24] [[38;2;144;238;144minfo[0m] OTTSEL PAD EDGE: raw=0x4000 prior-abs=0x4000 prior-rel=0x0 circle-pressure=0 x-pressure=0 frames-left=0
+[47:12] [[38;2;144;238;144minfo[0m] OTTSEL PAD: synthetic left stick accepted x=255 y=127 port0-reads=900
+[47:33] [[38;2;144;238;144minfo[0m] OTTSEL PAD: synthetic left stick released to neutral
+[58:00] [[38;2;144;238;144minfo[0m] OTTSEL PAD: synthetic left stick accepted x=255 y=127 port0-reads=360
+[58:08] [[38;2;144;238;144minfo[0m] OTTSEL PAD: synthetic left stick released to neutral
+[59:52] [[38;2;144;238;144minfo[0m] OTTSEL PAD: synthetic left stick accepted x=255 y=127 port0-reads=360

@@ -1,0 +1,79 @@
+interaction-start 2026-08-21 15:03:59
+pid=47438
+latest-input-markers:
+[01:21] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #277001 port=0 has-display=true
+[01:26] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #278001 port=0 has-display=true
+[01:31] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #279001 port=0 has-display=true
+[01:36] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #280001 port=0 has-display=true
+[01:41] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #281001 port=0 has-display=true
+[01:45] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #282001 port=0 has-display=true
+[01:50] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #283001 port=0 has-display=true
+[01:55] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #284001 port=0 has-display=true
+[02:00] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #285001 port=0 has-display=true
+[02:05] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #286001 port=0 has-display=true
+[02:10] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #287001 port=0 has-display=true
+[02:15] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #288001 port=0 has-display=true
+[02:20] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #289001 port=0 has-display=true
+[02:25] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #290001 port=0 has-display=true
+[02:30] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #291001 port=0 has-display=true
+[02:35] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #292001 port=0 has-display=true
+[02:41] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #293001 port=0 has-display=true
+[02:46] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #294001 port=0 has-display=true
+[02:53] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #295001 port=0 has-display=true
+[02:58] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #296001 port=0 has-display=true
+[03:04] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #297001 port=0 has-display=true
+[03:10] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #298001 port=0 has-display=true
+[03:17] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #299001 port=0 has-display=true
+[03:22] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #300001 port=0 has-display=true
+[03:29] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #301001 port=0 has-display=true
+[03:34] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #302001 port=0 has-display=true
+[03:40] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #303001 port=0 has-display=true
+[03:47] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #304001 port=0 has-display=true
+[03:53] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #305001 port=0 has-display=true
+[03:58] [[38;2;144;238;144minfo[0m] OTTSEL PAD: scePadRead call #306001 port=0 has-display=true
+fault-scan:
+/tmp/ottsel-m1-repro.stdout.log:OTTSEL link: top-level of assert-h returned
+/tmp/ottsel-m1-repro.stdout.log:[34:46] [[38;2;064;224;208mdebug[0m] [link and exec] assert             0  33925 heap-use 28709614        0: 0x1ca100e
+/tmp/ottsel-m1-repro.stdout.log:[34:46] [[38;2;144;238;144minfo[0m] OTTSEL CODEMAP: assert main-seg 0x453c000..0x4540138 (code 0x4000)
+/tmp/ottsel-m1-repro.stdout.log:OTTSEL symlink '*__private-assert-info*' at 0x4108 -> OFFSET
+/tmp/ottsel-m1-repro.stdout.log:OTTSEL symlink '*__private-assert-info*' wrote 0xffff5188 at data+0x4108 (data=0x453c000)
+/tmp/ottsel-m1-repro.stdout.log:OTTSEL symlink '*__private-assert-info*' at 0x4114 -> OFFSET
+/tmp/ottsel-m1-repro.stdout.log:OTTSEL symlink '*__private-assert-info*' wrote 0xffff5188 at data+0x4114 (data=0x453c000)
+/tmp/ottsel-m1-repro.stdout.log:OTTSEL symlink '*__private-assert-info*' at 0x4120 -> OFFSET
+/tmp/ottsel-m1-repro.stdout.log:OTTSEL symlink '*__private-assert-info*' wrote 0xffff5188 at data+0x4120 (data=0x453c000)
+/tmp/ottsel-m1-repro.stdout.log:OTTSEL symlink '*__private-assert-info*' at 0x4130 -> OFFSET
+/tmp/ottsel-m1-repro.stdout.log:OTTSEL symlink '*__private-assert-info*' wrote 0xffff5188 at data+0x4130 (data=0x453c000)
+/tmp/ottsel-m1-repro.stdout.log:OTTSEL symlink '*run-time-assert-enable*' at 0x4000 -> OFFSET
+/tmp/ottsel-m1-repro.stdout.log:OTTSEL symlink '*run-time-assert-enable*' wrote 0x1f40 at data+0x4000 (data=0x36b0000)
+/tmp/ottsel-m1-repro.stdout.log:[34:46] [[38;2;064;224;208mdebug[0m] link finish: assert
+/tmp/ottsel-m1-repro.stdout.log:OTTSEL link: executing top-level of assert entry=0x36b0004 stack=0x7007fffff0 st=0x18fe04
+/tmp/ottsel-m1-repro.stdout.log:OTTSEL link: top-level of assert returned
+/tmp/ottsel-m1-repro.stdout.log:OTTSEL symlink '*__private-assert-info*' at 0x4244 -> OFFSET
+/tmp/ottsel-m1-repro.stdout.log:OTTSEL symlink '*__private-assert-info*' wrote 0xffff5188 at data+0x4244 (data=0x46a0000)
+/tmp/ottsel-m1-repro.stdout.log:OTTSEL symlink '*run-time-assert-enable*' at 0x4240 -> OFFSET
+/tmp/ottsel-m1-repro.stdout.log:OTTSEL symlink '*run-time-assert-enable*' wrote 0x1f40 at data+0x4240 (data=0x46a0000)
+
+interaction-end 2026-08-21 15:06:44
+audio-latest:
+[05:33] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 1850), pcm-peak=3389
+[05:43] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 1860), pcm-peak=2383
+[05:53] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 1870), pcm-peak=2266
+[06:03] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 1880), pcm-peak=2078
+[06:13] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 1890), pcm-peak=2397
+[06:23] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 1900), pcm-peak=2195
+[06:33] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 1910), pcm-peak=2300
+[06:43] [[38;2;144;238;144minfo[0m] OTTSEL AUDIO: mixed 48000 frames (window 1920), pcm-peak=2641
+process-final:
+  PID STARTED                      STAT  %CPU %MEM COMMAND
+47438 Fri Aug 21 14:34:42 2026     S     43.1  3.9 /Users/chrissotraidis/GitHub/ottsel/out/jak-project/build/h1/game/gk -v --game jak1 -- -boot -fakeiso
+
+image-hashes:
+6b72c60b502050420da68ce6f84c7a08608dc255845927cef1fc6e010402fefa  docs/evidence/M1/artifacts-2026-08-21-macos-reproducibility/lifecycle-audit/20-after-punch.png
+4ec0a4480681fd37cabc3eb1cff7bd5c4a010715c759167e092eb389b993e690  docs/evidence/M1/artifacts-2026-08-21-macos-reproducibility/lifecycle-audit/21-after-settle.png
+
+hide-show 2026-08-21 15:09:12
+process:
+  PID STAT  %CPU %MEM COMMAND
+47438 S     45.2  3.7 /Users/chrissotraidis/GitHub/ottsel/out/jak-project/build/h1/game/gk -v --game jak1 -- -boot -fakeiso
+c951df4aa398c1d2942ea4593483b65263fad41790e359a4f242b6c5e22b98af  docs/evidence/M1/artifacts-2026-08-21-macos-reproducibility/lifecycle-audit/22-after-hide.png
+8d763e4b31d89d22bfb457eaf32455e0946f861c269155a7107839ae9bd2d24d  docs/evidence/M1/artifacts-2026-08-21-macos-reproducibility/lifecycle-audit/23-after-show.png

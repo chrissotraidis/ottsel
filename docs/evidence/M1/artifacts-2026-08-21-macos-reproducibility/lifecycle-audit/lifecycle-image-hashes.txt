@@ -1,0 +1,10 @@
+b09c14d6ab4ae27deb1c109269afdd5dc866074d3954d94690e1de0ba5fb9b46  docs/evidence/M1/artifacts-2026-08-21-macos-reproducibility/lifecycle-audit/10-before-hide.png
+c6b7b7558c8354e2e78ef5a0108da56939052f0148fd1488b982e1f3bf5a7ac6  docs/evidence/M1/artifacts-2026-08-21-macos-reproducibility/lifecycle-audit/11-after-resume.png
+c6b7b7558c8354e2e78ef5a0108da56939052f0148fd1488b982e1f3bf5a7ac6  docs/evidence/M1/artifacts-2026-08-21-macos-reproducibility/lifecycle-audit/12-after-resume-move.png
+5133b6bddf6f15a1344699df96662b61bfc384cd4af84fba8aae6a8996ac18c9  docs/evidence/M1/artifacts-2026-08-21-macos-reproducibility/lifecycle-audit/13-after-resume-retry.png
+8fcb0c051f90bab5bf318d9e634a83cddf9117991e5940158fd4f0bf01bf4455  docs/evidence/M1/artifacts-2026-08-21-macos-reproducibility/lifecycle-audit/14-after-resume-move.png
+907fd38afa65e7e3d0bab8d86880d728d3f8f8bcdc02d5f9b4a387281a728f04  docs/evidence/M1/artifacts-2026-08-21-macos-reproducibility/lifecycle-audit/15-after-resume-settled.png
+907fd38afa65e7e3d0bab8d86880d728d3f8f8bcdc02d5f9b4a387281a728f04  docs/evidence/M1/artifacts-2026-08-21-macos-reproducibility/lifecycle-audit/15-after-resume-settled.png
+590ec9f6a347982cba699ddd2ba8422de96d582f0c3b11c02e07ceb6c76b43f0  docs/evidence/M1/artifacts-2026-08-21-macos-reproducibility/lifecycle-audit/17-after-resumed-keyboard-move.png
+c4229b360861244d22020c0e10b774125ee76ca682779d92003680a4f580d454  docs/evidence/M1/artifacts-2026-08-21-macos-reproducibility/lifecycle-audit/18-after-jump.png
+f20a62724373d7b3f7a2c4c8e3fa9f5866f4b09d4c8af6d6db5b14ab789d867b  docs/evidence/M1/artifacts-2026-08-21-macos-reproducibility/lifecycle-audit/19-after-circle-action.png
