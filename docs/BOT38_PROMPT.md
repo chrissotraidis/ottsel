@@ -86,20 +86,46 @@ Fix one falsifiable native family at a time against the macOS reference. Black
 regions are structural, not one bug: sky, ocean, TIE TRANS/WATER, envmap,
 shrub, and Direct/HUD product paths are missing or trigger-gated. Work order:
 
-### I1.1 — Sky bucket 3 draw list (first experiment)
+### I1.1 — Sky: the SKY_DRAW quad plus the missing sky-blend texture
 
-Evidence: `docs/evidence/I1/i1-sky-native-capture-boundary-2026-09-04.md`,
-`i1-native-sky-batch-2026-09-04.md`, `i1-sky-direct-ir-2026-09-03.md`. Bucket 3
-reaches `submit_mobile_native_sky_bucket` (`src/shell/metal_gfx.mm:3260`) with
-11 transfers (6 DIRECT, 24 GIF tags) but logs `prim-starts=0 vertex-words=0
-candidates=0 submitted=0`, so nothing is encoded.
+Bucket identities are verified against upstream: `jak1::BucketId::SKY_DRAW = 3`
+(`ref/open-goal-jak-project/repo/game/graphics/opengl_renderer/buckets.h:10`),
+rendered by `SkyRenderer` (`OpenGLRenderer.cpp:671-672`), and
+`TFRAG_TRANS0_AND_SKY_BLEND_LEVEL0 = 32`, rendered by `SkyBlendHandler`
+(`OpenGLRenderer.cpp:759`). There are two independent structural gaps, not one:
 
-Falsifiable question: do the bucket-3 GIF tags carry a PRIM register write at
-all, or is Sky uploaded as IMAGE/DIRECT texture data that the native walk
-skips? `on_prim_start` (`metal_gfx.mm:2707`) is the only place
-`native_prim_starts` increments, and `capture_native_primitive`
-(`metal_gfx.mm:2561`) additionally drops any primitive without a decodable
-texture.
+1. `SKY_DRAW` (bucket 3) reaches `submit_mobile_native_sky_bucket`
+   (`src/shell/metal_gfx.mm:3260`) with 11 transfers (6 DIRECT, 24 GIF tags)
+   but logs `prim-starts=0 vertex-words=0 candidates=0 submitted=0`, so no quad
+   is encoded. Upstream's contract for this bucket is exact and comparable
+   (`SkyRenderer.cpp:133-200`): a leading NEXT with two NOPs, a 64-byte
+   (`16*4`) setup GIF packet, then when `current_tag().qwc == 5` a draw-setup
+   packet followed by CNT/DIRECT GIF packets, closing CALL/RET with
+   `current_tag_offset() == next_bucket`. An 11-transfer walk carrying 24 tags
+   is consistent with that `qwc == 5` branch, so the walk targets the right
+   bucket; the defect is downstream of bucket selection.
+2. `TFRAG_TRANS0_AND_SKY_BLEND_LEVEL0` (bucket 32) has **no handling anywhere
+   in `src/`**: `grep -rn -i 'sky_blend' src/` returns nothing. That bucket
+   generates the sky texture via `SkyBlendHandler`, and `sky.frag` samples it
+   as `tex_T0`. `sky.vert` is a pure screen-space quad
+   (`gl_Position = vec4((x-0.5)*16, -(y-0.5)*32, z*2-1, 1)`), so the texture
+   carries the entire content; a correct quad still renders nothing without
+   it. The same bucket also owns the TFRAG TRANS trees (its `qwc != 8` branch),
+   which matches the missing transparent and water regions.
+
+Ordering therefore matters: implement the `SKY_BLEND` texture contract before
+chasing the `SKY_DRAW` quad.
+
+Evidence so far: `docs/evidence/I1/i1-sky-native-capture-boundary-2026-09-04.md`,
+`i1-native-sky-batch-2026-09-04.md`, `i1-sky-direct-ir-2026-09-03.md`.
+
+Falsifiable question: do the `SKY_DRAW` GIF tags carry a PRIM register write at
+all, or does the quad arrive in a form the native walk skips? Note that a
+screen-space sky quad legitimately needs no per-vertex texture lookup, so the
+texture-required drop inside `capture_native_primitive` (`metal_gfx.mm:2561`,
+`if (!texture) return;`) is itself a candidate defect for this specific bucket.
+`on_prim_start` (`metal_gfx.mm:2707`) is the only place `native_prim_starts`
+increments.
 
 Probe: extend the `OTTSEL SKY PRODUCT` log at `metal_gfx.mm:3299` with the
 already-counted `g_mobile_direct_trace.packed_tags`, `reglist_tags`, and
@@ -202,4 +228,3 @@ gate.
 One <=60-line doc per proven gate, at most eight appended STATUS lines. Stop
 appending new dated STATUS sections: replace the stale top board with current
 truth instead of growing the file.
-
