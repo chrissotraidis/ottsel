@@ -3698,3 +3698,11 @@ with `ottsel-trace-metal-scene-no-sprite` armed every flat rectangle disappears
 and a correct textured training-level village remains. Two sprite data defects
 are measured: `tbp=0x24f2` 64x64 PSM19 decodes to alpha-max=0, and Sprite3
 groups arrive with `tex0=0`. Evidence: `docs/evidence/I1/BOT43-camera-live-sprite-defect.md`.
+
+2026-09-11 (BOT44, REFRAME): the BOT43 'Sprite3 overlay' headline is withdrawn -
+the flat rectangles are the app's own touch-control overlay (`build_touch_overlay`
+in `src/shell/main.cpp`, drawn at `metal_shell.mm:1678` with a 1x1 white texture
+and flat per-vertex colour). Fresh launch: `-scene-no-sprite` alone leaves every
+rectangle; only `-scene-no-overlay` clears them, and that arm disables sprites
+too (`metal_shell.mm:1592`) - the confound behind BOT43. Gate V1: make the layer
+probes orthogonal. Evidence: `docs/evidence/I1/BOT44-touch-overlay-not-sprite3.md`.
