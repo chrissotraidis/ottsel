@@ -1,8 +1,8 @@
 # STATUS — Ottsel
 
-## Current board — 2026-09-10
+## Current board — 2026-09-11
 
-`docs/BOT38_PROMPT.md` is the authoritative queue. Platform order is resolved:
+`docs/BOT40_PROMPT.md` is the authoritative queue (supersedes BOT38/BOT39). Platform order is resolved:
 macOS is frozen as the accepted behavioral/visual reference, the iPad Simulator
 renderer is the active engineering gate (I1), and iPhone/device work stays
 behind a coherent iPad route. The 2026-08-21 self-audit below is preserved
@@ -3679,3 +3679,13 @@ inside the noise floor (`docs/evidence/I1/i1-frame-determinism-2026-09-11.md`).
 One fresh frame does show recognizable Village1 huts/palms/water. Sky is still
 black; no playability claim. Evidence:
 `docs/evidence/I1/i1-sky-draw-path-alive-2026-09-11.md`.
+
+2026-09-11 (I1.1f, PASS structural): the Direct texture registry was never
+populated — 4 entries against 478 records — so every Direct draw and all three
+sky sources fell back to a raw GS-VRAM decode that takes the CLUT base from the
+ADGIF rather than the game's texture record. Populating it in the
+`handle_upload_now` loop raises it to 486 and all three sky sources now resolve
+from it (`key-present=1`, fault log 0 bytes). Sky content is still not a
+gradient, so I1 stays OPEN; next suspect is `g_direct_texture_metadata`, keyed
+by `dest` alone, letting a page reusing `dest=0x20` alias the sky record
+(`docs/evidence/I1/i1-direct-texture-registry-2026-09-11.md`).
