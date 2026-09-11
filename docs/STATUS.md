@@ -12,6 +12,27 @@ Blocker: the AGENTS.md disk precondition FAILS (Avail 20Gi on `/`, 0 temp
 packs), so no build, boot, or recording may run. Restoring the 40 GB floor
 requires a user-approved, named cleanup.
 
+Measured on 2026-09-10 (read-only; nothing deleted). Authoritative volume is
+`/System/Volumes/Data` (the `/` row shows a sealed snapshot and is
+misleading): `df` reports `Avail 20Gi`, `diskutil` reports `Container Free
+Space: 21.9 GB`. `tmutil listlocalsnapshots /` shows no local snapshots, so
+this is not a purgeable-space artifact and no automatic reclaim will occur.
+`/tmp/ottsel-video/` is empty, so the 2026-09-03/04 inspected frames no longer
+exist; the only retained frames are `docs/evidence/I1/*-2026-08-18.png`.
+
+Cleanup candidates, largest first: `~/GitHub/galaxypad` 77 GiB (other
+project), `~/GitHub/ssbmpad` 18 GiB (other project),
+`~/Library/Developer/CoreSimulator/Devices` 18 GiB, `~/.codex/sessions` 17 GiB,
+`~/GitHub/paperpad` 14 GiB (other project), `~/Library/Caches` 8.8 GiB
+(`BraveSoftware` 1.7 GiB, `bun` 1.6 GiB, `Homebrew` 1.4 GiB, `ms-playwright`
+1.0 GiB, updaters ~1.6 GiB), `ottsel/out` 6.5 GiB (regenerable),
+`~/GitHub/applyguy` 3.1 GiB (other project), `~/GitHub/goldenpad` 2.6 GiB
+ (other project), `~/.codex/worktrees/{13e4,1570,d616}` 2.3 GiB (three stale
+detached Ottsel worktrees at `fd69327`, dirty with R1/I1 leftovers; `1570`'s
+only unique files were landed on `main` on 2026-09-10, so it is now
+disposable), `ottsel/docs/evidence` 889 MiB.
+
+
 ## Current self-audit — 2026-08-21
 
 **Plain status:** macOS now has one fresh bounded stability increment, but it
