@@ -1949,6 +1949,13 @@ void ottsel_ios_run_boot() {
   klisten_init_globals();
   jak1::klisten_init_globals();
   kmemcard_init_globals();
+  // Ottsel BOT44: the desktop runtime calls this at game/runtime.cpp:563, but
+  // the shell's kernel-subset init skipped it.  kprint_init_globals_common()
+  // is what fills ConvertTable with "0123456789abcdef"; without it kitoa()
+  // copies NUL bytes and strend() sees an empty string, so ~D/~X/~B silently
+  // printed nothing while ~A/~S/~F were unaffected.  That defect made every
+  // numeric OTTSEL diagnostic unreadable.
+  kprint_init_globals_common();
   lg::info("OTTSEL BOOT PHASE: kernel globals initialized");
   // Keep raw Jak save banks inside the app-owned durable container. This is
   // the same writable root used by the validated user-data import and avoids

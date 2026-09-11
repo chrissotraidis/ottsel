@@ -3706,3 +3706,12 @@ and flat per-vertex colour). Fresh launch: `-scene-no-sprite` alone leaves every
 rectangle; only `-scene-no-overlay` clears them, and that arm disables sprites
 too (`metal_shell.mm:1592`) - the confound behind BOT43. Gate V1: make the layer
 probes orthogonal. Evidence: `docs/evidence/I1/BOT44-touch-overlay-not-sprite3.md`.
+
+2026-09-11 (BOT44, FIX): the empty numeric prints are root-caused and fixed. The
+iOS kernel-subset init in `src/shell/ios_boot.cpp` never called
+`kprint_init_globals_common()`, so `ConvertTable` stayed zeroed and `~D`/`~X`/`~B`
+wrote NUL bytes while `~A`/`~S`/`~F` worked. The old infinite `loader stall on art
+logo-intro-2` is now gone and fields read `abs=8 rel=8`, `transfers=64 glyphs=0`,
+`master=progress`. START was stolen by a leftover Mac `game/gk` eating the shared
+`/tmp/ottsel-press-*` triggers, and the progress screen does load - only its text
+and logo fail to draw. Evidence: `docs/evidence/I1/BOT44-kprint-and-trigger-race.md`.
