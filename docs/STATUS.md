@@ -3810,3 +3810,30 @@ across consecutive frames (`/tmp/b49/s6_rot.png`). Fault log 0 bytes.
 menu reaches the loading screen (`/100`, `9%`) rather than Village1 gameplay. Gate N1
 (Jak visible and accepting input) remains unproven; the other five entries do not all
 appear in one frame yet.
++
+2026-09-11 (BOT50, REFUTED): the BOT49 framing that the game runs at ~1 fps with a
+~1.01 s fixed wait per frame is wrong. Measured live, `SUBMITSTAT: chain` advances 90
+per ~9-10 s, i.e. ~9.3 chains/s, and the per-frame wait is `gfx_vsync`'s
+`__psynch_cvwait` at ~10 ms, not ~1 s. See docs/evidence/I1/BOT50-perf-baseline.md.
+
+2026-09-11 (BOT50, FIX, measured +28%): per-batch `newBufferWithLength:` was pure
+Simulator XPC (170 + 142 samples, ~18 ms/chain); sky/Direct now borrow from a recycle
+list refilled from the command buffer's completion handler. `cachedMeshTexture:` was
+hashing every byte of every tile every frame (249 samples, 10.2%); the key hash is now
+head-512 plus a 64-byte stride while the hit path still memcmps the retained bytes.
+Live rate rose ~9.3 -> ~12.0 chains/s and the mesh-texture hit rate held at 98.9%.
+
+2026-09-11 (BOT50, FIX, instrument): `++g_vram_decode_evicted` sat outside its
+eviction loop, so it counted invalidations rather than evictions and always equalled
+`changed` (998), which made the CLUT-window split look decisive. Corrected counters
+show ~26.4 decode memos evicted per changed page (evicted 71506 / invalidations 2730).
+
+2026-09-11 (BOT50, FINDING): the decode cache is genuinely ~99.5% hitting
+(hits=1566571), so its ~169 misses/chain are real work on distinct textures rather than
+a cache defect. The 236-sample `access()` cost is the game's own file probes under
+`sp_launch_particles_var`, not the shell's trigger poll.
+
+2026-09-11 (BOT50, STATE): the frame is verified coherent and animated (Village1
+fly-through, screenshot sha256 a78fa32e...); the stray rectangles are the frozen touch
+overlay. Gate N1 is still unproven — Start -> Cross reaches the PC title menu and Cross
+lands on loading `/100` at `9%`. Next: docs/BOT50_PROMPT.md.

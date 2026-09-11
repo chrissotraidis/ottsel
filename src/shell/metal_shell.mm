@@ -290,6 +290,39 @@ class RenderEncoderEndGuard {
 
 }  // namespace
 
+// Key for content-keyed quad texture reuse.  FNV-1a over the pixel words,
+// seeded with the dimensions so equal-size collisions cannot alias.
+static unsigned long long mesh_texture_key(const unsigned char* rgba,
+                                           NSUInteger width,
+                                           NSUInteger height) {
+  const unsigned long long prime = 1099511628211ULL;
+  unsigned long long h = 1469598103934665603ULL;
+  h = (h ^ (unsigned long long)width) * prime;
+  h = (h ^ (unsigned long long)height) * prime;
+  const NSUInteger n = width * height * 4;
+  // Hash the leading 512 bytes in full (tile headers and palettes live there),
+  // then sample the remainder on a 64-byte stride.  The cache only trusts a key
+  // once the retained bytes also memcmp equal, so the stride can cost a cache
+  // miss but never a wrong texture.  Walking every byte of every tile every
+  // frame measured ~11% of the game thread on the Simulator, and re-submitted
+  // tiles are byte-identical, so they collide under any deterministic hash.
+  const NSUInteger head = n < 512 ? n : 512;
+  for (NSUInteger i = 0; i < head; ++i) {
+    h = (h ^ rgba[i]) * prime;
+  }
+  for (NSUInteger i = head; i + 8 <= n; i += 64) {
+    unsigned long long w = 0;
+    memcpy(&w, rgba + i, sizeof(w));
+    h = (h ^ w) * prime;
+  }
+  if (n >= 8) {
+    unsigned long long tail = 0;
+    memcpy(&tail, rgba + n - 8, sizeof(tail));
+    h = (h ^ tail) * prime;
+  }
+  return h;
+}
+
 @interface OttselMetalRenderer : NSObject
 @property (nonatomic, strong) id<MTLDevice> device;
 @property (nonatomic, strong) id<MTLCommandQueue> queue;
@@ -453,6 +486,11 @@ class RenderEncoderEndGuard {
                       width:(NSUInteger)width
                      height:(NSUInteger)height
                       blended:(BOOL)blended;
+- (id<MTLTexture>)cachedMeshTexture:(const unsigned char*)rgba
+                              width:(NSUInteger)width
+                             height:(NSUInteger)height;
+- (id<MTLBuffer>)borrowVertexBufferBytes:(NSUInteger)bytes;
+- (void)recycleVertexBuffersAfter:(id<MTLCommandBuffer>)cb;
 - (void)appendSkyMeshNow:(const OttselMetalSpriteVertex*)vertices
              vertexCount:(NSUInteger)vertexCount
                    rgba:(const unsigned char*)rgba
@@ -506,6 +544,26 @@ class RenderEncoderEndGuard {
   // live in their own store with a later draw position rather than in the
   // pre-world sky batch list.
   OttselMobileSnapshotStore<NativeSpriteBatch> _directBatches;
+  // Content-keyed reuse of the sky/Direct quad textures.  On the Simulator
+  // every -replaceRegion: is a synchronous XPC round-trip to MTLSimDriver, and
+  // the sky bucket re-submits up to 40 byte-identical tiles every frame, so
+  // re-uploading them dominated the game thread's DMA chain.  The retained
+  // pixels make a hit exact rather than hash-trusted.
+  NSMutableDictionary<NSNumber*, id<MTLTexture>>* _meshTexByKey;
+  NSMutableDictionary<NSNumber*, NSData*>* _meshTexPixelsByKey;
+  NSMutableArray<NSNumber*>* _meshTexKeyOrder;
+  NSUInteger _meshTexBytes;
+  unsigned long long _meshTexHits;
+  unsigned long long _meshTexMisses;
+  // Reusable vertex-buffer pool for the per-frame sky/Direct batches.  On the
+  // Simulator every -newBufferWithLength: is a synchronous XPC round-trip to
+  // MTLSimDriver, and the sky/Direct buckets allocate a fresh buffer per batch
+  // per frame.  Buffers are handed out from the free list and only returned
+  // once the command buffer that consumed them has completed, so a recycled
+  // buffer is never overwritten while the GPU may still be reading it.
+  std::mutex _vertexPoolMutex;
+  std::vector<id<MTLBuffer>> _vertexPool;
+  std::vector<id<MTLBuffer>> _vertexPoolInFlight;
   std::vector<OttselMetalTieDraw> _mercDraws;
   std::mutex _mercMutex;
   std::vector<unsigned char> _pendingMercVertices;
@@ -1539,9 +1597,10 @@ class RenderEncoderEndGuard {
         amax = std::max(amax, batch_amax);
       }
       NSLog(@"ottsel metal: SKYFRAME batches=%lu tex1=%lu tex32=%lu tex64=%lu "
-            "texother=%lu alpha0=%lu alphaHalf=%lu amax=%.3f",
+            "texother=%lu alpha0=%lu alphaHalf=%lu amax=%.3f "
+            "meshHits=%llu meshMisses=%llu",
             (unsigned long)sky_batches.size(), tex1, tex32, tex64, tex_other, alpha_zero,
-            alpha_half, amax);
+            alpha_half, amax, _meshTexHits, _meshTexMisses);
     }
   }
   // Desktop bucket order draws opaque background TFRAG before normal TIE.
@@ -1896,10 +1955,12 @@ class RenderEncoderEndGuard {
       NSLog(@"ottsel metal: Direct offscreen completion status=%ld error=%@",
             (long)completed.status, completed.error);
     }];
+    [self recycleVertexBuffersAfter:cb];
     [cb commit];
     return;
   }
   [cb presentDrawable:drawable];
+  [self recycleVertexBuffersAfter:cb];
   [cb commit];
   static unsigned int ottsel_sprite_frame_logs = 0;
   const size_t ottsel_sprite_batches_late = _spriteBatches.snapshot().size();
@@ -1944,6 +2005,70 @@ class RenderEncoderEndGuard {
   }
 }
 
+// Upload a quad texture once per distinct content.  The Simulator turns every
+// -replaceRegion: into a synchronous XPC round-trip, and the sky/Direct buckets
+// re-submit tens of byte-identical tiles per frame, so uploading unconditionally
+// here was the game thread's dominant cost.
+- (id<MTLTexture>)cachedMeshTexture:(const unsigned char*)rgba
+                              width:(NSUInteger)width
+                             height:(NSUInteger)height {
+  if (!rgba || !width || !height || !self.device) {
+    return nil;
+  }
+  static unsigned long long mesh_tex_calls = 0;
+  if ((++mesh_tex_calls % 8192ull) == 0) {
+    lg::info("OTTSELMESHTEX calls={} hits={} misses={} bytes={}", mesh_tex_calls,
+             _meshTexHits, _meshTexMisses, _meshTexBytes);
+  }
+  const NSUInteger bytes = width * height * 4;
+  NSNumber* key = @(mesh_texture_key(rgba, width, height));
+  id<MTLTexture> cached = _meshTexByKey[key];
+  NSData* cached_pixels = _meshTexPixelsByKey[key];
+  if (cached && cached.width == width && cached.height == height &&
+      cached_pixels.length == bytes && memcmp(cached_pixels.bytes, rgba, bytes) == 0) {
+    ++_meshTexHits;
+    return cached;
+  }
+  MTLTextureDescriptor* desc = [MTLTextureDescriptor
+      texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                   width:width
+                                  height:height
+                               mipmapped:NO];
+  desc.usage = MTLTextureUsageShaderRead;
+  id<MTLTexture> texture = [self.device newTextureWithDescriptor:desc];
+  if (!texture) {
+    return nil;
+  }
+  [texture replaceRegion:MTLRegionMake2D(0, 0, width, height)
+             mipmapLevel:0
+               withBytes:rgba
+             bytesPerRow:width * 4];
+  if (!_meshTexByKey) {
+    _meshTexByKey = [[NSMutableDictionary alloc] init];
+    _meshTexPixelsByKey = [[NSMutableDictionary alloc] init];
+    _meshTexKeyOrder = [[NSMutableArray alloc] init];
+  }
+  NSData* previous = _meshTexPixelsByKey[key];
+  if (previous) {
+    _meshTexBytes -= previous.length;
+  } else {
+    [_meshTexKeyOrder addObject:key];
+  }
+  _meshTexByKey[key] = texture;
+  _meshTexPixelsByKey[key] = [NSData dataWithBytes:rgba length:bytes];
+  _meshTexBytes += bytes;
+  ++_meshTexMisses;
+  constexpr NSUInteger kMeshTextureCacheBytes = 32u * 1024u * 1024u;
+  while (_meshTexBytes > kMeshTextureCacheBytes && _meshTexKeyOrder.count > 1) {
+    NSNumber* oldest = _meshTexKeyOrder.firstObject;
+    NSData* old_pixels = _meshTexPixelsByKey[oldest];
+    _meshTexBytes -= old_pixels ? old_pixels.length : 0;
+    [_meshTexByKey removeObjectForKey:oldest];
+    [_meshTexPixelsByKey removeObjectForKey:oldest];
+    [_meshTexKeyOrder removeObjectAtIndex:0];
+  }
+  return texture;
+}
 - (void)appendSkyMeshNow:(const OttselMetalSpriteVertex*)vertices
              vertexCount:(NSUInteger)vertexCount
                    rgba:(const unsigned char*)rgba
@@ -1955,25 +2080,67 @@ class RenderEncoderEndGuard {
       !self.directPipeline) {
     return;
   }
-  MTLTextureDescriptor* desc = [MTLTextureDescriptor
-      texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
-                                   width:width
-                                  height:height
-                               mipmapped:NO];
-  desc.usage = MTLTextureUsageShaderRead;
-  id<MTLTexture> texture = [self.device newTextureWithDescriptor:desc];
-  id<MTLBuffer> vertex_buffer = [self.device
-      newBufferWithBytes:vertices
-                   length:vertexCount * sizeof(OttselMetalSpriteVertex)
-                  options:MTLResourceStorageModeShared];
+  id<MTLTexture> texture = [self cachedMeshTexture:rgba width:width height:height];
+  const NSUInteger vertex_bytes = vertexCount * sizeof(OttselMetalSpriteVertex);
+  id<MTLBuffer> vertex_buffer = [self borrowVertexBufferBytes:vertex_bytes];
   if (!texture || !vertex_buffer) {
     return;
   }
-  [texture replaceRegion:MTLRegionMake2D(0, 0, width, height)
-             mipmapLevel:0
-               withBytes:rgba
-             bytesPerRow:width * 4];
+  memcpy(vertex_buffer.contents, vertices, vertex_bytes);
   _skyBatches.append({vertex_buffer, texture, vertexCount, blended, ta0, false});
+}
+
+// Foreground Direct/GIF batch.  Same upload contract as the sky batch; only the
+- (id<MTLBuffer>)borrowVertexBufferBytes:(NSUInteger)bytes {
+  if (!bytes || !self.device) {
+    return nil;
+  }
+  // Round the request up so a later, slightly larger batch can still reuse a
+  // freed allocation; only reuse a buffer that genuinely fits.
+  const NSUInteger need = (bytes + 255u) & ~(NSUInteger)255u;
+  std::lock_guard<std::mutex> lock(_vertexPoolMutex);
+  for (std::size_t i = 0; i < _vertexPool.size(); ++i) {
+    if (_vertexPool[i].length >= need) {
+      id<MTLBuffer> reused = _vertexPool[i];
+      _vertexPool.erase(_vertexPool.begin() + (std::ptrdiff_t)i);
+      _vertexPoolInFlight.push_back(reused);
+      return reused;
+    }
+  }
+  id<MTLBuffer> fresh = [self.device newBufferWithLength:need
+                                                 options:MTLResourceStorageModeShared];
+  if (fresh) {
+    _vertexPoolInFlight.push_back(fresh);
+  }
+  return fresh;
+}
+
+// Hand every buffer borrowed since the last call back to the free list, but
+// only after the command buffer that consumed them has completed.  A nil
+// command buffer returns them immediately.
+- (void)recycleVertexBuffersAfter:(id<MTLCommandBuffer>)cb {
+  std::vector<id<MTLBuffer>> done;
+  {
+    std::lock_guard<std::mutex> lock(_vertexPoolMutex);
+    if (_vertexPoolInFlight.empty()) {
+      return;
+    }
+    done.swap(_vertexPoolInFlight);
+  }
+  if (!cb) {
+    std::lock_guard<std::mutex> lock(_vertexPoolMutex);
+    for (const id<MTLBuffer>& buffer : done) {
+      _vertexPool.push_back(buffer);
+    }
+    return;
+  }
+  [cb addCompletedHandler:^(id<MTLCommandBuffer> completed) {
+    (void)completed;
+    std::lock_guard<std::mutex> lock(_vertexPoolMutex);
+    for (const id<MTLBuffer>& buffer : done) {
+      _vertexPool.push_back(buffer);
+    }
+  }];
 }
 
 // Foreground Direct/GIF batch.  Same upload contract as the sky batch; only the
@@ -1989,24 +2156,13 @@ class RenderEncoderEndGuard {
       !self.directPipeline) {
     return;
   }
-  MTLTextureDescriptor* desc = [MTLTextureDescriptor
-      texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
-                                   width:width
-                                  height:height
-                               mipmapped:NO];
-  desc.usage = MTLTextureUsageShaderRead;
-  id<MTLTexture> texture = [self.device newTextureWithDescriptor:desc];
-  id<MTLBuffer> vertex_buffer = [self.device
-      newBufferWithBytes:vertices
-                   length:vertexCount * sizeof(OttselMetalSpriteVertex)
-                  options:MTLResourceStorageModeShared];
+  id<MTLTexture> texture = [self cachedMeshTexture:rgba width:width height:height];
+  const NSUInteger vertex_bytes = vertexCount * sizeof(OttselMetalSpriteVertex);
+  id<MTLBuffer> vertex_buffer = [self borrowVertexBufferBytes:vertex_bytes];
   if (!texture || !vertex_buffer) {
     return;
   }
-  [texture replaceRegion:MTLRegionMake2D(0, 0, width, height)
-             mipmapLevel:0
-               withBytes:rgba
-             bytesPerRow:width * 4];
+  memcpy(vertex_buffer.contents, vertices, vertex_bytes);
   _directBatches.append({vertex_buffer, texture, vertexCount, blended, ta0, false});
 }
 

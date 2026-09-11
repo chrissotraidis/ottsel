@@ -32,10 +32,28 @@ constexpr bool ottsel_mobile_is_jak1_merc_ledger_bucket(unsigned int bucket_id) 
 }
 
 // Native PC_PORT packets for the mobile actor/camera path are bounded to the
-// same Jak 1 bucket neighborhood used by the Merc ledger. Jump directly to
-// those bucket windows instead of linearly decoding the rest of the chain.
+// same Jak 1 bucket neighborhood used by the Merc ledger, plus the buckets
+// that own texture pages. On a PC_PORT build upload-vram-pages replaces the
+// PS2 VRAM upload with a 16-byte {page, mode} packet (texture.gc:958), so the
+// texture buckets carry the level's resident uploads and the walker has to
+// visit them. Jump directly to those bucket windows instead of linearly
+// decoding the rest of the chain.
+constexpr std::array<unsigned int, 11> kOttselJak1TextureUploadBuckets = {
+    5, 12, 19, 25, 31, 38, 48, 51, 57, 60, 65,
+};
+
+constexpr bool ottsel_mobile_is_jak1_texture_upload_bucket(unsigned int bucket_id) {
+  for (const auto candidate : kOttselJak1TextureUploadBuckets) {
+    if (candidate == bucket_id) {
+      return true;
+    }
+  }
+  return false;
+}
+
 constexpr bool ottsel_mobile_jak1_pc_port_bucket_candidate(unsigned int bucket_id) {
-  return ottsel_mobile_is_jak1_merc_ledger_bucket(bucket_id);
+  return ottsel_mobile_is_jak1_merc_ledger_bucket(bucket_id) ||
+         ottsel_mobile_is_jak1_texture_upload_bucket(bucket_id);
 }
 
 // The submitted Jak 1 chain begins with one CALL qword. Bucket zero starts at

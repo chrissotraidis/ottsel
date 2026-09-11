@@ -161,7 +161,20 @@ void ottsel_metal_append_sky_mesh_n(OttselMetal* m,
                                     const unsigned char* rgba,
                                     unsigned int width,
                                     unsigned int height,
-                                    int blended);
+                                    int blended,
+                                    unsigned char ta0);
+
+// Append foreground Direct/GIF geometry (title logo, "PRESS START", debug and
+// menu text).  Drawn after the world and after sprites, matching the desktop
+// DirectRenderer's ordering for the debug/text bucket.
+void ottsel_metal_append_direct_mesh_n(OttselMetal* m,
+                                       const OttselMetalSpriteVertex* vertices,
+                                       unsigned int vertex_count,
+                                       const unsigned char* rgba,
+                                       unsigned int width,
+                                       unsigned int height,
+                                       int blended,
+                                       unsigned char ta0);
 
 // T1 first increment: draw the visible touch overlay above the native scene.
 // The shared ShellPadInput seam remains the input owner; this only supplies

@@ -55,6 +55,9 @@ std::vector<std::string> g_lines;
 size_t g_file_pos = 0;
 bool g_quit = false;
 int g_frame = 0;
+// Timestamp at the top of the previous main-loop iteration.  Used to turn the
+// old unconditional SDL_Delay(16) into a 60 Hz budget cap (see the loop tail).
+Uint64 g_loop_start_ns = 0;
 SDL_Gamepad* g_gamepad = nullptr;
 SDL_JoystickID g_gamepad_id = 0;
 
@@ -1101,7 +1104,20 @@ int main(int argc, char** argv) {
       SDL_UpdateWindowSurface(g_win);
     }
     ottsel_metal_gfx_signal_vsync();
-    SDL_Delay(16);
+    // This used to be an unconditional SDL_Delay(16), which pinned the loop
+    // (and therefore gfx_vsync's release rate) to a fixed ~23 Hz no matter how
+    // long present actually took.  Pacing is already the job of gfx_vsync, so
+    // treat this as a cap instead of a delay: sleep only the remainder of a
+    // 60 Hz budget and let a slow present take as long as it needs.
+    if (g_loop_start_ns) {
+      const Uint64 budget_ns = 1000000000ull / 60ull;
+      const Uint64 now_ns = SDL_GetTicksNS();
+      const Uint64 elapsed_ns = now_ns - g_loop_start_ns;
+      if (elapsed_ns < budget_ns) {
+        SDL_DelayNS(budget_ns - elapsed_ns);
+      }
+    }
+    g_loop_start_ns = SDL_GetTicksNS();
   }
 
   // ask the dispatcher loop to stop (MasterExit lives in the runtime lib)

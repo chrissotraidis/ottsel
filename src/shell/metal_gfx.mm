@@ -16,6 +16,7 @@
 #include <cmath>
 #include <condition_variable>
 #include <cstring>
+#include <cstdio>
 #include <memory>
 #include <mutex>
 #include <numeric>
@@ -159,11 +160,21 @@ struct MobileDirectTrace {
   int draw_start = 0;
 };
 MobileDirectTrace g_mobile_direct_trace;
+// Decode-time packet/IR sample logging is a diagnostic, not product output.
+// The native Direct/GIF consumer runs every vsync, so leaving these samples
+// unconditional floods the runtime log and pays string building per glyph
+// packet per frame.  They are opt-in via the ottsel-trace-mobile-direct file.
+bool g_mobile_direct_verbose = false;
 u32 g_mobile_chain_no = 0;
 u32& g_chain_no = g_mobile_chain_no;
 bool g_mobile_generic_probe_pending = false;
 bool g_mobile_merc_trace = false;
 bool g_mobile_merc_clip_ledger = false;
+bool g_mobile_merc_setup_probe = false;
+bool g_mobile_merc_setup_valid = false;
+float g_mobile_merc_setup_persp[16] = {};
+float g_mobile_merc_setup_hvdf[4] = {};
+float g_mobile_merc_setup_fog[4] = {};
 constexpr u32 kMobileDirectTraceChains = 900;
 
 // CPU-side level data shared with the desktop PC renderer.  iOS keeps this
@@ -200,6 +211,12 @@ void log_mobile_eichar_village_clip(const OttselPcPortData& camera);
 
 OttselPcPortData g_mobile_camera{};
 u64 g_mobile_camera_packet_count = 0;
+// BOT43 route probe: separate "a camera-sized PC_PORT packet reached the
+// handler" from "the handler accepted it", because the level-name guard sits
+// before the trace trigger and silently swallows the whole family.
+u64 g_ottsel_camera_entry_total = 0;
+u64 g_ottsel_camera_reject_total = 0;
+u32 g_ottsel_camera_entry_logs = 0;
 u32 g_mobile_camera_last_chain = 0;
 u32 g_mobile_camera_last_transfer = 0;
 std::string g_mobile_camera_level;
@@ -208,6 +225,23 @@ bool g_mobile_camera_transition_trace = false;
 u32 g_mobile_camera_transition_trace_count = 0;
 std::vector<std::array<float, 3>> g_mobile_eichar_clip_vertices;
 u32 g_mobile_eichar_village_clip_logs = 0;
+bool g_mobile_merc_steady_probe = false;
+u32 g_mobile_merc_steady_probe_count = 0;
+u32 g_mobile_merc_submit_total = 0;
+std::unordered_map<std::string, u32> g_mobile_merc_name_counts;
+u32 g_mobile_eichar_submit_total = 0;
+// BOT50: separates "the game stopped sending the player merc" from "the merc
+// converts to empty geometry" -- the submit total alone cannot tell them apart.
+u32 g_mobile_eichar_attempt_total = 0;
+u32 g_mobile_eichar_clip_chain = 0;
+bool g_mobile_eichar_clip_probe = false;
+u32 g_mobile_eichar_clip_probe_logs = 0;
+// Gate A observability: the per-primitive and per-packed-tag dumps were
+// bounded "per chain", but the decoder that owns those counters is reset on
+// every bucket, so the bound restarted continuously and the runtime log grew
+// ~30 MB/min.  Make them default-off and give them one process-wide budget,
+// armed by a self-unlinking trigger, like every other probe in this file.
+u32 g_ottsel_prim_trace_budget = 0;
 std::string g_mobile_tie_level;
 u32 g_mobile_tie_geo = 0;
 u32 g_mobile_tie_tree = 0;
@@ -1405,7 +1439,19 @@ void capture_mobile_camera(const void* packet, size_t size) {
   memcpy(&candidate, packet, sizeof(candidate));
   candidate.level_name[sizeof(candidate.level_name) - 1] = '\0';
   const std::string level(candidate.level_name);
+  ++g_ottsel_camera_entry_total;
+  if (g_ottsel_camera_entry_logs < 6) {
+    ++g_ottsel_camera_entry_logs;
+    lg::info("OTTSEL CAMERA ENTRY: accepted-level-candidate n={} level='{}' known={}",
+             g_ottsel_camera_entry_total, level, g_mobile_levels.contains(level));
+  }
   if (level.empty() || !g_mobile_levels.contains(level)) {
+    ++g_ottsel_camera_reject_total;
+    if (g_ottsel_camera_entry_logs < 12) {
+      ++g_ottsel_camera_entry_logs;
+      lg::info("OTTSEL CAMERA ENTRY: rejected n={} level='{}' known=false",
+               g_ottsel_camera_entry_total, level);
+    }
     return;
   }
   if (!g_mobile_camera_transition_trace) {
@@ -1458,8 +1504,38 @@ void capture_mobile_camera(const void* packet, size_t size) {
   if (ottsel_mobile_scene_snapshot_owner_is_packet_level(level == g_mobile_tie_level)) {
     g_mobile_camera = candidate;
     g_mobile_camera_level = level;
-    if (level == "village1" && g_mobile_eichar_village_clip_logs < 32) {
+    if (!g_mobile_merc_steady_probe) {
+      const std::string trigger = ottsel_ios_writable_dir() + "ottsel-trace-merc-steady";
+      if (access(trigger.c_str(), F_OK) == 0) {
+        unlink(trigger.c_str());
+        g_mobile_merc_steady_probe = true;
+        g_mobile_merc_steady_probe_count = 0;
+        lg::info("OTTSEL MERC: steady-state clip probe armed");
+      }
+    }
+    if (!g_mobile_eichar_clip_probe) {
+      const std::string eichar_trigger =
+          ottsel_ios_writable_dir() + "ottsel-trace-eichar-clip";
+      if (access(eichar_trigger.c_str(), F_OK) == 0) {
+        unlink(eichar_trigger.c_str());
+        g_mobile_eichar_clip_probe = true;
+        g_mobile_eichar_clip_probe_logs = 0;
+        lg::info("OTTSEL MERC: eichar clip probe armed (level='{}')", level);
+      }
+    }
+    const bool eichar_clip_now =
+        g_mobile_eichar_clip_probe && g_mobile_eichar_clip_probe_logs < 12;
+    if (eichar_clip_now ||
+        (level == "village1" &&
+         (g_mobile_eichar_village_clip_logs < 32 ||
+          (g_mobile_merc_steady_probe && g_mobile_merc_steady_probe_count < 6)))) {
       log_mobile_eichar_village_clip(candidate);
+      if (g_mobile_merc_steady_probe) {
+        ++g_mobile_merc_steady_probe_count;
+      }
+      if (eichar_clip_now) {
+        ++g_mobile_eichar_clip_probe_logs;
+      }
     }
   }
   if (finite && level == g_mobile_tie_level) {
@@ -1551,7 +1627,20 @@ bool capture_mobile_merc(const DmaTransfer& setup) {
       return false;
     }
   }
-  const std::string name((const char*)setup.data, name_len);
+ const std::string name((const char*)setup.data, name_len);
+  ++g_mobile_merc_name_counts[name];
+  {
+    const std::string trigger = ottsel_ios_writable_dir() + "ottsel-trace-merc-names";
+    if (access(trigger.c_str(), F_OK) == 0) {
+      unlink(trigger.c_str());
+      for (const auto& [probe_name, probe_count] : g_mobile_merc_name_counts) {
+        lg::info("OTTSEL MERC NAMES: '{}' packets={}", probe_name, probe_count);
+      }
+      lg::info("OTTSEL MERC NAMES: distinct={} submits={} eichar-submits={}",
+               g_mobile_merc_name_counts.size(), g_mobile_merc_submit_total,
+               g_mobile_eichar_submit_total);
+    }
+  }
 
   const tfrag3::Level* level = nullptr;
   const tfrag3::MercModel* model = nullptr;
@@ -1661,6 +1750,8 @@ bool capture_mobile_merc(const DmaTransfer& setup) {
     output.color_index = 0;
   }
   if (name == "eichar-lod0") {
+    ++g_mobile_eichar_attempt_total;
+    g_mobile_eichar_clip_chain = g_chain_no;
     g_mobile_eichar_clip_vertices.clear();
     g_mobile_eichar_clip_vertices.reserve(vertices.size());
     float source_min[3] = {std::numeric_limits<float>::infinity(),
@@ -1773,10 +1864,25 @@ bool capture_mobile_merc(const DmaTransfer& setup) {
         ++visible;
       }
     }
+    float setup_persp_delta = 0.f;
+    float setup_hvdf_delta = 0.f;
+    if (g_mobile_merc_setup_valid) {
+      const float* cam_persp = &g_mobile_camera.perspective[0][0];
+      for (int i = 0; i < 16; ++i) {
+        setup_persp_delta =
+            std::max(setup_persp_delta, std::abs(g_mobile_merc_setup_persp[i] - cam_persp[i]));
+      }
+      for (int i = 0; i < 4; ++i) {
+        setup_hvdf_delta = std::max(
+            setup_hvdf_delta, std::abs(g_mobile_merc_setup_hvdf[i] - g_mobile_camera.hvdf_off[i]));
+      }
+    }
     lg::info("OTTSEL MERC: clip ledger model='{}' level='{}' vertices={} finite={} visible={} "
-             "clip-x=({}, {}) clip-y=({}, {}) clip-z=({}, {}) camera-level='{}'",
+             "clip-x=({}, {}) clip-y=({}, {}) clip-z=({}, {}) camera-level='{}' "
+             "setup-valid={} setup-delta-persp={} setup-delta-hvdf={}",
              name, level->level_name, vertices.size(), finite, visible, min_x, max_x, min_y, max_y,
-             min_z, max_z, g_mobile_camera_level);
+             min_z, max_z, g_mobile_camera_level, g_mobile_merc_setup_valid, setup_persp_delta,
+             setup_hvdf_delta);
     g_mobile_merc_clip_ledger = false;
   }
 
@@ -1860,7 +1966,84 @@ bool capture_mobile_merc(const DmaTransfer& setup) {
              name, model_level_key, slot_count, effect_count, vertices.size(), indices.size() / 3,
              draws.size());
   }
-  return true;
+  ++g_mobile_merc_submit_total;
+  if (name == "eichar-lod0") {
+    ++g_mobile_eichar_submit_total;
+  }
+ return true;
+}
+
+// Diagnostic-only bounded probe. The Merc renderer's camera lives in the Merc
+// setup DMA low-memory block (upstream Merc2::handle_setup_dma memcpy's it from
+// first.data + 16), not in the scene camera packet. The native walk never read
+// that transfer, so merc draws borrowed the scene packet's perspective. This
+// dumps the packet's own block next to the cached scene camera packet so the
+// two can be compared directly.
+void capture_mobile_merc_setup(const DmaTransfer& setup) {
+  // LowMemory starts one quadword into the setup packet:
+  // tri_strip_tag[16], ad_gif_tag[16], hvdf_offset, perspective[4], fog.
+  if (!setup.data || setup.size_bytes < 16 + 0x80 + 16) {
+    return;
+  }
+  const float* low = (const float*)(setup.data + 16);
+  const float* hvdf = low + 8;
+  const float* persp = low + 12;
+  const float* fog = low + 28;
+  memcpy(g_mobile_merc_setup_hvdf, hvdf, sizeof(g_mobile_merc_setup_hvdf));
+  memcpy(g_mobile_merc_setup_persp, persp, sizeof(g_mobile_merc_setup_persp));
+  memcpy(g_mobile_merc_setup_fog, fog, sizeof(g_mobile_merc_setup_fog));
+  g_mobile_merc_setup_valid = true;
+  if (!g_mobile_merc_setup_probe) {
+    const std::string trigger = ottsel_ios_writable_dir() + "ottsel-trace-merc-setup";
+    if (access(trigger.c_str(), F_OK) != 0) {
+      return;
+    }
+    unlink(trigger.c_str());
+    g_mobile_merc_setup_probe = true;
+    lg::info("OTTSEL MERC SETUP: low-memory probe armed");
+  }
+  static float last_logged[16] = {};
+  float change = 0.f;
+  for (int i = 0; i < 16; ++i) {
+    change = std::max(change, std::abs(persp[i] - last_logged[i]));
+  }
+  if (change < 1e-5f) {
+    return;
+  }
+  memcpy(last_logged, persp, sizeof(last_logged));
+  static u32 probe_count = 0;
+  if (++probe_count > 24) {
+    return;
+  }
+  const auto& cam = g_mobile_camera;
+  const float* cam_persp = &cam.perspective[0][0];
+  float persp_delta = 0.f;
+  float hvdf_delta = 0.f;
+  float fog_delta = 0.f;
+  for (int i = 0; i < 16; ++i) {
+    persp_delta = std::max(persp_delta, std::abs(persp[i] - cam_persp[i]));
+  }
+  for (int i = 0; i < 4; ++i) {
+    hvdf_delta = std::max(hvdf_delta, std::abs(hvdf[i] - cam.hvdf_off[i]));
+    fog_delta = std::max(fog_delta, std::abs(fog[i] - cam.fog[i]));
+  }
+  lg::info("OTTSEL MERC SETUP[{}]: size={} hvdf=({},{},{},{}) fog=({},{},{},{}) "
+           "persp0=({},{},{},{}) persp1=({},{},{},{}) persp2=({},{},{},{}) persp3=({},{},{},{})",
+           probe_count, setup.size_bytes, hvdf[0], hvdf[1], hvdf[2], hvdf[3], fog[0], fog[1],
+           fog[2], fog[3], persp[0], persp[1], persp[2], persp[3], persp[4], persp[5], persp[6],
+           persp[7], persp[8], persp[9], persp[10], persp[11], persp[12], persp[13], persp[14],
+           persp[15]);
+  lg::info("OTTSEL MERC SETUP[{}]: scene level='{}' hvdf=({},{},{},{}) fog=({},{},{}) "
+           "persp0=({},{},{},{}) persp1=({},{},{},{}) persp2=({},{},{},{}) persp3=({},{},{},{}) "
+           "delta-persp={} delta-hvdf={} delta-fog={}",
+           probe_count, g_mobile_camera_level, cam.hvdf_off[0], cam.hvdf_off[1], cam.hvdf_off[2],
+           cam.hvdf_off[3], cam.fog[0], cam.fog[1], cam.fog[2], cam.perspective[0][0],
+           cam.perspective[0][1], cam.perspective[0][2], cam.perspective[0][3],
+           cam.perspective[1][0], cam.perspective[1][1], cam.perspective[1][2],
+           cam.perspective[1][3], cam.perspective[2][0], cam.perspective[2][1],
+           cam.perspective[2][2], cam.perspective[2][3], cam.perspective[3][0],
+           cam.perspective[3][1], cam.perspective[3][2], cam.perspective[3][3], persp_delta,
+           hvdf_delta, fog_delta);
 }
 
 void log_mobile_eichar_village_clip(const OttselPcPortData& camera) {
@@ -1908,10 +2091,17 @@ void log_mobile_eichar_village_clip(const OttselPcPortData& camera) {
       ++visible;
     }
   }
-  lg::info("OTTSEL MERC: Village1 clip ledger vertices={} finite={} visible={} clip-x=({}, {}) "
-           "clip-y=({}, {}) clip-z=({}, {})",
-           g_mobile_eichar_clip_vertices.size(), finite, visible, min_x, max_x, min_y, max_y,
-           min_z, max_z);
+  lg::info("OTTSEL MERC: clip camera level='{}' p00={} p11={} p22={} p32={} p23={} hvdf2={} fog0={} "
+           "merc-submits={} eichar-submits={} steady-sample={}",
+           camera.level_name, camera.perspective[0][0], camera.perspective[1][1],
+           camera.perspective[2][2], camera.perspective[3][2], camera.perspective[2][3],
+           camera.hvdf_off[2], camera.fog[0], g_mobile_merc_submit_total,
+           g_mobile_eichar_submit_total, g_mobile_merc_steady_probe_count);
+  lg::info("OTTSEL MERC: clip ledger chain={} attempts={} clip-chain={} vertices={} finite={} "
+          "visible={} clip-x=({}, {}) clip-y=({}, {}) clip-z=({}, {})",
+          g_chain_no, g_mobile_eichar_attempt_total, g_mobile_eichar_clip_chain,
+          g_mobile_eichar_clip_vertices.size(), finite, visible, min_x, max_x, min_y, max_y,
+          min_z, max_z);
 }
 
 // Fake GS VRAM (4 MB).  The game stores every texture pre-scrambled so it can
@@ -1920,6 +2110,41 @@ void log_mobile_eichar_village_clip(const OttselPcPortData& camera) {
 // gs-trxreg rrw=128 rrh=size/128).  We replay that placement here, then
 // un-swizzle with the texture's own format (download_rgba8888-style).
 std::vector<u8> g_vram(4 * 1024 * 1024);
+
+// Every runtime texture decode below is a pure read of this mirror, so a
+// decode is fully described by its own arguments plus the mirror's contents.
+// The sprite atlas and the per-page upload were re-decoding identical images
+// every frame (the profiler put ~48% of the game thread in
+// download_texture_rgba8888), so decodes are memoised against this epoch.
+// Only vram_place_ct32 and the generated-CLUT fixture write the mirror, and
+// both bump it, which makes the epoch an exact - not heuristic - validity
+// stamp for a cached image.
+u64 g_vram_epoch = 1;
+u64 g_vram_place_calls = 0;
+u64 g_vram_place_changed = 0;
+
+// Fake-VRAM change tracking for the memoised decode cache (defined further
+// down).  vram_place_ct32 is the only writer of the mirror and it writes one
+// tracked run of bytes; the ROM-free generated-CLUT fixture writes a few
+// scattered words and invalidates everything.  A decoded image depends only on
+// the bytes it actually read, so a write outside an entry's own read range
+// cannot have changed that entry.
+void vram_decode_invalidate_range(u32 lo, u32 hi);
+void vram_decode_invalidate_all();
+u64 g_vram_decode_evicted = 0;
+// Separate from g_vram_decode_evicted: that counts memos dropped by a
+// range invalidation, while this counts how many invalidations ran at all.
+// Conflating them previously made "evicted" equal to "changed" and hid
+// whether a changed page dropped one memo or every memo.
+u64 g_vram_decode_invalidations = 0;
+// The decoder publishes the byte window it touched through these, so a decode
+// memo can record exactly which mirror bytes it depends on.
+thread_local u32 g_last_decode_read_lo = 0;
+thread_local u32 g_last_decode_read_hi = 0;
+// The palette window is published separately from the texel window so that a
+// texel upload cannot invalidate a decode whose palette never moved.
+thread_local u32 g_last_decode_clut_lo = 0;
+thread_local u32 g_last_decode_clut_hi = 0;
 
 struct DirectTextureMetadata {
   u32 width = 0;
@@ -1948,19 +2173,45 @@ u64 direct_texture_cache_key(u32 destination, u32 psm) {
 // exactly as the GS would for a PSMCT32 IMAGE transfer 128 px wide.
 void vram_place_ct32(const u8* data, u32 seg_dest_words, u32 size_words) {
   u32 words = std::min(size_words, 1024u * 1024u);  // 4 MB / 4 bytes
+  bool changed = false;
+  u32 change_lo = 0xffffffffu;
+  u32 change_hi = 0;
+  ++g_vram_place_calls;
   for (u32 i = 0; i < words; i++) {
     u32 x = i % 128;
     u32 y = i / 128;
     u32 addr = psmct32_addr(x, y, 128) + seg_dest_words * 4;
     if (addr + 4 <= g_vram.size()) {
-      memcpy(g_vram.data() + addr, data + i * 4, 4);
+      u8* dst = g_vram.data() + addr;
+      const u8* src = data + i * 4;
+      if (memcmp(dst, src, 4) != 0) {
+        memcpy(dst, src, 4);
+        changed = true;
+        if (addr < change_lo) {
+          change_lo = addr;
+        }
+        if (addr + 4 > change_hi) {
+          change_hi = addr + 4;
+        }
+      }
     }
+  }
+  // The title re-uploads the same texture pages every frame.  Bumping the
+  // epoch for a write that changed nothing would invalidate every memoised
+  // decode in g_vram_decode_cache on every frame, which is exactly what
+  // happened before: the decode cache never produced a single hit.  Only a
+  // write that actually altered the mirror can invalidate a decode.
+  if (changed) {
+    ++g_vram_place_changed;
+    vram_decode_invalidate_range(change_lo, change_hi);
   }
 }
 
 // Un-swizzle a texture from fake VRAM into linear RGBA8888 (top-left origin).
 // Mirrors common/texture/TextureConverter.cpp download_rgba8888.
-bool download_texture_rgba8888(u8* result,
+// This is the raw, uncached decode.  Callers go through
+// download_texture_cached or the download_texture_rgba8888 wrapper below.
+bool decode_texture_pixels_raw(u8* result,
                                u32 vram_addr,
                                u32 goal_tex_width,
                                u32 w,
@@ -1969,10 +2220,53 @@ bool download_texture_rgba8888(u8* result,
                                u32 clut_psm,
                                u32 clut_vram_addr) {
   u32 out_offset = 0;
+  u32 read_lo = 0xffffffffu;
+  u32 read_hi = 0;
+  // A CLUT lives in a different part of VRAM than the texel body it indexes
+  // (Jak 1 parks palettes megabytes away from their pages), so the two are
+  // published as separate windows.  Folding them into one bounding box made
+  // every 16 KB page upload overlap the palette window of every cached CLUT
+  // texture, which evicted and re-decoded the whole set on every chain.
+  u32 clut_read_lo = 0xffffffffu;
+  u32 clut_read_hi = 0;
+  bool reading_clut = false;
+  // Publish the touched mirror window on every return path, including the
+  // early ones, so the memo in download_texture_cached can record exactly the
+  // bytes this image depends on.
+  struct ReadScope {
+    const u32& lo;
+    const u32& hi;
+    const u32& clut_lo;
+    const u32& clut_hi;
+    ~ReadScope() {
+      g_last_decode_read_lo = lo;
+      g_last_decode_read_hi = hi;
+      g_last_decode_clut_lo = clut_lo;
+      g_last_decode_clut_hi = clut_hi;
+    }
+  } read_scope{read_lo, read_hi, clut_read_lo, clut_read_hi};
+  auto note_read = [&](u32 addr, u32 bytes) {
+    if (reading_clut) {
+      if (addr < clut_read_lo) {
+        clut_read_lo = addr;
+      }
+      if (addr + bytes > clut_read_hi) {
+        clut_read_hi = addr + bytes;
+      }
+      return;
+    }
+    if (addr < read_lo) {
+      read_lo = addr;
+    }
+    if (addr + bytes > read_hi) {
+      read_hi = addr + bytes;
+    }
+  };
   auto get32 = [&](u32 addr) -> u32 {
     if (addr + 4 > g_vram.size()) {
       return 0;
     }
+    note_read(addr, 4);
     u32 v = 0;
     memcpy(&v, g_vram.data() + addr, 4);
     return v;
@@ -1981,6 +2275,7 @@ bool download_texture_rgba8888(u8* result,
     if (addr + 2 > g_vram.size()) {
       return 0;
     }
+    note_read(addr, 2);
     u16 v = 0;
     memcpy(&v, g_vram.data() + addr, 2);
     return v;
@@ -1989,7 +2284,21 @@ bool download_texture_rgba8888(u8* result,
     if (addr >= g_vram.size()) {
       return 0;
     }
+    note_read(addr, 1);
     return g_vram[addr];
+  };
+  // Palette fetches, recorded in the CLUT window rather than the texel window.
+  auto get_clut32 = [&](u32 addr) -> u32 {
+    reading_clut = true;
+    u32 v = get32(addr);
+    reading_clut = false;
+    return v;
+  };
+  auto get_clut16 = [&](u32 addr) -> u16 {
+    reading_clut = true;
+    u16 v = get16(addr);
+    reading_clut = false;
+    return v;
   };
   if (psm == 0) {  // PSMCT32, no clut.
     int read_width = 64 * goal_tex_width;
@@ -2024,7 +2333,7 @@ bool download_texture_rgba8888(u8* result,
         clx += off_in_chunk;
         u32 clut_addr = psmct32_addr(clx, cly, 64) + clut_vram_addr * 256;
         u32 clut_value =
-            (clut_psm == 0) ? get32(clut_addr) : (u32)rgba16_to_rgba32(get16(clut_addr));
+            (clut_psm == 0) ? get_clut32(clut_addr) : (u32)rgba16_to_rgba32(get_clut16(clut_addr));
         memcpy(result + out_offset, &clut_value, 4);
         out_offset += 4;
       }
@@ -2047,7 +2356,7 @@ bool download_texture_rgba8888(u8* result,
         u32 clut_addr = (clut_psm == 0) ? psmct32_addr(clx, cly, 64) : psmct16_addr(clx, cly, 64);
         clut_addr += clut_vram_addr * 256;
         u32 clut_value =
-            (clut_psm == 0) ? get32(clut_addr) : (u32)rgba16_to_rgba32(get16(clut_addr));
+            (clut_psm == 0) ? get_clut32(clut_addr) : (u32)rgba16_to_rgba32(get_clut16(clut_addr));
         memcpy(result + out_offset, &clut_value, 4);
         out_offset += 4;
       }
@@ -2065,7 +2374,7 @@ bool download_texture_rgba8888(u8* result,
         u8 packed = get8(texel_addr + 3);
         u8 value = (psm == 0x24) ? (packed & 0x0f) : (packed >> 4);
         u32 clut_addr = psmct32_addr(value & 0x7, value >> 3, 64) + clut_vram_addr * 256;
-        u32 clut_value = (clut_psm == 0) ? get32(clut_addr) : (u32)rgba16_to_rgba32(get16(clut_addr));
+        u32 clut_value = (clut_psm == 0) ? get_clut32(clut_addr) : (u32)rgba16_to_rgba32(get_clut16(clut_addr));
         memcpy(result + out_offset, &clut_value, 4);
         out_offset += 4;
       }
@@ -2085,6 +2394,190 @@ bool download_texture_rgba8888(u8* result,
     return true;
   }
   return false;
+}
+
+// Memoised texture decode.  Keyed on the exact decode arguments and stamped
+// with the fake-VRAM epoch, so a hit is provably byte-identical to a fresh
+// decode: the mirror cannot change without bumping the stamp.  Decoded images
+// are shared, not copied, which is what makes rebuilding the sprite atlas
+// affordable.
+struct VramDecodeEntry {
+  u32 vram_addr = 0;
+  u32 w64 = 0;
+  u32 w = 0;
+  u32 h = 0;
+  u32 psm = 0;
+  u32 clut_psm = 0;
+  u32 clut_addr = 0;
+  u64 epoch = 0;
+  // Byte windows of the mirror this image was decoded from: the texel body and
+  // the palette it indexed, kept apart because the two are far apart in VRAM.
+  // Because the decode key fixes every input, the windows are deterministic for
+  // the key, so they never need refreshing while the entry lives.
+  u32 read_lo = 0;
+  u32 read_hi = 0;
+  u32 clut_read_lo = 0;
+  u32 clut_read_hi = 0;
+  std::shared_ptr<std::vector<u8>> rgba;
+};
+
+std::unordered_map<u64, VramDecodeEntry> g_vram_decode_cache;
+size_t g_vram_decode_cache_bytes = 0;
+u64 g_vram_decode_hits = 0;
+u64 g_vram_decode_misses = 0;
+
+// Drop only the memos whose own source bytes overlap [lo, hi).  This is what
+// lets a texture upload keep the rest of the scene's decodes alive: a full
+// flush per upload is what made the memo useless during level streaming.
+void vram_decode_invalidate_range(u32 lo, u32 hi) {
+  if (lo >= hi || g_vram_decode_cache.empty()) {
+    return;
+  }
+  for (auto it = g_vram_decode_cache.begin(); it != g_vram_decode_cache.end();) {
+    const VramDecodeEntry& entry = it->second;
+    const bool texel_overlap = entry.read_lo < hi && lo < entry.read_hi;
+    const bool clut_overlap = entry.clut_read_lo < hi && lo < entry.clut_read_hi;
+    if (texel_overlap || clut_overlap) {
+      g_vram_decode_cache_bytes -= entry.rgba ? entry.rgba->size() : 0;
+      it = g_vram_decode_cache.erase(it);
+      ++g_vram_decode_evicted;
+    } else {
+      ++it;
+    }
+  }
+  ++g_vram_decode_invalidations;
+}
+
+// Raw writes that are not routed through vram_place_ct32 (the ROM-free
+// generated-CLUT fixture) cannot be range-scoped, so they still drop everything.
+void vram_decode_invalidate_all() {
+  g_vram_decode_cache.clear();
+  g_vram_decode_cache_bytes = 0;
+  ++g_vram_epoch;
+}
+
+// Cheap falsifiable instrument: if the epoch is doing its job, hits should
+// dominate after the first frame and the decode CPU should collapse.  A log
+// line every 4096 lookups makes a regression (hits stuck at zero) obvious
+// without flooding the simulator log.
+void vram_decode_cache_tick() {
+  static u64 lookups = 0;
+  if (++lookups % 4096u == 0) {
+    // lg::info, not NSLog: the engine log is the data container's
+    // ottsel-runtime.log, and NSLog from this process never reaches the
+    // unified log on the Simulator, so an NSLog instrument is unreadable.
+    lg::info("OTTSELVRAM hits={} misses={} bytes={} epoch={} places={} changed={} "
+             "evicted={} invalidations={}",
+             g_vram_decode_hits, g_vram_decode_misses, g_vram_decode_cache_bytes,
+             g_vram_epoch, g_vram_place_calls, g_vram_place_changed,
+             g_vram_decode_evicted, g_vram_decode_invalidations);
+  }
+}
+
+u64 vram_decode_key(u32 vram_addr, u32 w64, u32 w, u32 h, u32 psm, u32 clut_psm,
+                    u32 clut_addr) {
+  u64 key = 1469598103934665603ull;
+  const u32 fields[7] = {vram_addr, w64, w, h, psm, clut_psm, clut_addr};
+  for (u32 field : fields) {
+    key = (key ^ field) * 1099511628211ull;
+  }
+  return key;
+}
+
+std::shared_ptr<std::vector<u8>> download_texture_cached(u32 vram_addr, u32 w64, u32 w,
+                                                        u32 h, u32 psm, u32 clut_psm,
+                                                        u32 clut_addr) {
+  if (w == 0 || h == 0 || w > 2048 || h > 2048) {
+    return nullptr;
+  }
+  const u64 key = vram_decode_key(vram_addr, w64, w, h, psm, clut_psm, clut_addr);
+  const auto hit = g_vram_decode_cache.find(key);
+  if (hit != g_vram_decode_cache.end() && hit->second.epoch == g_vram_epoch &&
+      hit->second.w == w && hit->second.h == h && hit->second.psm == psm &&
+      hit->second.clut_psm == clut_psm && hit->second.clut_addr == clut_addr &&
+      hit->second.vram_addr == vram_addr && hit->second.w64 == w64) {
+    ++g_vram_decode_hits;
+    vram_decode_cache_tick();
+    return hit->second.rgba;
+  }
+  ++g_vram_decode_misses;
+  vram_decode_cache_tick();
+  auto rgba = std::make_shared<std::vector<u8>>((size_t)w * h * 4, 0);
+  if (!decode_texture_pixels_raw(rgba->data(), vram_addr, w64, w, h, psm, clut_psm,
+                                 clut_addr)) {
+    return nullptr;
+  }
+  const u32 read_lo = g_last_decode_read_lo;
+  const u32 read_hi = g_last_decode_read_hi;
+  const u32 clut_read_lo = g_last_decode_clut_lo;
+  const u32 clut_read_hi = g_last_decode_clut_hi;
+  if (g_vram_decode_cache_bytes + rgba->size() > (size_t)256u * 1024u * 1024u) {
+    g_vram_decode_cache.clear();
+    g_vram_decode_cache_bytes = 0;
+  }
+  VramDecodeEntry entry;
+  entry.vram_addr = vram_addr;
+  entry.w64 = w64;
+  entry.w = w;
+  entry.h = h;
+  entry.psm = psm;
+  entry.clut_psm = clut_psm;
+  entry.clut_addr = clut_addr;
+  entry.epoch = g_vram_epoch;
+  entry.read_lo = read_lo;
+  entry.read_hi = read_hi;
+  entry.clut_read_lo = clut_read_lo;
+  entry.clut_read_hi = clut_read_hi;
+  entry.rgba = rgba;
+  g_vram_decode_cache_bytes += rgba->size();
+  g_vram_decode_cache[key] = std::move(entry);
+  return rgba;
+}
+
+// Same lookup, with the Direct path's "an all-zero image is not a texture"
+// rejection applied on top.
+std::shared_ptr<std::vector<u8>> decode_direct_vram_texture_shared(u64 tex0_value,
+                                                                   u32& out_width,
+                                                                   u32& out_height) {
+  out_width = 0;
+  out_height = 0;
+  const GsTex0 tex0(tex0_value);
+  const u32 width = 1u << tex0.tw();
+  const u32 height = 1u << tex0.th();
+  auto rgba = download_texture_cached(tex0.tbp0(), std::max(1u, width / 64), width, height,
+                                      (u32)tex0.psm(), tex0.cpsm(), tex0.cbp());
+  if (!rgba ||
+      std::none_of(rgba->begin(), rgba->end(), [](u8 value) { return value != 0; })) {
+    return nullptr;
+  }
+  out_width = width;
+  out_height = height;
+  return rgba;
+}
+
+// Legacy entry point.  The un-swizzle in decode_texture_pixels_raw is the
+// expensive half (a per-pixel VRAM gather plus CLUT expansion), so a caller
+// that still wants its own buffer gets a memcpy of the memoised image instead
+// of a fresh decode.  This is what keeps the remaining call sites honest
+// without having to rewrite each of them.
+bool download_texture_rgba8888(u8* result,
+                               u32 vram_addr,
+                               u32 goal_tex_width,
+                               u32 w,
+                               u32 h,
+                               u32 psm,
+                               u32 clut_psm,
+                               u32 clut_vram_addr) {
+  if (!result) {
+    return false;
+  }
+  auto rgba =
+      download_texture_cached(vram_addr, goal_tex_width, w, h, psm, clut_psm, clut_vram_addr);
+  if (!rgba) {
+    return false;
+  }
+  memcpy(result, rgba->data(), rgba->size());
+  return true;
 }
 
 // A ROM-free 2x2 PSMT4HL fixture.  The indexed texels and four-entry CSM1
@@ -2107,8 +2600,9 @@ std::array<u8, 16> make_generated_direct_clut_image() {
     const u32 addr = psmct32_addr(i, 0, 64) + clut_base * 256;
     memcpy(g_vram.data() + addr, &palette[i], sizeof(u32));
   }
+  vram_decode_invalidate_all();
   std::array<u8, 16> rgba{};
-  const bool decoded = download_texture_rgba8888(rgba.data(), texture_base, 1, 2, 2, 0x24, 0,
+  const bool decoded = decode_texture_pixels_raw(rgba.data(), texture_base, 1, 2, 2, 0x24, 0,
                                                  clut_base);
   if (!decoded) {
     rgba.fill(0);
@@ -2526,7 +3020,14 @@ struct OttselNativeDirectPrimitive {
   u32 texture_width = 0;
   u32 texture_height = 0;
   bool blended = false;
+  // GS TA0 at the time the primitive completed; direct_fs substitutes it when
+  // the sampled texture alpha is zero, exactly as the reference shader does.
+  u8 ta0 = 0;
 };
+
+// Forward declaration: ottsel_prim_trace_spend() is defined with the sky
+// submission helpers below, but the decoder call sites sit above it.
+static bool ottsel_prim_trace_spend();
 
 // The draw decoder: tracks GS registers and emits completed prims.
 struct OttselGifDecoder {
@@ -2600,9 +3101,8 @@ struct OttselGifDecoder {
       }
     }
     if (gp.tme() && !texture) {
-      bool used_vram = false;
-      auto decoded = decode_direct_vram_texture(st.tex0, texture_width, texture_height, used_vram);
-      if (decoded.empty()) {
+      auto decoded = decode_direct_vram_texture_shared(st.tex0, texture_width, texture_height);
+      if (!decoded) {
         ++native_texture_misses;
         static u32 missing_native_texture_logs = 0;
         if (missing_native_texture_logs < 8) {
@@ -2612,7 +3112,7 @@ struct OttselGifDecoder {
         }
         return;
       }
-      texture = std::make_shared<std::vector<u8>>(std::move(decoded));
+      texture = decoded;
       native_texture_cache[st.tex0] = texture;
     } else if (gp.tme()) {
       texture_width = 1u << tex0.tw();
@@ -2627,11 +3127,40 @@ struct OttselGifDecoder {
     primitive.texture_width = texture_width;
     primitive.texture_height = texture_height;
     primitive.blended = gp.abe();
+    primitive.ta0 = GsTexa(st.texa).ta0();
     primitive.vertices.reserve((size_t)count);
+    // I1.1b diagnostic: the fans sample UV through two different unpack paths
+    // (UV = 1/16 texel units, ST = perspective-correct s/t/q).  Record which
+    // one the Village1 sky actually uses so a degenerate UV can be told from a
+    // missing perspective divide.  Bounded; observability only.
+    {
+      static u32 sky_uv_logs = 0;
+      if (sky_uv_logs < 6 && gp.tme()) {
+        ++sky_uv_logs;
+        lg::info("OTTSEL SKY UV: tex0=0x{:016x} {}x{} has_uv={} has_st={} "
+                 "uv=({},{})(0x{:x},0x{:x}) st=({:.4f},{:.4f},{:.4f}) fst={} abe={}",
+                 st.tex0, texture_width, texture_height, verts[0].has_uv ? 1 : 0,
+                 verts[0].has_st ? 1 : 0, verts[0].uv_u, verts[0].uv_v,
+                 verts[0].uv_u, verts[0].uv_v, verts[0].s, verts[0].t, verts[0].q,
+                 gp.fst() ? 1 : 0, gp.abe() ? 1 : 0);
+      }
+    }
+    // Match the desktop DirectRenderer exactly.  PrimitiveBuffer::push
+    // (DirectRenderer.cpp:1468-1472) normalizes the 16.16 GS words by
+    // UINT32_MAX and adds the XYOFFSET term, and direct_basic.vert maps that
+    // 0..1 value to NDC with (x-0.5)*16 / -(y-0.5)*32*HEIGHT_SCALE.  Dividing
+    // by 65536 instead left the raw 16-bit coordinate in place, so the
+    // Village1 sky fans projected to |NDC| ~ 1e5 and landed off-screen.  The
+    // CPU raster reference already uses this exact normalisation in
+    // OttselRaster::to_screen above.
+    const float x_off = rst ? rst->x_off : 0.f;
+    const float y_off = rst ? rst->y_off : 0.f;
     for (int i = 0; i < count; ++i) {
       const auto& source = verts[i];
-      const float nx = ((source.x / 65536.f - 0.5f) * 8.f + 0.5f);
-      const float clip_y = -(source.y / 65536.f - 0.5f) * 32.f * (512.f / 448.f);
+      const float gx = source.x / (float)UINT32_MAX + x_off;
+      const float gy = source.y / (float)UINT32_MAX + y_off;
+      const float nx = ((gx - 0.5f) * 8.f + 0.5f);
+      const float clip_y = -(gy - 0.5f) * 32.f * (512.f / 448.f);
       const float ny = 0.5f - clip_y * 0.5f;
       OttselMetalSpriteVertex vertex{};
       vertex.pos[0] = nx * 2.f - 1.f;
@@ -2640,13 +3169,46 @@ struct OttselGifDecoder {
         vertex.uv[0] = (source.uv_u >> 4) / (float)texture_width;
         vertex.uv[1] = (source.uv_v >> 4) / (float)texture_height;
       } else if (source.has_st) {
-        vertex.uv[0] = source.s;
-        vertex.uv[1] = source.t;
+        // direct_basic_textured.frag picks the sample path from PRIM.FST
+        // (DirectRenderer.cpp:1448 `use_uv = reg.fst()`), not from which GIF
+        // register carried the coordinates:
+        //   use_uv == 1 -> sample_tex_px(uv / 16)   == (uv_u >> 4) / tex_size
+        //   use_uv == 0 -> sample_tex(st.xy / st.z) == s/q, t/q
+        // OttselRaster::tri already implements exactly that split for the CPU
+        // path.  The native path copied s,t straight through, so every FST=0
+        // sky fan sampled at |s|,|t| of hundreds and clamped to one edge texel.
+        const float q = source.q;
+        vertex.uv[0] = q != 0.f ? source.s / q : source.s;
+        vertex.uv[1] = q != 0.f ? source.t / q : source.t;
       }
       vertex.color[0] = source.r / 255.f;
       vertex.color[1] = source.g / 255.f;
       vertex.color[2] = source.b / 255.f;
       vertex.color[3] = source.a / 255.f;
+      // I1.1b diagnostic: report the texel the Metal fragment shader will
+      // actually fetch, together with how the texture was resolved.  A fan
+      // that samples a degenerate texel and a fan that samples a black texel
+      // look identical in the composed frame, so measure the fetch.  Bounded,
+      // observability only.
+      if (i == 0 && gp.tme() && !texture->empty()) {
+        static u32 sky_texel_logs = 0;
+        if (sky_texel_logs < 6) {
+          ++sky_texel_logs;
+          const int tx = std::clamp((int)(vertex.uv[0] * (float)texture_width), 0,
+                                    (int)texture_width - 1);
+          const int ty = std::clamp((int)(vertex.uv[1] * (float)texture_height), 0,
+                                    (int)texture_height - 1);
+          const u8* tp = texture->data() + ((size_t)ty * texture_width + tx) * 4;
+          const auto registry_it = g_direct_relocated_textures.find(
+              direct_texture_cache_key(tex0.tbp0(), (u32)tex0.psm()));
+          lg::info("OTTSEL SKY TEXEL: tex0=0x{:016x} psm={} tw={} th={} {}x{} q={:.6f} "
+                   "uv=({:.6f},{:.6f}) px=({},{}) rgba=({},{},{},{}) registry={}",
+                   st.tex0, (u32)tex0.psm(), tex0.tw(), tex0.th(), texture_width,
+                   texture_height, source.q, vertex.uv[0], vertex.uv[1], tx, ty, tp[0],
+                   tp[1], tp[2], tp[3],
+                   registry_it != g_direct_relocated_textures.end() ? 1 : 0);
+        }
+      }
       primitive.vertices.push_back(vertex);
     }
     native_primitives.push_back(std::move(primitive));
@@ -2780,7 +3342,7 @@ struct OttselGifDecoder {
     if (gp.kind() != GsPrim::Kind::SPRITE && vert_count >= 3) {
       capture_native_primitive(3);
     }
-    if (prims_logged >= 300) {
+    if (prims_logged >= 300 || !ottsel_prim_trace_spend()) {
       vert_count = 0;
       return;
     }
@@ -2801,6 +3363,23 @@ struct OttselGifDecoder {
   void log_triangle_strip(const char* kind_name = "TRI_STRIP") {
     GsPrim gp(st.prim);
     GsTex0 gt(st.tex0);
+    // I1.1b diagnostic: the sky fans carry a real texture but land far outside
+    // NDC, so dump the raw decoded vertex words to identify the coordinate
+    // space the sky actually uses.  Observability only.
+    if (native_capture && gp.kind() == GsPrim::Kind::TRI_FAN) {
+      static u32 sky_raw_vertex_logs = 0;
+      if (sky_raw_vertex_logs < 5) {
+        ++sky_raw_vertex_logs;
+        lg::info("OTTSEL SKY RAW: kind={} tex0=0x{:016x} xyoffset=0x{:x} verts={}",
+                 kind_name, st.tex0, st.xyoffset, vert_count);
+        for (int i = 0; i < vert_count && i < 4; ++i) {
+          lg::info("OTTSEL SKY RAW:   v{} x=0x{:08x} y=0x{:08x} z=0x{:08x} uv=({},{}) st=({:.4f},{:.4f},{:.4f}) rgba=({},{},{},{})",
+                   i, verts[i].x, verts[i].y, verts[i].z, verts[i].uv_u, verts[i].uv_v,
+                   verts[i].s, verts[i].t, verts[i].q, verts[i].r, verts[i].g, verts[i].b,
+                   verts[i].a);
+        }
+      }
+    }
     if (g_mobile_direct_trace.active && g_mobile_direct_trace.decoding_direct) {
       g_mobile_direct_trace.strips++;
     }
@@ -2812,7 +3391,7 @@ struct OttselGifDecoder {
     if (vert_count >= 3) {
       capture_native_primitive(3);
     }
-    if (prims_logged >= 300) {
+    if (prims_logged >= 300 || !ottsel_prim_trace_spend()) {
       return;
     }
     prims_logged++;
@@ -3022,7 +3601,8 @@ void decode_gif_packets(const u8* g, u32 size, OttselGifDecoder& dec) {
                              g_mobile_direct_trace.decoding_direct && tag.nloop() == 1 &&
                              tag.pre() && tag.prim() == 0x5c && tag.nreg() == 13;
     const size_t d0_ir_start = dec.ordered_ir.size();
-    if (is_d0_glyph && g_mobile_direct_trace.glyph_packet_samples < 8) {
+    if (g_mobile_direct_verbose && is_d0_glyph &&
+        g_mobile_direct_trace.glyph_packet_samples < 8) {
       ++g_mobile_direct_trace.glyph_packet_samples;
       lg::info("OTTSEL MOBILE DIRECT: glyph candidate sample={} eop={} bytes={}",
                g_mobile_direct_trace.glyph_packet_samples, (int)tag.eop(), size);
@@ -3040,7 +3620,7 @@ void decode_gif_packets(const u8* g, u32 size, OttselGifDecoder& dec) {
       // equivalent bounded trace, so a probe window that reports
       // prim-starts>0 with candidates=0 can be read directly instead of
       // inferred.  Gated on native_capture, so product logging is unchanged.
-      if (dec.native_capture && dec.native_packed_dumps < 4) {
+      if (dec.native_capture && dec.native_packed_dumps < 4 && ottsel_prim_trace_spend()) {
         ++dec.native_packed_dumps;
         lg::info("OTTSEL PACKED: chain={} dump={} nloop={} nreg={} pre={} prim=0x{:x}",
                  dec.chain_no, dec.native_packed_dumps, tag.nloop(), nreg, (int)tag.pre(),
@@ -3195,7 +3775,8 @@ void decode_gif_packets(const u8* g, u32 size, OttselGifDecoder& dec) {
       break;
     }
     if (tag.eop()) {
-      if (is_d0_glyph && g_mobile_direct_trace.glyph_packet_samples <= 8) {
+      if (g_mobile_direct_verbose && is_d0_glyph &&
+          g_mobile_direct_trace.glyph_packet_samples <= 8) {
         std::string events;
         for (size_t i = d0_ir_start; i < dec.ordered_ir.size(); ++i) {
           if (!events.empty()) {
@@ -3215,7 +3796,8 @@ void decode_gif_packets(const u8* g, u32 size, OttselGifDecoder& dec) {
 // like the reference DirectRenderer::render_vif.
 void decode_transfer(const DmaTransfer& t, OttselGifDecoder& dec) {
   auto log_ordered_ir = [&](size_t start) {
-    if (!g_mobile_direct_trace.active || g_mobile_direct_trace.font_packet_samples == 0 ||
+    if (!g_mobile_direct_verbose || !g_mobile_direct_trace.active ||
+        g_mobile_direct_trace.font_packet_samples == 0 ||
         g_mobile_direct_trace.font_packet_samples > 8 || g_mobile_direct_trace.glyph_ir_logged ||
         start >= dec.ordered_ir.size()) {
       return;
@@ -3336,6 +3918,36 @@ static const char* mobile_dma_kind_name(DmaTag::Kind kind) {
   return "?";
 }
 
+// Bounded per-frame diagnostic budget for the always-on sky submission.  The
+// "ottsel-enable-native-sky-product" probe re-arms it for a fresh inspection.
+static u32 g_sky_product_diag_logs = 0;
+static u32 g_direct_product_diag_logs = 0;
+
+// One poll per decoded bucket: arm the per-primitive trace budget from its
+// trigger.  Cheap (a single access() on a path that is absent in product runs)
+// and it keeps the budget process-wide instead of per chain.
+static bool ottsel_prim_trace_spend() {
+  // Arm from the trigger, but throttle the filesystem poll so a per-vertex
+  // call site cannot turn this into a syscall storm.
+  static u32 poll_countdown = 0;
+  if (poll_countdown == 0) {
+    poll_countdown = 1024;
+    const std::string trigger = ottsel_ios_writable_dir() + "ottsel-trace-prim";
+    if (access(trigger.c_str(), F_OK) == 0) {
+      unlink(trigger.c_str());
+      g_ottsel_prim_trace_budget = 600;
+      lg::info("OTTSEL PRIM TRACE: armed, bounded to {} records", g_ottsel_prim_trace_budget);
+    }
+  } else {
+    --poll_countdown;
+  }
+  if (g_ottsel_prim_trace_budget == 0) {
+    return false;
+  }
+  --g_ottsel_prim_trace_budget;
+  return true;
+}
+
 static u32 submit_mobile_native_sky_bucket(const void* data,
                                            u32 start_offset,
                                            u32 next_bucket,
@@ -3374,22 +3986,37 @@ static u32 submit_mobile_native_sky_bucket(const void* data,
     ++transfers;
   }
   u32 submitted = 0;
+  // I1.1b diagnostic: a fan can be "submitted" yet land entirely off the
+  // drawable.  Track the NDC bounds of what actually reaches the Metal sky
+  // queue so a black sky can be told apart from a missing-batch bug.
+  float sky_ndc_min[2] = {1e9f, 1e9f};
+  float sky_ndc_max[2] = {-1e9f, -1e9f};
   for (const auto& primitive : decoder.native_primitives) {
     if (!primitive.texture || primitive.vertices.empty()) {
       continue;
     }
+    for (const auto& vertex : primitive.vertices) {
+      sky_ndc_min[0] = std::min(sky_ndc_min[0], vertex.pos[0]);
+      sky_ndc_min[1] = std::min(sky_ndc_min[1], vertex.pos[1]);
+      sky_ndc_max[0] = std::max(sky_ndc_max[0], vertex.pos[0]);
+      sky_ndc_max[1] = std::max(sky_ndc_max[1], vertex.pos[1]);
+    }
     ottsel_metal_append_sky_mesh_n(
         g_metal, primitive.vertices.data(), (unsigned int)primitive.vertices.size(),
         primitive.texture->data(), primitive.texture_width, primitive.texture_height,
-        primitive.blended ? 1 : 0);
+        primitive.blended ? 1 : 0, primitive.ta0);
     ++submitted;
   }
+  // Bounded: the sky is now submitted every Village1 frame, so keep the
+  // detailed line to the first few submissions instead of once per frame.
+  if (g_sky_product_diag_logs < 8) {
+  ++g_sky_product_diag_logs;
   lg::info("OTTSEL SKY PRODUCT: sample={} leading-kind={} leading-qwc={} leading-addr=0x{:x} "
            "transfers={} direct-transfers={} gif-tags={} packed-tags={} reglist-tags={} "
            "image-tags={} prim-starts={} vertex-words={} candidates={} rejected={} "
            "texture-misses={} untextured={} tex0-writes={} tex0-last=0x{:x} "
            "triangles={} sprites={} strips={} unhandled-packed={} "
-           "primitives={} submitted={} end=0x{:x} expected=0x{:x}",
+           "primitives={} submitted={} ndc=({:.3f},{:.3f})..({:.3f},{:.3f}) end=0x{:x} expected=0x{:x}",
            sample_index, mobile_dma_kind_name(leading_tag.kind), leading_tag.qwc,
            leading_tag.addr, transfers, g_mobile_direct_trace.direct_transfers,
            g_mobile_direct_trace.gif_tags, g_mobile_direct_trace.packed_tags,
@@ -3400,13 +4027,548 @@ static u32 submit_mobile_native_sky_bucket(const void* data,
            decoder.native_tex0_writes, decoder.native_tex0_last,
            g_mobile_direct_trace.triangles, g_mobile_direct_trace.sprites,
            g_mobile_direct_trace.strips, g_mobile_direct_trace.unhandled_packed_registers,
-           decoder.native_primitives.size(), submitted, dma.current_tag_offset(), next_bucket);
+           decoder.native_primitives.size(), submitted, sky_ndc_min[0], sky_ndc_min[1],
+           sky_ndc_max[0], sky_ndc_max[1], dma.current_tag_offset(), next_bucket);
+  }
   decoder.native_primitives.clear();
   decoder.native_texture_cache.clear();
   decoder.native_capture = saved_capture;
   decoder.rst = saved_raster;
   g_mobile_direct_trace = saved_trace;
   return submitted;
+}
+
+// Foreground Direct/GIF consumer for the debug/text bucket.  The desktop draws
+// BucketId::DEBUG through a DirectRenderer after the world and after sprites.
+// The native product path had no such consumer, so the title logo,
+// "PRESS START" and every debug/menu text packet decoded on the Mac reference
+// (36 glyph packets in bucket 67) and were silently dropped on iPad.  Same
+// capture shape as the sky submit; only the draw position differs.
+static u32 submit_mobile_native_direct_bucket(const void* data,
+                                              u32 start_offset,
+                                              u32 next_bucket,
+                                              OttselGifDecoder& decoder,
+                                              u32 bucket_id,
+                                              u32 sample_index) {
+  DmaFollower dma(data, start_offset);
+  const bool saved_capture = decoder.native_capture;
+  OttselRaster* saved_raster = decoder.rst;
+  const auto saved_trace = g_mobile_direct_trace;
+  g_mobile_direct_trace = {};
+  g_mobile_direct_trace.active = true;
+  decoder.native_capture = true;
+  decoder.rst = nullptr;
+  decoder.native_primitives.clear();
+  decoder.native_texture_cache.clear();
+  decoder.native_primitive_candidates = 0;
+  decoder.native_primitive_rejected = 0;
+  decoder.native_texture_misses = 0;
+  decoder.native_prim_starts = 0;
+  decoder.native_vertex_words = 0;
+  decoder.native_untextured_primitives = 0;
+  decoder.native_tex0_writes = 0;
+  decoder.native_tex0_last = 0;
+  decoder.native_packed_dumps = 0;
+  decoder.st = OttselDrawState{};
+  decoder.vert_count = 0;
+  decoder.prims_logged = 0;
+  decoder.direct_scissor_seen = false;
+  u32 transfers = 0;
+  while (!dma.ended() && dma.current_tag_offset() != next_bucket && transfers < 4096) {
+    decode_transfer(dma.read_and_advance(), decoder);
+    ++transfers;
+  }
+  u32 submitted = 0;
+  for (const auto& primitive : decoder.native_primitives) {
+    if (!primitive.texture || primitive.vertices.empty()) {
+      continue;
+    }
+    ottsel_metal_append_direct_mesh_n(
+        g_metal, primitive.vertices.data(), (unsigned int)primitive.vertices.size(),
+        primitive.texture->data(), primitive.texture_width, primitive.texture_height,
+        primitive.blended ? 1 : 0, primitive.ta0);
+    ++submitted;
+  }
+  if (g_direct_product_diag_logs < 8) {
+    ++g_direct_product_diag_logs;
+    lg::info("OTTSEL DIRECT PRODUCT: bucket={} sample={} transfers={} direct-transfers={} "
+             "gif-tags={} prim-starts={} vertex-words={} candidates={} rejected={} "
+             "texture-misses={} untextured={} primitives={} submitted={} end=0x{:x} expected=0x{:x}",
+             bucket_id, sample_index, transfers, g_mobile_direct_trace.direct_transfers,
+             g_mobile_direct_trace.gif_tags, decoder.native_prim_starts,
+             decoder.native_vertex_words, decoder.native_primitive_candidates,
+             decoder.native_primitive_rejected, decoder.native_texture_misses,
+             decoder.native_untextured_primitives, decoder.native_primitives.size(), submitted,
+             dma.current_tag_offset(), next_bucket);
+  }
+  decoder.native_primitives.clear();
+  decoder.native_texture_cache.clear();
+  decoder.native_capture = saved_capture;
+  decoder.rst = saved_raster;
+  g_mobile_direct_trace = saved_trace;
+  return submitted;
+}
+
+// I1.1b: cheap per-chain detector for the SkyBlend copy pairs.  Upstream's
+// handle_sky_copies consumes the pairs inline as qwc == 6 tags, so a window
+// only generates 0x1f80/0x1fa0 when it carries at least one.  This walks the
+// real bucket window at zero decode cost so every chain from launch can be
+// checked without flooding the log; detail is dumped separately on a hit.
+static u32 scan_mobile_sky_blend_pairs(const void* data, u32 start_offset, u32 next_bucket) {
+  DmaFollower dma(data, start_offset);
+  if (dma.ended()) {
+    return 0;
+  }
+  u32 pairs = 0;
+  u32 steps = 0;
+  dma.read_and_advance();  // the bucket's own jump tag
+  while (!dma.ended() && dma.current_tag_offset() != next_bucket && steps < 64) {
+    if (dma.current_tag().qwc == 6) {
+      ++pairs;
+      dma.read_and_advance();
+      if (dma.ended() || dma.current_tag_offset() == next_bucket) {
+        break;
+      }
+    }
+    dma.read_and_advance();
+    ++steps;
+  }
+  return pairs;
+}
+
+// I1.1b: native SkyBlend producer.  A measured scan of every chain from launch
+// found the qwc == 6 copy pairs in the level sky-blend bucket continuously
+// during Village1 (never in the level-0 slot, which short-circuits on CALL).
+// The pair is an ADGIF naming the source texture plus a 6qw draw whose qword 1
+// holds the intensity byte and whose qword 5 holds 0x200 (sky) or 0x400
+// (clouds) to select the destination (SkyBlendCPU.cpp:99-186).  The first draw
+// of a buffer overwrites and later draws accumulate:
+// out = min(255, out + in * intensity >> 7).  Registering the result in
+// g_direct_relocated_textures is exactly where the SKY_DRAW fan lookup already
+// looks (metal_gfx.mm:2592).  A source that is missing or the wrong size is
+// counted as a miss; nothing is ever synthesised.
+static u32 produce_mobile_sky_blend_bucket(const void* data,
+                                           u32 start_offset,
+                                           u32 next_bucket,
+                                           u32* out_misses) {
+  static const u32 kSkyDims[2] = {32, 64};
+  static const u32 kSkyTbp[2] = {8064, 8096};
+  std::vector<u8> dest[2];
+  bool dest_ready[2] = {false, false};
+  DmaFollower dma(data, start_offset);
+  if (dma.ended()) {
+    return 0;
+  }
+  OttselGifDecoder dec;
+  dec.st = OttselDrawState{};
+  u32 produced = 0;
+  u32 steps = 0;
+  dma.read_and_advance();  // the bucket's own jump tag
+  while (!dma.ended() && dma.current_tag_offset() != next_bucket && steps < 64) {
+    if (dma.current_tag().qwc != 6) {
+      dma.read_and_advance();
+      ++steps;
+      continue;
+    }
+    DmaTransfer setup = dma.read_and_advance();
+    ++steps;
+    decode_transfer(setup, dec);
+    const GsTex0 source_tex(dec.st.tex0);
+    if (dma.ended() || dma.current_tag_offset() == next_bucket) {
+      break;
+    }
+    DmaTransfer draw = dma.read_and_advance();
+    ++steps;
+    if (draw.size_bytes < 6 * 16) {
+      continue;
+    }
+    u32 intensity = 0;
+    u32 coord = 0;
+    memcpy(&intensity, draw.data + 16, 4);
+    memcpy(&coord, draw.data + 80, 4);
+    int buffer_idx = -1;
+    if (coord == 0x200) {
+      buffer_idx = 0;
+    } else if (coord == 0x400) {
+      buffer_idx = 1;
+    }
+    const u32 dim = buffer_idx >= 0 ? kSkyDims[buffer_idx] : 0;
+    const u32 source_w = 1u << source_tex.tw();
+    const u32 source_h = 1u << source_tex.th();
+    if (buffer_idx < 0 || source_w != dim || source_h != dim) {
+      ++*out_misses;
+      static u32 sky_blend_reject_logs = 0;
+      if (sky_blend_reject_logs < 6) {
+        ++sky_blend_reject_logs;
+        lg::info("OTTSEL SKY BLEND: reject reason=shape src-tex0=0x{:016x} tbp=0x{:x} "
+                 "psm={} tw={} th={} coord=0x{:x} intensity={}",
+                 dec.st.tex0, source_tex.tbp0(), (u32)source_tex.psm(), source_tex.tw(),
+                 source_tex.th(), coord, intensity & 0xff);
+      }
+      continue;
+    }
+    // Resolve the source exactly the way the SKY_DRAW fan lookup does: the
+    // keyed native registry first (gfx_texture_upload_now / gfx_texture_relocate
+    // decode the tpage into it), then the live GS-VRAM mirror.
+    u32 decoded_w = 0;
+    u32 decoded_h = 0;
+    bool source_from_registry = false;
+    std::vector<u8> source;
+    const auto relocated_it = g_direct_relocated_textures.find(
+        direct_texture_cache_key(source_tex.tbp0(), (u32)source_tex.psm()));
+    if (relocated_it != g_direct_relocated_textures.end() &&
+        relocated_it->second.width == dim && relocated_it->second.height == dim &&
+        relocated_it->second.rgba.size() == (size_t)dim * dim * 4) {
+      source = relocated_it->second.rgba;
+      decoded_w = dim;
+      decoded_h = dim;
+      source_from_registry = true;
+    } else {
+      bool used_vram = false;
+      source = decode_direct_vram_texture(dec.st.tex0, decoded_w, decoded_h, used_vram);
+    }
+    if (source.size() != (size_t)dim * dim * 4) {
+      ++*out_misses;
+      static u32 sky_blend_decode_logs = 0;
+      if (sky_blend_decode_logs < 6) {
+        ++sky_blend_decode_logs;
+        const u32 src_byte = source_tex.tbp0() * 256;
+        const u32 clut_byte = source_tex.cbp() * 256;
+        u32 src_words[2] = {0, 0};
+        u32 clut_words[2] = {0, 0};
+        if (src_byte + 8 <= g_vram.size()) {
+          memcpy(src_words, g_vram.data() + src_byte, 8);
+        }
+        if (clut_byte + 8 <= g_vram.size()) {
+          memcpy(clut_words, g_vram.data() + clut_byte, 8);
+        }
+        lg::info("OTTSEL SKY BLEND: reject reason=decode src-tex0=0x{:016x} tbp=0x{:x} "
+                 "psm={} cbp=0x{:x} cpsm={} want={} got={} bytes={} registry={} "
+                 "registry-key={} metadata={} vram-src={:08x}{:08x} vram-clut={:08x}{:08x}",
+                 dec.st.tex0, source_tex.tbp0(), (u32)source_tex.psm(), source_tex.cbp(),
+                 (u32)source_tex.cpsm(), dim, decoded_w, source.size(),
+                 g_direct_relocated_textures.size(),
+                 relocated_it != g_direct_relocated_textures.end() ? 1 : 0,
+                 g_direct_texture_metadata.count(source_tex.tbp0()), src_words[0], src_words[1],
+                 clut_words[0], clut_words[1]);
+      }
+      continue;
+    }
+    if (source_from_registry) {
+      static u32 sky_blend_registry_logs = 0;
+      if (sky_blend_registry_logs < 3) {
+        ++sky_blend_registry_logs;
+        lg::info("OTTSEL SKY BLEND: source from registry tbp=0x{:x} psm={} {}x{} key=0x{:x}",
+                 source_tex.tbp0(), (u32)source_tex.psm(), dim, dim,
+                 direct_texture_cache_key(source_tex.tbp0(), (u32)source_tex.psm()));
+      }
+    }
+    // I1.1b diagnostic: the generated sky dest is noise, so record whether the
+    // decoded source is structured or garbage before the blend runs.  Bounded
+    // to three dumps; content only, nothing synthesised.
+    {
+      static u32 sky_source_dumps = 0;
+      if (sky_source_dumps < 3) {
+        ++sky_source_dumps;
+        const u32 src_byte = source_tex.tbp0() * 256;
+        const u32 clut_byte = source_tex.cbp() * 256;
+        u32 src_words[4] = {0, 0, 0, 0};
+        u32 clut_words[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+        if (src_byte + 16 <= g_vram.size()) {
+          memcpy(src_words, g_vram.data() + src_byte, 16);
+        }
+        if (clut_byte + 32 <= g_vram.size()) {
+          memcpy(clut_words, g_vram.data() + clut_byte, 32);
+        }
+        lg::info("OTTSEL SKY SOURCE: tbp=0x{:x} psm={} {}x{} cbp=0x{:x} cpsm={} registry={} "
+                 "src-bytes={:08x},{:08x},{:08x},{:08x} clut={:08x},{:08x},{:08x},{:08x},"
+                 "{:08x},{:08x},{:08x},{:08x}",
+                 source_tex.tbp0(), (u32)source_tex.psm(), decoded_w, decoded_h,
+                 source_tex.cbp(), (u32)source_tex.cpsm(), source_from_registry ? 1 : 0,
+                 src_words[0], src_words[1], src_words[2], src_words[3], clut_words[0],
+                 clut_words[1], clut_words[2], clut_words[3], clut_words[4], clut_words[5],
+                 clut_words[6], clut_words[7]);
+        // BOT40 I1.1f: the sky source resolves from the raw VRAM mirror rather
+        // than the keyed registry, so record which pool records exist for the
+        // ADGIF tbp and whether the relocated key is actually present.  The
+        // answer decides between a missing upload and a keying mismatch.
+        {
+          u32 meta_same_dest = 0;
+          for (const auto& kv : g_direct_texture_metadata) {
+            if (kv.first == source_tex.tbp0()) {
+              ++meta_same_dest;
+            }
+          }
+          const bool key_present =
+              g_direct_relocated_textures.find(direct_texture_cache_key(
+                  source_tex.tbp0(), (u32)source_tex.psm())) !=
+              g_direct_relocated_textures.end();
+          lg::info("OTTSEL SKY REGISTRY: tbp=0x{:x} adgif-psm={} adgif-cbp=0x{:x} reloc-size={} "
+                   "key-present={} meta-size={} meta-same-dest={}",
+                   source_tex.tbp0(), (u32)source_tex.psm(), source_tex.cbp(),
+                   g_direct_relocated_textures.size(), key_present ? 1 : 0,
+                   g_direct_texture_metadata.size(), meta_same_dest);
+          static u32 sky_meta_census = 0;
+          if (sky_meta_census < 1) {
+            ++sky_meta_census;
+            u32 printed = 0;
+            for (const auto& kv : g_direct_texture_metadata) {
+              if (kv.first >= 0x200 || printed >= 64) {
+                continue;
+              }
+              ++printed;
+              lg::info("OTTSEL SKY META: dest=0x{:x} {}x{} psm={} cpsm={} clut=0x{:x}", kv.first,
+                       kv.second.width, kv.second.height, kv.second.psm, kv.second.clut_psm,
+                       kv.second.clut_addr);
+            }
+          }
+        }
+        char path[512];
+        snprintf(path, sizeof(path), "%sottsel-sky-source-%u.ppm",
+                 ottsel_ios_writable_dir().c_str(), sky_source_dumps);
+        if (FILE* f = fopen(path, "wb")) {
+          fprintf(f, "P6\n%u %u\n255\n", decoded_w, decoded_h);
+          for (size_t t = 0; t + 3 < source.size(); t += 4) {
+            fwrite(&source[t], 1, 3, f);
+          }
+          fclose(f);
+        }
+        // I1.1c raw-window dump: the decoded PPM above is only interpretable
+        // against the exact bytes the decoder read, so record them verbatim.
+        lg::info("OTTSEL SKY RAW: dump={} tex0=0x{:016x} tbp=0x{:x} cbp=0x{:x} psm={} cpsm={} "
+                 "read-width={} window={} clut-byte=0x{:x}",
+                 sky_source_dumps, dec.st.tex0, source_tex.tbp0(), source_tex.cbp(),
+                 (u32)source_tex.psm(), (u32)source_tex.cpsm(), std::max(1u, decoded_w / 64),
+                 (size_t)decoded_w * decoded_h, clut_byte);
+        {
+          char raw_path[512];
+          snprintf(raw_path, sizeof(raw_path), "%sottsel-sky-raw-%u.bin",
+                   ottsel_ios_writable_dir().c_str(), sky_source_dumps);
+          if (FILE* f = fopen(raw_path, "wb")) {
+            const size_t window = (size_t)decoded_w * decoded_h;
+            if (src_byte + window <= g_vram.size()) {
+              fwrite(g_vram.data() + src_byte, 1, window, f);
+            }
+            fclose(f);
+          }
+        }
+        {
+          char clut_path[512];
+          snprintf(clut_path, sizeof(clut_path), "%sottsel-sky-clut-%u.bin",
+                   ottsel_ios_writable_dir().c_str(), sky_source_dumps);
+          if (FILE* f = fopen(clut_path, "wb")) {
+            if (clut_byte + 1024 <= g_vram.size()) {
+              fwrite(g_vram.data() + clut_byte, 1, 1024, f);
+            }
+            fclose(f);
+          }
+        }
+        if (sky_source_dumps == 3) {
+          char vram_path[512];
+          snprintf(vram_path, sizeof(vram_path), "%sottsel-sky-vram.bin",
+                   ottsel_ios_writable_dir().c_str());
+          if (FILE* f = fopen(vram_path, "wb")) {
+            fwrite(g_vram.data(), 1, g_vram.size(), f);
+            fclose(f);
+          }
+        }
+      }
+    }
+    if (!dest_ready[buffer_idx]) {
+      dest[buffer_idx].assign((size_t)dim * dim * 4, 0);
+      dest_ready[buffer_idx] = true;
+    }
+    const GifTag draw_tag(draw.data);
+    const bool is_first_draw = !GsPrim(draw_tag.prim()).abe();
+    const u32 blend = std::min(intensity & 0xff, 255u);
+    for (size_t i = 0; i < source.size(); ++i) {
+      const u32 scaled = std::min(((u32)source[i] * blend) >> 7, 255u);
+      if (is_first_draw) {
+        dest[buffer_idx][i] = (u8)scaled;
+      } else {
+        dest[buffer_idx][i] =
+            (u8)std::min((u32)dest[buffer_idx][i] + scaled, 255u);
+      }
+    }
+    ++produced;
+  }
+  for (u32 i = 0; i < 2; ++i) {
+    if (!dest_ready[i]) {
+      continue;
+    }
+    // I1.1b diagnostic: the fans still sample black sky with a non-zero
+    // generated buffer, so report what the blend actually produced before the
+    // texture is registered.  Content stats only; nothing is synthesised.
+    {
+      static u32 sky_blend_stats_logs = 0;
+      if (sky_blend_stats_logs < 4) {
+        ++sky_blend_stats_logs;
+        u32 nonzero = 0;
+        u32 peak = 0;
+        u64 sum = 0;
+        for (size_t b = 0; b < dest[i].size(); ++b) {
+          if (dest[i][b]) {
+            ++nonzero;
+          }
+          peak = std::max(peak, (u32)dest[i][b]);
+          sum += dest[i][b];
+        }
+        const u32 rgb_texels = dest[i].size() ? (u32)(dest[i].size() / 4) : 0;
+        u32 rgb_nonzero = 0;
+        u32 alpha_zero = 0;
+        u32 alpha_peak = 0;
+        u64 alpha_sum = 0;
+        for (u32 t = 0; t < rgb_texels && t * 4 + 3 < dest[i].size(); ++t) {
+          if (dest[i][t * 4] || dest[i][t * 4 + 1] || dest[i][t * 4 + 2]) {
+            ++rgb_nonzero;
+          }
+          const u8 ta = dest[i][t * 4 + 3];
+          if (ta == 0) {
+            ++alpha_zero;
+          }
+          alpha_peak = std::max(alpha_peak, (u32)ta);
+          alpha_sum += ta;
+        }
+        lg::info("OTTSEL SKY BLEND: dest tbp=0x{:x} {}x{} bytes={} nonzero={} rgb-texels-live={}/{} "
+                 "peak={} mean={} alpha-zero={}/{} alpha-peak={} alpha-mean={}",
+                 kSkyTbp[i], kSkyDims[i], kSkyDims[i], dest[i].size(), nonzero, rgb_nonzero,
+                 rgb_texels, peak, rgb_texels ? (u32)(sum / dest[i].size()) : 0,
+                 alpha_zero, rgb_texels, alpha_peak,
+                 rgb_texels ? (u32)(alpha_sum / rgb_texels) : 0);
+        // I1.1b diagnostic: dump the actual blended texel buffer so the sky
+        // texture can be inspected directly instead of inferred from the
+        // composed frame.  Bounded to the first four dumps; content only.
+        if (!dest[i].empty()) {
+          char path[512];
+          snprintf(path, sizeof(path), "%sottsel-sky-blend-%u.ppm",
+                   ottsel_ios_writable_dir().c_str(), i);
+          if (FILE* f = fopen(path, "wb")) {
+            fprintf(f, "P6\n%u %u\n255\n", kSkyDims[i], kSkyDims[i]);
+            for (size_t t = 0; t + 3 < dest[i].size(); t += 4) {
+              fwrite(&dest[i][t], 1, 3, f);
+            }
+            fclose(f);
+          }
+        }
+      }
+    }
+    DirectRelocatedTexture generated;
+    generated.width = kSkyDims[i];
+    generated.height = kSkyDims[i];
+    generated.rgba = std::move(dest[i]);
+    g_direct_relocated_textures[direct_texture_cache_key(kSkyTbp[i], 0)] =
+        std::move(generated);
+  }
+  return produced;
+}
+
+// I1.1b: bounded SkyBlend observability for bucket 32
+// (TFRAG_TRANS0_AND_SKY_BLEND_LEVEL0).  Upstream generates the 32x32 (tbp
+// 0x1f80) and 64x64 (tbp 0x1fa0) sky buffers from a repeating qwc == 6 pair:
+// an ADGIF carrying the source texture's TEX0, then a 6qw draw whose second
+// qword holds the intensity and whose sixth holds 0x200 (sky) or 0x400
+// (clouds) to select the destination buffer (SkyBlendCPU.cpp:99-186).  The
+// native path implements none of it, which is exactly why the completed
+// SKY_DRAW fans sample 0x1fa0 and are pruned as texture misses.  This probe
+// only reports what the real window carries; it submits nothing and decodes
+// nothing into the scene.
+static void probe_mobile_sky_blend_bucket(const void* data,
+                                          u32 start_offset,
+                                          u32 next_bucket,
+                                          u32 sample_index) {
+  DmaFollower dma(data, start_offset);
+  if (dma.ended()) {
+    lg::info("OTTSEL SKY BLEND: sample={} empty=1 start=0x{:x}", sample_index, start_offset);
+    return;
+  }
+  const DmaTag leading = dma.current_tag();
+  OttselGifDecoder dec;
+  dec.st = OttselDrawState{};
+  u32 transfers = 0;
+  u32 pairs = 0;
+  u32 sky_copies = 0;
+  u32 cloud_copies = 0;
+  u32 first_draws = 0;
+  u32 unknown_coords = 0;
+  u32 setup_tex0_writes = 0;
+  u64 first_source_tex0 = 0;
+  u64 last_source_tex0 = 0;
+  u32 last_intensity = 0;
+  u32 last_coord = 0;
+  while (!dma.ended() && dma.current_tag_offset() != next_bucket && transfers < 4096) {
+    const DmaTag tag = dma.current_tag();
+    if (tag.qwc != 6) {
+      DmaTransfer other = dma.read_and_advance();
+      ++transfers;
+      if (transfers <= 6) {
+        const VifCode v0 = other.vifcode0();
+        const VifCode v1 = other.vifcode1();
+        lg::info("OTTSEL SKY BLEND: sample={} head transfer={} kind={} qwc={} size={} "
+                 "vif0={} vif1={} addr=0x{:x}",
+                 sample_index, transfers, mobile_dma_kind_name(tag.kind), tag.qwc,
+                 other.size_bytes, (int)v0.kind, (int)v1.kind, tag.addr);
+      }
+      decode_transfer(other, dec);
+      continue;
+    }
+    DmaTransfer setup = dma.read_and_advance();
+    ++transfers;
+    const u64 before_tex0 = dec.st.tex0;
+    decode_transfer(setup, dec);
+    const u64 source_tex0 = dec.st.tex0;
+    if (source_tex0 != before_tex0) {
+      ++setup_tex0_writes;
+    }
+    if (dma.ended() || dma.current_tag_offset() == next_bucket) {
+      break;
+    }
+    DmaTransfer draw = dma.read_and_advance();
+    ++transfers;
+    if (draw.size_bytes < 6 * 16) {
+      continue;
+    }
+    const GifTag draw_tag(draw.data);
+    const GsPrim draw_prim(draw_tag.prim());
+    u32 intensity = 0;
+    u32 coord = 0;
+    memcpy(&intensity, draw.data + 16, 4);
+    memcpy(&coord, draw.data + 80, 4);
+    const bool is_first_draw = !draw_prim.abe();
+    if (is_first_draw) {
+      ++first_draws;
+    }
+    if (coord == 0x200) {
+      ++sky_copies;
+    } else if (coord == 0x400) {
+      ++cloud_copies;
+    } else {
+      ++unknown_coords;
+    }
+    if (!pairs) {
+      first_source_tex0 = source_tex0;
+    }
+    last_source_tex0 = source_tex0;
+    last_intensity = intensity;
+    last_coord = coord;
+    ++pairs;
+    if (pairs <= 8) {
+      const GsTex0 parsed(source_tex0);
+      lg::info("OTTSEL SKY BLEND: sample={} copy={} first={} src-tex0=0x{:016x} tbp=0x{:x} "
+               "psm={} tw={} th={} intensity={} coord=0x{:x} draw-nloop={} size={}",
+               sample_index, pairs, is_first_draw ? 1 : 0, source_tex0, parsed.tbp0(),
+               (int)parsed.psm(), parsed.tw(), parsed.th(), intensity & 0xff, coord,
+               draw_tag.nloop(), draw.size_bytes);
+    }
+  }
+  lg::info("OTTSEL SKY BLEND: sample={} start=0x{:x} leading-kind={} leading-qwc={} "
+           "transfers={} pairs={} sky-copies={} cloud-copies={} first-draws={} "
+           "unknown-coords={} setup-tex0-writes={} first-src-tex0=0x{:016x} "
+           "last-src-tex0=0x{:016x} last-intensity={} last-coord=0x{:x} end=0x{:x} "
+           "expected=0x{:x}",
+           sample_index, start_offset, mobile_dma_kind_name(leading.kind), leading.qwc,
+           transfers, pairs, sky_copies, cloud_copies, first_draws, unknown_coords,
+           setup_tex0_writes, first_source_tex0, last_source_tex0, last_intensity & 0xff,
+           last_coord, dma.current_tag_offset(), next_bucket);
 }
 
 // Jak 1's PC path deliberately omits Sprite3 VU microcode; the desktop
@@ -3785,19 +4947,27 @@ static u32 render_mobile_sprite_group0(const MobileSpriteFrameJak1& frame,
       const u32 sprite_w = uses_texture ? 1u << sprite_tex.tw() : 1u;
       const u32 sprite_h = uses_texture ? 1u << sprite_tex.th() : 1u;
       if (sprite_w <= 2048 && sprite_h <= 2048) {
-        std::vector<u8> sprite_rgba((size_t)sprite_w * sprite_h * 4, 0);
+        // Memoised: this decode runs for every sprite of every frame, and the
+        // un-swizzle dominated the sprite bucket on the simulator.  The
+        // colour-only case still gets a private white texel, so only the
+        // textured path goes through the cache.
+        std::vector<u8> sprite_rgba_color_only;
+        std::shared_ptr<std::vector<u8>> sprite_rgba_textured;
         bool decoded = false;
         if (!uses_texture) {
           // Desktop Sprite3 treats TEX0.TCC=0 as color-only: keep the normal
           // sampled path alive with a generated opaque white texel, leaving
           // the vertex color as the source of RGB/A semantics.
-          std::fill(sprite_rgba.begin(), sprite_rgba.end(), 255);
+          sprite_rgba_color_only.assign((size_t)sprite_w * sprite_h * 4, 255);
           decoded = true;
         } else {
-          decoded = download_texture_rgba8888(
-              sprite_rgba.data(), sprite_tex.tbp0(), std::max(1u, sprite_w / 64), sprite_w,
-              sprite_h, (u32)sprite_tex.psm(), sprite_tex.cpsm(), sprite_tex.cbp());
+          sprite_rgba_textured = download_texture_cached(
+              sprite_tex.tbp0(), std::max(1u, sprite_w / 64), sprite_w, sprite_h,
+              (u32)sprite_tex.psm(), sprite_tex.cpsm(), sprite_tex.cbp());
+          decoded = sprite_rgba_textured != nullptr;
         }
+        const std::vector<u8>& sprite_rgba =
+            sprite_rgba_textured ? *sprite_rgba_textured : sprite_rgba_color_only;
         if (decoded) {
           u32 texture_nonzero_alpha = 0;
           u8 texture_max_alpha = 0;
@@ -3863,20 +5033,22 @@ static u32 render_mobile_sprite_group0(const MobileSpriteFrameJak1& frame,
               entry.y = (u32)(atlas_entries.size() / kAtlasColumns) * kAtlasTile;
               entry.w = width;
               entry.h = height;
-              std::vector<u8> decoded_texture((size_t)width * height * 4, 255);
-              bool decoded_ok = true;
+              std::shared_ptr<std::vector<u8>> decoded_texture;
               if (entry_uses_texture) {
-                decoded_ok = download_texture_rgba8888(
-                    decoded_texture.data(), tex.tbp0(), std::max(1u, width / 64), width, height,
-                    (u32)tex.psm(), tex.cpsm(), tex.cbp());
-              }
-              if (!decoded_ok) {
-                return false;
+                decoded_texture = download_texture_cached(
+                    tex.tbp0(), std::max(1u, width / 64), width, height, (u32)tex.psm(),
+                    tex.cpsm(), tex.cbp());
+                if (!decoded_texture) {
+                  return false;
+                }
+              } else {
+                decoded_texture = std::make_shared<std::vector<u8>>(
+                    (size_t)width * height * 4, 255);
               }
               for (u32 row = 0; row < height; ++row) {
                 memcpy(atlas_rgba.data() +
                            ((size_t)(entry.y + row) * kAtlasWidth + entry.x) * 4,
-                       decoded_texture.data() + (size_t)row * width * 4, (size_t)width * 4);
+                       decoded_texture->data() + (size_t)row * width * 4, (size_t)width * 4);
               }
               atlas_entries.push_back(entry);
               *out = &atlas_entries.back();
@@ -4083,11 +5255,17 @@ static bool render_mobile_sprite_group3d_native(const MobileSpriteFrameJak1& fra
   if (width > 2048 || height > 2048) {
     return false;
   }
-  std::vector<u8> rgba((size_t)width * height * 4, 255);
-  if (uses_texture && !download_texture_rgba8888(
-                          rgba.data(), tex.tbp0(), std::max(1u, width / 64), width, height,
-                          (u32)tex.psm(), tex.cpsm(), tex.cbp())) {
-    return false;
+  std::vector<u8> rgba;
+  if (uses_texture) {
+    const auto decoded_texture = download_texture_cached(
+        tex.tbp0(), std::max(1u, width / 64), width, height, (u32)tex.psm(), tex.cpsm(),
+        tex.cbp());
+    if (!decoded_texture) {
+      return false;
+    }
+    rgba = *decoded_texture;
+  } else {
+    rgba.assign((size_t)width * height * 4, 255);
   }
 
   // This is a bounded source/data-family ledger at the native 3D consumer
@@ -4203,8 +5381,15 @@ static bool append_mobile_sprite_hud_native(const MobileSpriteFrameJak1& frame,
                                             const MobileSpriteVec2d* vectors,
                                             const AdGifData* adgifs,
                                             u32 count) {
-  if (!g_metal || !g_mobile_native_sprite_product_requested ||
-      (count != 48 && count != 32)) {
+  static u32 ottsel_hud_gate_logs = 0;
+  const bool ottsel_hud_orig_gate = (count == 48 || count == 32);
+  if (ottsel_mobile_log_within_budget(ottsel_hud_gate_logs, 24)) {
+    ++ottsel_hud_gate_logs;
+    lg::info("OTTSEL HUD GATE: count={} orig_pass={} product={} metal={}",
+             count, (int)ottsel_hud_orig_gate,
+             (int)g_mobile_native_sprite_product_requested, g_metal ? 1 : 0);
+  }
+  if (!g_metal || !g_mobile_native_sprite_product_requested || count == 0 || count > 256) {
     return false;
   }
   constexpr u32 kTile = 64;
@@ -4246,30 +5431,37 @@ static bool append_mobile_sprite_hud_native(const MobileSpriteFrameJak1& frame,
     entry.y = (u32)entries.size() / kColumns * kTile;
     entry.w = width;
     entry.h = height;
-    std::vector<u8> decoded((size_t)width * height * 4, 255);
-    if (textured && !download_texture_rgba8888(decoded.data(), tex.tbp0(),
-                                                 std::max(1u, width / 64), width, height,
-                                                 (u32)tex.psm(), tex.cpsm(), tex.cbp())) {
-      return false;
+    std::shared_ptr<std::vector<u8>> decoded;
+    if (textured) {
+      decoded = download_texture_cached(tex.tbp0(), std::max(1u, width / 64), width, height,
+                                       (u32)tex.psm(), tex.cpsm(), tex.cbp());
+      if (!decoded) {
+        return false;
+      }
+    } else {
+      decoded = std::make_shared<std::vector<u8>>((size_t)width * height * 4, 255);
     }
     for (u32 row = 0; row < height; ++row) {
       memcpy(atlas.data() + ((size_t)(entry.y + row) * kWidth + entry.x) * 4,
-             decoded.data() + (size_t)row * width * 4, (size_t)width * 4);
+             decoded->data() + (size_t)row * width * 4, (size_t)width * 4);
     }
     entries.push_back(entry);
     *out_index = (u32)entries.size() - 1;
     return true;
   };
   const u32 order[6] = {0, 1, 3, 0, 3, 2};
+  u32 ottsel_hud_skipped = 0;
   for (u32 index = 0; index < count; ++index) {
     const auto& vector = vectors[index];
     const MobileSpriteVec4 transformed = sprite_matrix_transform(hud.matrix, vector.xyz_sx);
     if (!std::isfinite(transformed.w) || transformed.w == 0.f) {
-      return false;
+      ++ottsel_hud_skipped;
+      continue;
     }
     const float q = frame.pfog0 / transformed.w;
     if (!std::isfinite(q)) {
-      return false;
+      ++ottsel_hud_skipped;
+      continue;
     }
     const MobileSpriteVec4 offset = (int)vector.flag_rot_sy.x == 0
                                         ? hud.hvdf
@@ -4294,7 +5486,8 @@ static bool append_mobile_sprite_hud_native(const MobileSpriteFrameJak1& frame,
     }
     u32 entry_index = 0;
     if (!find_entry(adgifs[index].tex0_data, &entry_index)) {
-      return false;
+      ++ottsel_hud_skipped;
+      continue;
     }
     const Entry& entry = entries[entry_index];
     const float color[4] = {std::clamp(vector.rgba.x, 0.f, 1.f),
@@ -4320,11 +5513,12 @@ static bool append_mobile_sprite_hud_native(const MobileSpriteFrameJak1& frame,
   ottsel_metal_append_sprite_mesh_n(g_metal, vertices.data(), (u32)vertices.size(), atlas.data(),
                                     kWidth, kHeight, 1);
   static u32 native_hud_logs = 0;
-  if (ottsel_mobile_log_within_budget(native_hud_logs, 8)) {
+  if (ottsel_mobile_log_within_budget(native_hud_logs, 24)) {
     ++native_hud_logs;
     lg::info("OTTSEL SPRITE METAL: native HUD atlas vertices={} sprites={} textures={} "
-             "atlas={}x{}",
-             (u32)vertices.size(), count, (u32)entries.size(), kWidth, kHeight);
+             "atlas={}x{} skipped={}",
+             (u32)vertices.size(), count, (u32)entries.size(), kWidth, kHeight,
+             ottsel_hud_skipped);
   }
   return true;
 }
@@ -4926,6 +6120,18 @@ static void trace_mobile_direct_bucket(const void* data,
                                        u32 start_offset,
                                        u32 next_bucket,
                                        OttselGifDecoder& decoder) {
+  // Opt in the decode-time sample logs for one launch.  This runs before the
+  // active check so the trigger is honoured even though the product consumer
+  // restores the trace flags after every vsync.
+  if (!g_mobile_direct_verbose) {
+    const std::string direct_verbose_path =
+        ottsel_ios_writable_dir() + "ottsel-trace-mobile-direct";
+    if (access(direct_verbose_path.c_str(), F_OK) == 0) {
+      unlink(direct_verbose_path.c_str());
+      g_mobile_direct_verbose = true;
+      lg::info("OTTSEL MOBILE DIRECT: verbose decode samples armed");
+    }
+  }
   if (!g_mobile_direct_trace.active) {
     return;
   }
@@ -4944,7 +6150,8 @@ static void trace_mobile_direct_bucket(const void* data,
   // linked DMA data.  Keep this diagnostic window bounded to the 64-transfer
   // capture used to identify them; the product Sprite3 walk remains bounded by
   // the actual next-bucket address below.
-  for (u32 transfer_index = 0; transfer_index < 64 && !dma.ended();
+  static u32 direct_tag_dumps = 0;
+  for (u32 transfer_index = 0; transfer_index < 512 && !dma.ended();
        ++transfer_index) {
     DmaTransfer transfer = dma.read_and_advance();
     ++transfers;
@@ -4953,6 +6160,14 @@ static void trace_mobile_direct_bucket(const void* data,
     if (vif0.kind == VifCode::Kind::DIRECT || vif1.kind == VifCode::Kind::DIRECT) {
       if (transfer.size_bytes >= 16) {
         const GifTag tag(transfer.data);
+        if (direct_tag_dumps < 24) {
+          ++direct_tag_dumps;
+          lg::info("OTTSEL DIRECT TAG: t={} size={} nloop={} eop={} pre={} prim=0x{:x} "
+                   "nreg={} kind={}",
+                   transfer_index, transfer.size_bytes, tag.nloop(), (int)tag.eop(),
+                   (int)tag.pre(), tag.prim(), tag.nreg(),
+                   (int)(vif0.kind == VifCode::Kind::DIRECT ? vif0.kind : vif1.kind));
+        }
         const bool is_d0_glyph = tag.nloop() == 1 && tag.eop() && tag.pre() &&
                                  tag.prim() == 0x5c && tag.nreg() == 13;
         if (is_d0_glyph) {
@@ -5175,11 +6390,30 @@ void trace_mobile_generic_buckets(const void* data, u32 chain_offset) {
     u32 unpack_v4_32 = 0;
     u32 fragment_uploads = 0;
     u32 mscal = 0;
+    u32 bucket_glyph_hits = 0;
+    u32 all_transfers = 0;
     std::array<u16, 8> entries{};
     u32 entry_count = 0;
+    const u32 walk_start = dma.current_tag_offset();
 
     while (!dma.ended() && dma.current_tag_offset() != next_boundary && transfers < 4096) {
       const DmaTransfer transfer = dma.read_and_advance();
+      ++all_transfers;
+      // Unconditional glyph census: find which bucket actually carries the
+      // title/debug text Direct packets (nloop==1, eop, pre, prim==0x5c,
+      // nreg==13).  Bounded, observability only.
+      {
+        const VifCode gv0 = transfer.vifcode0();
+        const VifCode gv1 = transfer.vifcode1();
+        if ((gv0.kind == VifCode::Kind::DIRECT || gv1.kind == VifCode::Kind::DIRECT) &&
+            transfer.size_bytes >= 16) {
+          const GifTag gtag(transfer.data);
+          if (gtag.nloop() == 1 && gtag.eop() && gtag.pre() && gtag.prim() == 0x5c &&
+              gtag.nreg() == 13) {
+            ++bucket_glyph_hits;
+          }
+        }
+      }
       if (generic || merc_ledger) {
         ++transfers;
         bytes += transfer.size_bytes;
@@ -5234,6 +6468,8 @@ void trace_mobile_generic_buckets(const void* data, u32 chain_offset) {
                "fragment-uploads={} mscal={} entries=[{}]",
                bucket_id, transfers, bytes, unpack_v4_32, fragment_uploads, mscal, entry_text);
     }
+    lg::info("OTTSEL BUCKET WINDOW: id={} start=0x{:x} end=0x{:x} transfers={} glyphs={}",
+             bucket_id, walk_start, next_boundary, all_transfers, bucket_glyph_hits);
   }
 }
 
@@ -5306,10 +6542,107 @@ static void trace_mobile_bucket_coverage(const void* data, u32 chain_offset) {
 }
 }  // namespace
 
+// The runtime texture-page hook is defined further down; the resident-upload
+// path inside the chain walker needs it before that definition.
+void gfx_texture_upload_now(const u8* tpage, int mode, u32 s7_ptr);
+
+// s7 is the GOAL symbol table base. handle_upload_now only uses it to skip the
+// "#f" entry in a texture page's descriptor array (kmachine.cpp n_now), so
+// interning "#f" once is enough. Retry until it resolves: the earlier calls can
+// run before the symbol table exists.
+u32 mobile_s7_pointer() {
+  static u32 cached = 0;
+  if (!cached) {
+    cached = g_pc_port_funcs.intern_from_c("#f").offset;
+  }
+  return cached;
+}
+
+// texture.gc:958 — a PC_PORT build replaces the PS2 VRAM upload inside
+// upload-vram-pages with a 16-byte {u64 page; s64 mode} packet. Upstream drains
+// those packets into TexturePool::handle_upload_now
+// (TextureUploadHandler.cpp:68-74). With no native drain the fake VRAM mirror
+// never receives the level's resident textures, so every tbp that no other path
+// uploads (the BSP sky sources tbp 0x10/0x14/0x20 among them) resolves to
+// nothing. GOAL re-emits the packet every time a bucket's texture page is set
+// up, so remember the page identity and only re-decode when it changes; the
+// heap address alone is not enough because a level reload reuses addresses.
+bool handle_mobile_pc_port_texture_upload(const DmaTransfer& t) {
+  if (t.size_bytes != 16 || VifCode(t.vif0()).kind != VifCode::Kind::PC_PORT ||
+      t.vif1() != 3) {
+    return false;
+  }
+  u64 page = 0;
+  s32 mode = 0;
+  memcpy(&page, t.data, sizeof(page));
+  memcpy(&mode, t.data + 8, sizeof(mode));
+  const u32 page_addr = (u32)page;
+  if (!g_ee_main_mem || !page_addr || page_addr >= 0x08000000) {
+    return true;
+  }
+  struct PageIdentity {
+    u32 id = 0;
+    s32 length = 0;
+    u32 seg0_size = 0;
+    u32 seg0_dest = 0;
+    u32 seg0_word0 = 0;
+    u32 seg0_word1 = 0;
+    s32 mode = 0;
+    bool operator==(const PageIdentity& o) const {
+      return id == o.id && length == o.length && seg0_size == o.seg0_size &&
+             seg0_dest == o.seg0_dest && seg0_word0 == o.seg0_word0 &&
+             seg0_word1 == o.seg0_word1 && mode == o.mode;
+    }
+  };
+  const u8* tpage = g_ee_main_mem + page_addr;
+  u32 seg0_ptr = 0;
+  memcpy(&seg0_ptr, tpage + 24, 4);
+  PageIdentity identity;
+  memcpy(&identity.id, tpage + 8, 4);
+  memcpy(&identity.length, tpage + 12, 4);
+  memcpy(&identity.seg0_size, tpage + 24 + 4, 4);
+  memcpy(&identity.seg0_dest, tpage + 24 + 8, 4);
+  if (seg0_ptr && seg0_ptr < 0x08000000) {
+    memcpy(&identity.seg0_word0, g_ee_main_mem + seg0_ptr, 4);
+    memcpy(&identity.seg0_word1, g_ee_main_mem + seg0_ptr + 4, 4);
+  }
+  identity.mode = mode;
+  static std::unordered_map<u32, PageIdentity> resident_pages;
+  const auto existing = resident_pages.find(page_addr);
+  if (existing != resident_pages.end() && existing->second == identity) {
+    return true;
+  }
+  resident_pages[page_addr] = identity;
+  static u32 resident_upload_logs = 0;
+  if (resident_upload_logs++ < 8) {
+    lg::info("OTTSEL TEXUPLOAD: page=0x{:x} id=0x{:x} mode={} len={} seg0=0x{:x} "
+             "size=0x{:x} dest0=0x{:x}",
+             page_addr, identity.id, mode, identity.length, seg0_ptr, identity.seg0_size,
+             identity.seg0_dest);
+  }
+  gfx_texture_upload_now(tpage, mode, mobile_s7_pointer());
+  return true;
+}
+
+// gfx_send_chain re-stats a dozen manual trigger files on every chain, and its
+// per-transfer probes re-stat them once per VIF transfer.  The writable
+// container dir is fixed for the process, so cache it once instead of building
+// a std::string per probe, and run the stats on only one chain in
+// kTriggerPollPeriod.  These triggers are human-timed diagnostics, so a ~0.35 s
+// window is imperceptible; the per-chain access() probes measured ~11% of the
+// game thread in a 5 s sample.
+static const std::string& ottsel_trigger_dir() {
+  static const std::string dir = ottsel_ios_writable_dir();
+  return dir;
+}
+static constexpr u32 kTriggerPollPeriod = 16;
+
 void gfx_send_chain(const void* data, u32 offset) {
   if (!data) {
     return;
   }
+  static u32 s_trigger_poll = 0;
+  const bool poll_triggers = (s_trigger_poll++ % kTriggerPollPeriod) == 0;
   // The native Metal path owns TIE/TFRAG/Sprite3 composition. The VU1/GIF
   // interpreter below is retained for SDL-only renderer diagnostics, but it
   // must not consume the game thread in the product path when an empty or
@@ -5324,8 +6657,8 @@ void gfx_send_chain(const void* data, u32 offset) {
     lg::info("OTTSEL VU1: cpu-diagnostic-path={}", run_cpu_vu_diagnostics ? "enabled" : "disabled");
   }
   static bool bucket_trace_consumed = false;
-  if (!bucket_trace_consumed) {
-    const std::string bucket_trace_path = ottsel_ios_writable_dir() + "ottsel-trace-mobile-buckets";
+  if (!bucket_trace_consumed && poll_triggers) {
+    const std::string bucket_trace_path = ottsel_trigger_dir() + "ottsel-trace-mobile-buckets";
     if (access(bucket_trace_path.c_str(), F_OK) == 0) {
       unlink(bucket_trace_path.c_str());
       bucket_trace_consumed = true;
@@ -5349,9 +6682,9 @@ void gfx_send_chain(const void* data, u32 offset) {
     }
   }
   static bool bucket_coverage_consumed = false;
-  if (!bucket_coverage_consumed) {
+  if (!bucket_coverage_consumed && poll_triggers) {
     const std::string coverage_path =
-        ottsel_ios_writable_dir() + "ottsel-trace-mobile-bucket-coverage";
+        ottsel_trigger_dir() + "ottsel-trace-mobile-bucket-coverage";
     if (access(coverage_path.c_str(), F_OK) == 0 && mobile_sprite_village1_phase()) {
       unlink(coverage_path.c_str());
       bucket_coverage_consumed = true;
@@ -5367,19 +6700,22 @@ void gfx_send_chain(const void* data, u32 offset) {
   g_dec.rst = &g_raster;
   g_mobile_chain_no++;
   g_dec.chain_no = g_mobile_chain_no;
-  static bool native_sky_product_requested = false;
   const std::string native_sky_product_path =
-      ottsel_ios_writable_dir() + "ottsel-enable-native-sky-product";
-  if (!native_sky_product_requested && mobile_sprite_village1_phase() &&
+      ottsel_trigger_dir() + "ottsel-enable-native-sky-product";
+  // The sky is submitted on every Village1 frame now, matching upstream
+  // SkyRenderer.  This probe only restarts the bounded diagnostic log so a
+  // fresh run can be inspected without gating the submission itself.
+  if (poll_triggers && mobile_sprite_village1_phase() &&
       access(native_sky_product_path.c_str(), F_OK) == 0) {
     unlink(native_sky_product_path.c_str());
-    native_sky_product_requested = true;
-    lg::info("OTTSEL SKY PRODUCT: enabled at vsync={}", g_ottsel_ios_vsync_count);
+    g_sky_product_diag_logs = 0;
+    lg::info("OTTSEL SKY PRODUCT: diagnostics re-armed at vsync={}",
+             g_ottsel_ios_vsync_count);
   }
-  const std::string direct_trace_path = ottsel_ios_writable_dir() + "ottsel-trace-mobile-direct";
+  const std::string direct_trace_path = ottsel_trigger_dir() + "ottsel-trace-mobile-direct";
   const std::string direct_product_path =
-      ottsel_ios_writable_dir() + "ottsel-enable-native-direct-product";
-  if (!g_mobile_direct_trace.active &&
+      ottsel_trigger_dir() + "ottsel-enable-native-direct-product";
+  if (poll_triggers && !g_mobile_direct_trace.active &&
       (access(direct_trace_path.c_str(), F_OK) == 0 ||
        access(direct_product_path.c_str(), F_OK) == 0)) {
     const bool native_product = access(direct_product_path.c_str(), F_OK) == 0;
@@ -5396,8 +6732,9 @@ void gfx_send_chain(const void* data, u32 offset) {
   }
   static bool direct_fixture_triggered = false;
   const std::string direct_fixture_path =
-      ottsel_ios_writable_dir() + "ottsel-trace-metal-direct-fixture";
-  if (!direct_fixture_triggered && g_metal && access(direct_fixture_path.c_str(), F_OK) == 0) {
+      ottsel_trigger_dir() + "ottsel-trace-metal-direct-fixture";
+  if (poll_triggers && !direct_fixture_triggered && g_metal &&
+      access(direct_fixture_path.c_str(), F_OK) == 0) {
     unlink(direct_fixture_path.c_str());
     direct_fixture_triggered = true;
     // Generated 2x2 red/transparent checkerboard; no protected texels or
@@ -5411,15 +6748,16 @@ void gfx_send_chain(const void* data, u32 offset) {
     lg::info("OTTSEL METAL DIRECT: fixture accepted image=2x2 rect=0.375,0.375,0.25,0.25 "
              "cpu-raster=0");
   }
-  const std::string generic_probe_path = ottsel_ios_writable_dir() + "ottsel-probe-generic-vu";
-  if (!g_mobile_generic_probe_pending && access(generic_probe_path.c_str(), F_OK) == 0) {
+  const std::string generic_probe_path = ottsel_trigger_dir() + "ottsel-probe-generic-vu";
+  if (poll_triggers && !g_mobile_generic_probe_pending &&
+      access(generic_probe_path.c_str(), F_OK) == 0) {
     unlink(generic_probe_path.c_str());
     g_mobile_generic_probe_pending = true;
     lg::info("OTTSEL GENERIC VU: probe accepted; awaiting MSCAL 46");
   }
   const std::string generic_bucket_trace_path =
-      ottsel_ios_writable_dir() + "ottsel-trace-generic-buckets";
-  if (access(generic_bucket_trace_path.c_str(), F_OK) == 0) {
+      ottsel_trigger_dir() + "ottsel-trace-generic-buckets";
+  if (poll_triggers && access(generic_bucket_trace_path.c_str(), F_OK) == 0) {
     unlink(generic_bucket_trace_path.c_str());
     lg::info("OTTSEL GENERIC BUCKET: trace accepted chain={}", g_chain_no + 1);
     trace_mobile_generic_buckets(data, offset);
@@ -5448,8 +6786,17 @@ void gfx_send_chain(const void* data, u32 offset) {
   if (g_chain_no % 90 == 0) {
     lg::info("OTTSEL VU1STAT: chain={} vu1-runs={} capped={} xgkicks={} last-pc={} nonzero-gif={} "
              "gif-words={} draws={}",
-             g_chain_no, g_vu1_runs_period, g_vu1_capped_period, g_vu1_xgkicks_period,
-             g_vu1_last_pc, g_vu1_nonzero_period, g_vu1_gifwords_period, g_raster.draw_count);
+            g_chain_no, g_vu1_runs_period, g_vu1_capped_period, g_vu1_xgkicks_period,
+            g_vu1_last_pc, g_vu1_nonzero_period, g_vu1_gifwords_period, g_raster.draw_count);
+    lg::info("OTTSEL SUBMITSTAT: chain={} cam-entries={} cam-level-rejects={} cam-accepted={} "
+             "scene-level='{}' tie-ready={} tfrag-ready={} merc-submits={} eichar={} "
+             "eichar-attempts={} vsync={} "
+             "raster-draws={}",
+             g_chain_no, g_ottsel_camera_entry_total, g_ottsel_camera_reject_total,
+             g_mobile_camera_packet_count, g_mobile_tie_level, g_mobile_tie_visibility_ready,
+             g_mobile_tfrag_visibility_ready, g_mobile_merc_submit_total,
+             g_mobile_eichar_submit_total, g_mobile_eichar_attempt_total,
+             g_ottsel_ios_vsync_count, g_raster.draw_count);
     g_vu1_runs_period = 0;
     g_vu1_nonzero_period = 0;
     g_vu1_capped_period = 0;
@@ -5497,7 +6844,7 @@ void gfx_send_chain(const void* data, u32 offset) {
   static FILE* g_tfrag_dump = nullptr;
   static u32 g_tfrag_dump_recs = 0;
   if (cpu_vu_dumps_enabled && !g_tfrag_dump) {
-    std::string path = ottsel_ios_writable_dir() + "tfrag-vu-data.bin";
+    std::string path = ottsel_trigger_dir() + "tfrag-vu-data.bin";
     g_tfrag_dump = fopen(path.c_str(), "wb");
     if (g_tfrag_dump) {
       u32 hdr[2] = {0};
@@ -5512,7 +6859,7 @@ void gfx_send_chain(const void* data, u32 offset) {
   static FILE* g_vif_replay = nullptr;
   static u32 g_vif_replay_recs = 0;
   if (cpu_vu_dumps_enabled && !g_vif_replay) {
-    std::string rpath = ottsel_ios_writable_dir() + "tfrag-vif-replay.bin";
+    std::string rpath = ottsel_trigger_dir() + "tfrag-vif-replay.bin";
     g_vif_replay = fopen(rpath.c_str(), "wb");
   }
   const u8* base = (const u8*)data;
@@ -5793,6 +7140,10 @@ void gfx_send_chain(const void* data, u32 offset) {
       }
     }
   }
+  // The manual trigger files are human-timed diagnostics whose state is
+  // chain-invariant, so probe for this one once per chain instead of once per
+  // VIF transfer.
+  bool merc_trace_probe_done = false;
   unsigned int count = 0;
   while (ottsel_mobile_dma_decode_can_continue(dma.ended(), count)) {
     DmaTransfer t = dma.read_and_advance();
@@ -5845,6 +7196,13 @@ void gfx_send_chain(const void* data, u32 offset) {
     }
     VifCode v1(t.vif1());
     VifCode v0(t.vif0());
+    if (handle_mobile_pc_port_texture_upload(t)) {
+      // Resident texture upload: no camera or actor payload rides with it.
+    }
+    if (t.size_bytes == 160 && v0.kind == VifCode::Kind::STCYCL &&
+        v1.kind == VifCode::Kind::STMOD) {
+      capture_mobile_merc_setup(t);
+    }
     if (v0.kind == VifCode::Kind::PC_PORT || v1.kind == VifCode::Kind::PC_PORT) {
       // Camera packets establish the scene owner and view used by the
       // following native actor submissions. Consume them first so a Merc
@@ -5860,8 +7218,9 @@ void gfx_send_chain(const void* data, u32 offset) {
     static u32 native_merc_trace_count = 0;
     static u32 native_merc_trace_invalid_count = 0;
     static std::unordered_set<std::string> native_merc_trace_names;
-    if (!g_mobile_merc_trace) {
-      const std::string trace_path = ottsel_ios_writable_dir() + "ottsel-trace-native-merc";
+    if (poll_triggers && !g_mobile_merc_trace && !merc_trace_probe_done) {
+      merc_trace_probe_done = true;
+      const std::string trace_path = ottsel_trigger_dir() + "ottsel-trace-native-merc";
       if (access(trace_path.c_str(), F_OK) == 0) {
         unlink(trace_path.c_str());
         g_mobile_merc_trace = true;
@@ -6162,9 +7521,22 @@ void gfx_send_chain(const void* data, u32 offset) {
       static int ottsel_pad_watch = 0;
       static u32 ottsel_pw_div = 0;
       if (g_ottsel_synthetic_frames > 0) ottsel_pad_watch = 600;
+      // BOT42 Gate B: nothing in the shell ever sets g_ottsel_synthetic_frames,
+      // so this probe had never armed. Allow it to be armed from outside with
+      // the usual self-unlinking trigger so the pad edge can be observed
+      // without a rebuild cycle for every sample.
+      {
+        const std::string pad_trig =
+            ottsel_trigger_dir() + "ottsel-trace-padstat";
+        if (poll_triggers && access(pad_trig.c_str(), F_OK) == 0) {
+          unlink(pad_trig.c_str());
+          ottsel_pad_watch = 600;
+          lg::info("OTTSEL PADSTAT: bounded pad-edge probe armed");
+        }
+      }
       if (ottsel_pad_watch > 0 && g_ee_main_mem) {
         ottsel_pad_watch--;
-        if ((++ottsel_pw_div % 15) == 0) {
+        if ((++ottsel_pw_div % 1) == 0) {
           auto cls = g_pc_port_funcs.intern_from_c("*cpad-list*");
           auto mms = g_pc_port_funcs.intern_from_c("*master-mode*");
           u32 cl = 0, mm = 0;
@@ -6401,8 +7773,15 @@ void gfx_send_chain(const void* data, u32 offset) {
       ++bucket_transfers;
       const VifCode v0(t.vif0());
       const VifCode v1(t.vif1());
+      if (t.size_bytes == 160 && v0.kind == VifCode::Kind::STCYCL &&
+          v1.kind == VifCode::Kind::STMOD) {
+        capture_mobile_merc_setup(t);
+      }
       if (v0.kind != VifCode::Kind::PC_PORT && v1.kind != VifCode::Kind::PC_PORT) {
         continue;
+      }
+      if (handle_mobile_pc_port_texture_upload(t)) {
+        continue;  // resident texture upload, not a camera or actor packet
       }
       if (t.size_bytes == sizeof(OttselPcPortData)) {
         g_mobile_camera_last_chain = g_chain_no;
@@ -6430,8 +7809,8 @@ void gfx_send_chain(const void* data, u32 offset) {
   const DmaTag next_bucket(*(const u64*)((const u8*)data + offset + 68 * 16));
   static bool sky_ir_trace_consumed = false;
   const std::string sky_ir_trace_path =
-      ottsel_ios_writable_dir() + "ottsel-trace-mobile-sky-ir";
-  if (!sky_ir_trace_consumed && mobile_sprite_village1_phase() &&
+      ottsel_trigger_dir() + "ottsel-trace-mobile-sky-ir";
+  if (poll_triggers && !sky_ir_trace_consumed && mobile_sprite_village1_phase() &&
       access(sky_ir_trace_path.c_str(), F_OK) == 0) {
     unlink(sky_ir_trace_path.c_str());
     sky_ir_trace_consumed = true;
@@ -6439,6 +7818,69 @@ void gfx_send_chain(const void* data, u32 offset) {
                                   ottsel_mobile_jak1_bucket_boundary(offset, 3),
                                   ottsel_mobile_jak1_bucket_boundary(offset, 4),
                                   g_dec, 3);
+  }
+  // I1.1b: bucket 32 is the documented producer of the generated 32x32
+  // (0x1f80) and 64x64 (0x1fa0) sky buffers, but nothing in the native path
+  // generates them, so every completed SKY_DRAW fan is pruned as a texture
+  // miss.  Settled Village1 frames short-circuit on CALL (matching upstream
+  // SkyRenderer.cpp:20-30), so sampling only settled vsyncs cannot see a
+  // generation that runs once at level load.  Scan every chain from launch
+  // instead and only dump detail for a window that actually carries the
+  // qwc == 6 copy pairs.
+  static bool sky_blend_probe_armed = false;
+  static u32 sky_blend_scan_chains = 0;
+  static u32 sky_blend_scan_hits = 0;
+  const std::string sky_blend_probe_path =
+      ottsel_trigger_dir() + "ottsel-trace-mobile-sky-blend";
+  if (poll_triggers && !sky_blend_probe_armed &&
+      access(sky_blend_probe_path.c_str(), F_OK) == 0) {
+    unlink(sky_blend_probe_path.c_str());
+    sky_blend_probe_armed = true;
+    sky_blend_scan_chains = 0;
+    sky_blend_scan_hits = 0;
+    lg::info("OTTSEL SKY BLEND: scan armed vsync={}", g_ottsel_ios_vsync_count);
+  }
+  constexpr u32 kSkyBlendScanChains = 20000;
+  if (sky_blend_probe_armed && sky_blend_scan_chains < kSkyBlendScanChains) {
+    static const u32 kSkyBlendBuckets[] = {32, 39};
+    for (u32 sky_bucket : kSkyBlendBuckets) {
+      if (scan_mobile_sky_blend_pairs(data,
+                                      ottsel_mobile_jak1_bucket_boundary(offset, sky_bucket),
+                                      ottsel_mobile_jak1_bucket_boundary(offset, sky_bucket + 1))) {
+        ++sky_blend_scan_hits;
+        lg::info("OTTSEL SKY BLEND: HIT bucket={} chain={} vsync={}",
+                 sky_bucket, sky_blend_scan_chains, g_ottsel_ios_vsync_count);
+        probe_mobile_sky_blend_bucket(data,
+                                      ottsel_mobile_jak1_bucket_boundary(offset, sky_bucket),
+                                      ottsel_mobile_jak1_bucket_boundary(offset, sky_bucket + 1),
+                                      sky_blend_scan_chains);
+      }
+    }
+    ++sky_blend_scan_chains;
+    if (sky_blend_scan_chains >= kSkyBlendScanChains) {
+      lg::info("OTTSEL SKY BLEND: scan complete chains={} hits={}",
+               sky_blend_scan_chains, sky_blend_scan_hits);
+      sky_blend_probe_armed = false;
+    }
+  }
+  // I1.1b: generate the sky buffers before this chain's SKY_DRAW fans are
+  // submitted, so the fans find a real texture instead of being pruned as
+  // texture misses.  Both level slots are produced in bucket order, matching
+  // upstream's two SkyBlendHandlers sharing one pair of buffers.
+  if (mobile_sprite_village1_phase()) {
+    static u32 sky_blend_vram_misses = 0;
+    static u32 sky_blend_produced_logs = 0;
+    u32 produced = produce_mobile_sky_blend_bucket(
+        data, ottsel_mobile_jak1_bucket_boundary(offset, 32),
+        ottsel_mobile_jak1_bucket_boundary(offset, 33), &sky_blend_vram_misses);
+    produced += produce_mobile_sky_blend_bucket(
+        data, ottsel_mobile_jak1_bucket_boundary(offset, 39),
+        ottsel_mobile_jak1_bucket_boundary(offset, 40), &sky_blend_vram_misses);
+    if (produced && sky_blend_produced_logs < 4) {
+      ++sky_blend_produced_logs;
+      lg::info("OTTSEL SKY BLEND: produced copies={} misses={} vsync={}",
+               produced, sky_blend_vram_misses, g_ottsel_ios_vsync_count);
+    }
   }
   struct SpriteFrameAggregate {
     bool active = false;
@@ -6448,8 +7890,9 @@ void gfx_send_chain(const void* data, u32 offset) {
   };
   static SpriteFrameAggregate sprite_frame_aggregate;
   const std::string frame_aggregate_path =
-      ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite-frame-aggregate";
-  if (!sprite_frame_aggregate.active && access(frame_aggregate_path.c_str(), F_OK) == 0) {
+      ottsel_trigger_dir() + "ottsel-trace-mobile-sprite-frame-aggregate";
+  if (poll_triggers && !sprite_frame_aggregate.active &&
+      access(frame_aggregate_path.c_str(), F_OK) == 0) {
     unlink(frame_aggregate_path.c_str());
     sprite_frame_aggregate = {};
     sprite_frame_aggregate.active = true;
@@ -6489,26 +7932,24 @@ void gfx_send_chain(const void* data, u32 offset) {
     sprite_frame_aggregate.active = false;
   }
   if (sprite_bucket.addr && debug_bucket.addr) {
-    static u32 native_sky_product_vsync = UINT32_MAX;
-    static u32 native_sky_product_submissions = 0;
-    // I1.1 discrimination: sample one chain per vsync across several Village1
-    // frames.  The earlier single-shot form captured whichever chain arrived
-    // first, which cannot distinguish "Sky has no PRIM" from "this chain's
-    // Sky did not draw" (upstream SkyRenderer short-circuits on CALL).
-    constexpr u32 kSkyProductSampleChains = 8;
-    if (native_sky_product_requested && mobile_sprite_village1_phase() &&
-        native_sky_product_vsync != g_ottsel_ios_vsync_count &&
-        native_sky_product_submissions < kSkyProductSampleChains) {
-      native_sky_product_vsync = g_ottsel_ios_vsync_count;
-      submit_mobile_native_sky_bucket(
-          data, ottsel_mobile_jak1_bucket_boundary(offset, 3),
-          ottsel_mobile_jak1_bucket_boundary(offset, 4), g_dec,
-          native_sky_product_submissions);
-      ++native_sky_product_submissions;
-      if (native_sky_product_submissions >= kSkyProductSampleChains) {
-        native_sky_product_requested = false;
-      }
-    }
+  static u32 native_sky_product_vsync = UINT32_MAX;
+  static u32 native_sky_product_submissions = 0;
+  // Upstream SkyRenderer::render draws bucket 3 every frame; it only
+  // short-circuits when the chain carries a CALL instead of a draw list.  The
+  // native path had this submission gated behind the one-shot
+  // "ottsel-enable-native-sky-product" probe, so outside those few sampled
+  // frames nothing ever reached _skyBatches and the composed Village1 frame
+  // had no sky at all.  Submit once per vsync during the Village1 phase, like
+  // the reference; the diagnostic log below stays bounded to the first frames.
+  if (mobile_sprite_village1_phase() &&
+      native_sky_product_vsync != g_ottsel_ios_vsync_count) {
+    native_sky_product_vsync = g_ottsel_ios_vsync_count;
+    ++native_sky_product_submissions;
+    submit_mobile_native_sky_bucket(
+        data, ottsel_mobile_jak1_bucket_boundary(offset, 3),
+        ottsel_mobile_jak1_bucket_boundary(offset, 4), g_dec,
+        native_sky_product_submissions);
+  }
     MobileSpriteFrameJak1 inherited_frame{};
     MobileSpriteMatrix inherited_matrix{};
     MobileSpriteHudMatrix inherited_hud{};
@@ -6537,8 +7978,9 @@ void gfx_send_chain(const void* data, u32 offset) {
     }
     static bool sprite_product_window_consumed = false;
     const std::string product_window_path =
-        ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite-product-window";
-    if (!sprite_product_window_consumed && mobile_sprite_village1_phase() && next_bucket.addr &&
+        ottsel_trigger_dir() + "ottsel-trace-mobile-sprite-product-window";
+    if (poll_triggers && !sprite_product_window_consumed && mobile_sprite_village1_phase() &&
+        next_bucket.addr &&
         access(product_window_path.c_str(), F_OK) == 0) {
       unlink(product_window_path.c_str());
       sprite_product_window_consumed = true;
@@ -6551,8 +7993,8 @@ void gfx_send_chain(const void* data, u32 offset) {
                                     &inherited_matrix, &inherited_hud, &have_inherited_frame,
                                     &have_inherited_matrix, &have_inherited_hud);
     static bool sprite_trace_requested = false;
-    if (!sprite_trace_requested) {
-      const std::string sprite_trace_path = ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite";
+    if (poll_triggers && !sprite_trace_requested) {
+      const std::string sprite_trace_path = ottsel_trigger_dir() + "ottsel-trace-mobile-sprite";
       if (access(sprite_trace_path.c_str(), F_OK) == 0) {
         unlink(sprite_trace_path.c_str());
         sprite_trace_requested = true;
@@ -6568,9 +8010,9 @@ void gfx_send_chain(const void* data, u32 offset) {
       // The screen-space Sprite3 group is walked in the inherited second
       // bucket. Keep its parser trace independent from the world bucket so a
       // one-shot diagnostic can inspect the MSCAL=109 producer contract.
-      if (mobile_sprite_village1_phase() && !g_mobile_sprite_parser_trace) {
+      if (poll_triggers && mobile_sprite_village1_phase() && !g_mobile_sprite_parser_trace) {
         const std::string bucket67_parser_path =
-            ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite-bucket67-parser";
+            ottsel_trigger_dir() + "ottsel-trace-mobile-sprite-bucket67-parser";
         if (access(bucket67_parser_path.c_str(), F_OK) == 0) {
           unlink(bucket67_parser_path.c_str());
           g_mobile_sprite_parser_trace = true;
@@ -6594,8 +8036,8 @@ void gfx_send_chain(const void* data, u32 offset) {
   if (debug_bucket.addr && next_bucket.addr) {
     static bool sprite_phase_bucket65_consumed = false;
     const std::string phase_bucket65_path =
-        ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite-bucket65";
-    if (!sprite_phase_bucket65_consumed && mobile_sprite_village1_phase() &&
+        ottsel_trigger_dir() + "ottsel-trace-mobile-sprite-bucket65";
+    if (poll_triggers && !sprite_phase_bucket65_consumed && mobile_sprite_village1_phase() &&
         setup_bucket.addr && sprite_bucket.addr && access(phase_bucket65_path.c_str(), F_OK) == 0) {
       unlink(phase_bucket65_path.c_str());
       sprite_phase_bucket65_consumed = true;
@@ -6606,8 +8048,8 @@ void gfx_send_chain(const void* data, u32 offset) {
     }
     static bool sprite_phase_window_consumed = false;
     const std::string phase_window_path =
-        ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite-phase-window";
-    if (!sprite_phase_window_consumed && mobile_sprite_village1_phase() &&
+        ottsel_trigger_dir() + "ottsel-trace-mobile-sprite-phase-window";
+    if (poll_triggers && !sprite_phase_window_consumed && mobile_sprite_village1_phase() &&
         access(phase_window_path.c_str(), F_OK) == 0) {
       unlink(phase_window_path.c_str());
       sprite_phase_window_consumed = true;
@@ -6622,8 +8064,8 @@ void gfx_send_chain(const void* data, u32 offset) {
     }
     static bool sprite_phase_bucket67_consumed = false;
     const std::string phase_bucket67_path =
-        ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite-bucket67";
-    if (!sprite_phase_bucket67_consumed && mobile_sprite_village1_phase() &&
+        ottsel_trigger_dir() + "ottsel-trace-mobile-sprite-bucket67";
+    if (poll_triggers && !sprite_phase_bucket67_consumed && mobile_sprite_village1_phase() &&
         access(phase_bucket67_path.c_str(), F_OK) == 0) {
       unlink(phase_bucket67_path.c_str());
       sprite_phase_bucket67_consumed = true;
@@ -6632,8 +8074,9 @@ void gfx_send_chain(const void* data, u32 offset) {
     }
     static bool bucket67_world_probe_consumed = false;
     const std::string bucket67_world_probe_path =
-        ottsel_ios_writable_dir() + "ottsel-trace-mobile-sprite-bucket67-world-metal";
-    if (!bucket67_world_probe_consumed && access(bucket67_world_probe_path.c_str(), F_OK) == 0) {
+        ottsel_trigger_dir() + "ottsel-trace-mobile-sprite-bucket67-world-metal";
+    if (poll_triggers && !bucket67_world_probe_consumed &&
+        access(bucket67_world_probe_path.c_str(), F_OK) == 0) {
       unlink(bucket67_world_probe_path.c_str());
       bucket67_world_probe_consumed = true;
       const bool old_probe_requested = g_mobile_native_sprite_probe_requested;
@@ -6655,7 +8098,40 @@ void gfx_send_chain(const void* data, u32 offset) {
                "fixture-uploaded={} cpu-product-frame=0",
                g_chain_no, g_ottsel_ios_vsync_count, drawn, candidates, uploaded);
     }
-    trace_mobile_direct_bucket(data, debug_bucket.addr, next_bucket.addr, g_dec);
+    // Foreground Direct/GIF text (title logo, PRESS START, debug/menu text).
+    // Submitted once per vsync like the sky, but drawn after the world and
+    // after sprites by the renderer's separate _directBatches store.
+    // The debug/Direct bucket lives in the submitted chain's bucket table, not
+    // at debug_bucket.addr: the chain opens with one CALL qword, so bucket N
+    // sits at offset + 16 * (N + 1) and the tag at table index 67 is bucket
+    // 66's entry.  The generic-bucket census measured 22 title/Direct glyph
+    // packets in the table window for bucket 67 and none in the tag-addr
+    // window, so the table window is the correct consumer.
+    const u32 direct_bucket_begin = ottsel_mobile_jak1_bucket_boundary(offset, 67);
+    const u32 direct_bucket_end = ottsel_mobile_jak1_bucket_boundary(offset, 68);
+    static bool direct_window_logged = false;
+    if (!direct_window_logged) {
+      direct_window_logged = true;
+      lg::info("OTTSEL DIRECT WINDOW: chain-offset=0x{:x} table-begin=0x{:x} table-end=0x{:x} "
+               "tag67-addr=0x{:x} tag68-addr=0x{:x}",
+               offset, direct_bucket_begin, direct_bucket_end, debug_bucket.addr,
+               next_bucket.addr);
+    }
+    static u32 native_direct_product_vsync = UINT32_MAX;
+    static u32 native_direct_product_submissions = 0;
+    // The debug/Direct bucket carries the title logo, PRESS START, and menu
+    // text, which the game emits while the camera level is still 'title'/
+    // 'progress', not 'village1'.  Gating this consumer on the village1 phase
+    // disabled it for exactly the state that has text, so gate on the bucket
+    // window only.  The window is 6-24 transfers, so running it every phase is
+    // cheap and it submits nothing when the bucket holds no text.
+    if (g_metal && native_direct_product_vsync != g_ottsel_ios_vsync_count) {
+      native_direct_product_vsync = g_ottsel_ios_vsync_count;
+      ++native_direct_product_submissions;
+      submit_mobile_native_direct_bucket(data, direct_bucket_begin, direct_bucket_end, g_dec, 67,
+                                         native_direct_product_submissions);
+    }
+    trace_mobile_direct_bucket(data, direct_bucket_begin, direct_bucket_end, g_dec);
   }
 }
 // Read the tpage id back out of the header (offset 8).
@@ -7007,8 +8483,10 @@ void gfx_texture_upload_now(const u8* tpage, int mode, u32 s7_ptr) {
     }
   }
   int w = 0, h = 0;
-  std::vector<unsigned char> rgba;
-  rgba.resize(4096 * 4096 * 4);
+  // Reused across calls: the debug decode raster only needs a 2048x2048 RGBA
+  // page, and a per-call 64 MB allocation would dominate the now-per-frame
+  // resident-upload path.
+  static std::vector<unsigned char> rgba(4096 * 4096 * 4);
   u32 tex_idx = 0;
   const bool decoded_page = decode_largest_texture(tpage, mode, s7_ptr, rgba.data(), w, h,
                                                     &tex_idx);
@@ -7032,17 +8510,42 @@ void gfx_texture_upload_now(const u8* tpage, int mode, u32 s7_ptr) {
       if (!tex_width || !tex_height || tex_width > 2048 || tex_height > 2048 || !tex.dest[0]) {
         continue;
       }
-      std::vector<u8> direct_rgba((size_t)tex_width * tex_height * 4, 0);
-      const bool texture_decoded = download_texture_rgba8888(
-          direct_rgba.data(), tex.dest[0], std::max(1u, (u32)tex.width[0]), tex_width,
-          tex_height, tex.psm, tex.clutpsm, tex.clut_dest);
-      if (!texture_decoded) {
+      // Same image every frame for a settled texture page, so decode it once.
+      auto direct_rgba = download_texture_cached(
+          tex.dest[0], std::max(1u, (u32)tex.width[0]), tex_width, tex_height, tex.psm,
+          tex.clutpsm, tex.clut_dest);
+      if (!direct_rgba) {
         continue;
       }
       g_direct_texture_metadata[tex.dest[0]] = {
           tex_width, tex_height, tex.psm, tex.clutpsm, tex.clut_dest};
-      ottsel_metal_upload_direct_texture(g_metal, direct_rgba.data(), tex_width, tex_height,
+      ottsel_metal_upload_direct_texture(g_metal, direct_rgba->data(), tex_width, tex_height,
                                          direct_texture_cache_key(tex.dest[0], tex.psm));
+      // BOT40 I1.1f: every Direct draw resolves its texture through
+      // g_direct_relocated_textures, which is the native analogue of upstream's
+      // TexturePool::copy_texture_data slot lookup.  Until now only the few
+      // relocated pages and the generated sky buffers were registered there, so
+      // every other Direct draw (and the sky blend source) fell back to a raw
+      // GS-VRAM decode that takes the CLUT base from the ADGIF instead of from
+      // the game's own texture record.  Register the record decode too, with a
+      // hard byte budget so the cache cannot grow without bound.
+      {
+        static size_t s_reloc_bytes = 0;
+        const u64 cache_key = direct_texture_cache_key(tex.dest[0], tex.psm);
+        const size_t bytes = direct_rgba->size();
+        const auto existing = g_direct_relocated_textures.find(cache_key);
+        if (existing != g_direct_relocated_textures.end()) {
+          s_reloc_bytes -= existing->second.rgba.size();
+        }
+        if (s_reloc_bytes + bytes <= (size_t)256u * 1024u * 1024u) {
+          DirectRelocatedTexture relocated;
+          relocated.width = tex_width;
+          relocated.height = tex_height;
+          relocated.rgba = *direct_rgba;
+          g_direct_relocated_textures[cache_key] = std::move(relocated);
+          s_reloc_bytes += bytes;
+        }
+      }
       ++direct_uploads;
     }
     if (direct_uploads) {
