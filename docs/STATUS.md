@@ -1,5 +1,17 @@
 # STATUS — Ottsel
 
+## Current board — 2026-09-10
+
+`docs/BOT38_PROMPT.md` is the authoritative queue. Platform order is resolved:
+macOS is frozen as the accepted behavioral/visual reference, the iPad Simulator
+renderer is the active engineering gate (I1), and iPhone/device work stays
+behind a coherent iPad route. The 2026-08-21 self-audit below is preserved
+evidence history; its "macOS first / mobile paused" ordering is superseded.
+
+Blocker: the AGENTS.md disk precondition FAILS (Avail 20Gi on `/`, 0 temp
+packs), so no build, boot, or recording may run. Restoring the 40 GB floor
+requires a user-approved, named cleanup.
+
 ## Current self-audit — 2026-08-21
 
 **Plain status:** macOS now has one fresh bounded stability increment, but it
