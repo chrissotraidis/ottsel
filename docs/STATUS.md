@@ -3730,3 +3730,83 @@ so it cannot report what the GPU samples; the default sampler is `Repeat`
 `g_direct_texture_metadata`-keyed-by-`dest`-alone sky lead is not confirmed
 (`key-present=1 meta-same-dest=1`, `SKY BLEND produced copies=3 misses=0`).
 Evidence: `docs/evidence/I1/BOT45-sky-probe-misleading.md`.
+
+2026-09-11 (BOT46, REFUTATION): the progress menu DOES draw text on iPad.
+Restoring upstream Start behaviour in `title-obs.gc` and injecting Start at
+title-wait gives a screenshot with "PRESS START" on the title prompt and
+"OPTIONS" on the menu, with `OTTSEL PROGRESS: normal screen=27 state=27` and a
+0-byte fault log. The BOT44 claim "only its text and logo fail to draw" is
+refuted. Evidence: `docs/evidence/I1/BOT46-menu-text-renders.md`.
+
+2026-09-11 (BOT46, CORRECTION): BOT45 Gate V2 is withdrawn. The title loader is
+busy for the full ~54 s logo intro (15 parts at ~4 s each in both the iPad clean
+run and the Mac reference), so gating Start on
+`(= (-> *art-control* active-stream) #f)` would drop the press, not fix it.
+The "309 stalls vs 0" contrast measured the menu being open.
+Evidence: `docs/evidence/I1/BOT46-menu-text-renders.md`.
+
+2026-09-11 (BOT46, OPEN): Gate G1 is now "why do 3 of the 4 `*title*` entries
+not draw". Only `OPTIONS` of `NEW GAME / LOAD GAME / OPTIONS / BACK` renders and
+there is no menu backdrop. Gate N1 (drive NEW GAME into Village1) follows.
+Next: `docs/BOT46_PROMPT.md`.
+
+2026-09-11 (BOT48, ROOT CAUSE): the earlier G1 instrumentation never ran.
+`pc/progress-pc.gc` shadows the engine progress path — `draw-options` at :2972 and
+`(set! (-> progress-normal post) ...)` at :3453 replace `progress-draw.gc:841` and
+`progress.gc:1152`. The BOT46 probes in `engine/ui/progress/` are dead code on this
+build; the installed GAME.CGO contains them twice and the log produced 0 lines from
+them. Instrument `pc/progress-pc.gc`. Evidence: `docs/evidence/I1/BOT48-g1-pc-progress-path.md`.
+
+2026-09-11 (BOT48, REFUTATION): the title screen is the PC menu `*title-pc*`
+(`pc/progress-pc.gc:747`), six entries `NEW GAME/LOAD GAME/OPTIONS/SECRETS/QUIT
+GAME/BACK` — not the four-entry `*title*`. All six resolve a string and draw every
+frame at `tpi=1000 sa=1000 a=128` with the scroll window fully open. "Only OPTIONS
+renders" is refuted; the menu layer submits correctly.
+
+2026-09-11 (BOT48, OPEN, Gate G1): the real defect is glyph legibility. On a static
+scene (0.30% of pixels differ between frames) one frame shows "LOAD GAME"+"OPTIONS"
+and another "SECRETS"+"QUIT". Every label draws twice, light glyph plus black drop
+shadow (`pc/progress-pc.gc:3011`); the light pass drops intermittently, leaving the
+shadow or nothing. G1 becomes "why does the light glyph pass drop per frame", in the
+sprite/text draw path (`print-game-text`, sprite TEX0/alpha), not in menu logic.
+
+2026-09-11 (BOT48, PARTIAL, Gate N1): `NEW GAME` + Cross advances the route to the
+save-game-title screen (`str="CONTINUE WITHOUT SAVING"`), fault log 0 bytes,
+`scene-level='village1' merc-submits=4812 eichar=294`. Village1 gameplay with Jak
+visible and input-accepted is still unproven.
+
+2026-09-11 (BOT48, CORRECTION): `docs/BOT46_PROMPT.md` Gate N1 is wrong — there is no
+`/tmp/ottsel-press-button`. The seams are `src/shell/main.cpp:983-1025`:
+`ottsel-press-start`->RETURN, `ottsel-press-cross`->SPACE, `ottsel-press-left`->LEFT,
+`ottsel-press-down`->DOWN, `ottsel-bg-village1`, polled every 30 frames and unlinked
+after firing. Inject with `: > "$W/ottsel-press-start"`. `simctl install` recreates
+the data container, so re-resolve it or every press is silently swallowed.
+
+2026-09-11 (BOT48, BUILD): 546 targets in 34.2s. GAME.CGO
+`d5a09f0d59816f90b893b37ea72fc38f6c628b8c3667f9b983924cd507f467df` (identical in
+`out/jak1/iso/` and the installed bundle, carrying the live G1 probe), TIT.DGO
+`7421fc02714448e47c30995878f03449b5138025a40c4983ebc69a2a385b0588` unchanged.
+
+2026-09-11 (BOT48, DEVIATION): `df -h /` reports Avail 11Gi with 0 `tmp_pack_*`,
+below the AGENTS.md 40 GB floor. The operator explicitly authorized working in
+whatever space exists, so work continued; any `tmp_pack_*` or a drop below 5 GiB
+remains a hard stop. Next: `docs/BOT48_PROMPT.md`.
+
+2026-09-11 (BOT49, REFUTED): the BOT48 handoff blamed the hardcoded count gate in
+`append_mobile_sprite_hud_native` for the menu-text fragments. Measured live: every
+group logs `orig_pass=1` and counts are only ever 48 or 32, so the gate never fired.
+The second proposal (`clearSpriteBatches` inside `setSpriteMeshNow` wiping earlier
+groups) also logged zero non-empty clears. See evidence doc BOT49-direct-text-retention-fix.
+
+2026-09-11 (BOT49, FIX, Gate G1 progress): the menu text was erased, not mis-drawn.
+`presentRGBA` ended every frame with `clearTransientSpriteBatches`, dropping sprite and
+Direct/GIF groups the game thread appended during encode. Retained groups measured
+`drawn=1` in 3,681 of 5,433 frames while the HUD submits 3 groups per frame. Now the
+store tags each append and `erase_tags()` removes exactly what was encoded. Retained
+Direct groups rose to 18-22 per frame and `NEW GAME` renders complete and stable
+across consecutive frames (`/tmp/b49/s6_rot.png`). Fault log 0 bytes.
+
+2026-09-11 (BOT49, ROUTE): Start -> Cross drives the PC title menu, but Cross on the
+menu reaches the loading screen (`/100`, `9%`) rather than Village1 gameplay. Gate N1
+(Jak visible and accepting input) remains unproven; the other five entries do not all
+appear in one frame yet.

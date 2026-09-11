@@ -52,7 +52,7 @@ NSString* kDirectFixtureShaderSource = @""
 "float4 color [[attribute(2)]]; };\n"
 "struct DirectOut { float4 position [[position]]; float2 uv; float4 color; };\n"
 "struct DirectState { uint alpha_test_enable; uint alpha_test; uint alpha_ref; "
-"uint tcc; uint tfx; };\n"
+"uint tcc; uint tfx; uint ta0; };\n"
 "vertex DirectOut direct_vs(DirectIn in [[stage_in]]) {\n"
 "  DirectOut out; out.position = float4(in.pos, 0.0, 1.0); out.uv = in.uv; "
 "  out.color = float4(in.color.rgb, in.color.a * 2.0); return out;\n"
@@ -61,6 +61,10 @@ NSString* kDirectFixtureShaderSource = @""
 "                           sampler s [[sampler(0)]],\n"
 "                           constant DirectState& state [[buffer(1)]]) {\n"
 "  float4 texel = tex.sample(s, in.uv);\n"
+"  // Reference direct_basic_textured.frag substitutes the GS TA0 register for\n"
+"  // a zero texture alpha before modulation.  Without it a generated sky\n"
+"  // buffer whose alpha is 0 blends to nothing under srcBlend=source alpha.\n"
+"  if (texel.a == 0.0) { texel.a = float(state.ta0) / 255.0; }\n"
 "  float4 color;\n"
 "  if (state.tfx == 1) {\n"
 "    color.rgb = texel.rgb * 0.5; color.a = state.tcc != 0 ? texel.a : in.color.a;\n"
@@ -88,6 +92,16 @@ NSString* kDirectFixtureShaderSource = @""
 "}\n"
 "fragment float4 direct_fs_solid(DirectOut in [[stage_in]]) {\n"
 "  return in.color;\n"
+"}\n"
+"fragment float4 direct_fs_debug_fill(DirectOut in [[stage_in]]) {\n"
+"  return float4(1.0, 0.0, 1.0, 1.0);\n"
+"}\n"
+"// Diagnostic-only: the real sampled texel with alpha forced opaque. Shows\n"
+"// what texture the sky fan is bound to, independent of its alpha.\n"
+"fragment float4 direct_fs_debug_tex(DirectOut in [[stage_in]],\n"
+"                                    texture2d<float> tex [[texture(0)]],\n"
+"                                    sampler s [[sampler(0)]]) {\n"
+"  return float4(tex.sample(s, in.uv).rgb, 1.0);\n"
 "}\n";
 
 NSString* kTieShaderSource = @""
@@ -244,6 +258,9 @@ struct NativeSpriteBatch {
   id<MTLTexture> texture = nil;
   NSUInteger vertex_count = 0;
   BOOL blended = NO;
+  // GS TA0 for this batch: substituted for a zero texture alpha by direct_fs,
+  // matching the reference DirectRenderer fragment shader.
+  unsigned char ta0 = 0;
   bool persistent = false;
 };
 
@@ -307,11 +324,20 @@ class RenderEncoderEndGuard {
 @property (nonatomic) BOOL directFixtureColorOnly;
 @property (nonatomic) BOOL directFixtureOffscreen;
 @property (nonatomic) BOOL sceneNoDepthProbe;
+@property (nonatomic) BOOL sceneSkyOpaqueProbe;
+@property (nonatomic) BOOL sceneSkyDebugFillProbe;
+@property (nonatomic) BOOL sceneSkyDebugFillAllProbe;
+@property (nonatomic) BOOL sceneSkyEndProbe;
+@property (nonatomic, strong) id<MTLRenderPipelineState> skyDebugFillPipeline;
+@property (nonatomic) BOOL sceneSkyDebugTexProbe;
+@property (nonatomic, strong) id<MTLRenderPipelineState> skyDebugTexPipeline;
 @property (nonatomic) BOOL sceneNoTieProbe;
 @property (nonatomic) BOOL sceneNoMercProbe;
 @property (nonatomic) BOOL sceneNoTfragProbe;
 @property (nonatomic) BOOL sceneNoCpuFrameProbe;
 @property (nonatomic) BOOL sceneNoOverlayProbe;
+@property (nonatomic) BOOL sceneNoSkyProbe;
+@property (nonatomic) BOOL sceneNoSpriteProbe;
 @property (nonatomic) BOOL sceneTfragFixture;
 @property (nonatomic) BOOL sceneTieReferenceProjectionProbe;
 @property (nonatomic) BOOL sceneFirstBatchProbe;
@@ -432,7 +458,15 @@ class RenderEncoderEndGuard {
                    rgba:(const unsigned char*)rgba
                   width:(NSUInteger)width
                  height:(NSUInteger)height
-                blended:(BOOL)blended;
+                blended:(BOOL)blended
+                    ta0:(unsigned char)ta0;
+- (void)appendDirectMeshNow:(const OttselMetalSpriteVertex*)vertices
+                vertexCount:(NSUInteger)vertexCount
+                      rgba:(const unsigned char*)rgba
+                     width:(NSUInteger)width
+                    height:(NSUInteger)height
+                   blended:(BOOL)blended
+                       ta0:(unsigned char)ta0;
 - (void)clearSpriteBatches;
 - (void)clearTransientSpriteBatches;
 - (void)drainSpriteUploads;
@@ -467,6 +501,11 @@ class RenderEncoderEndGuard {
   std::deque<PendingSpriteUpload> _pendingSpriteUploads;
   OttselMobileSnapshotStore<NativeSpriteBatch> _spriteBatches;
   OttselMobileSnapshotStore<NativeSpriteBatch> _skyBatches;
+  // Foreground Direct/GIF geometry (title logo, "PRESS START", debug/menu
+  // text).  The desktop draws these after the world and after sprites, so they
+  // live in their own store with a later draw position rather than in the
+  // pre-world sky batch list.
+  OttselMobileSnapshotStore<NativeSpriteBatch> _directBatches;
   std::vector<OttselMetalTieDraw> _mercDraws;
   std::mutex _mercMutex;
   std::vector<unsigned char> _pendingMercVertices;
@@ -585,6 +624,27 @@ class RenderEncoderEndGuard {
       [device newRenderPipelineStateWithDescriptor:directBlendPd error:&err];
   if (!self.directBlendPipeline) {
     NSLog(@"ottsel metal: Direct blended pipeline error %@", err);
+    return NO;
+  }
+  // Diagnostic-only pipeline: identical descriptor and blend factors to
+  // directBlendPipeline, but a constant opaque magenta fragment. Isolates the
+  // sky's composed fragment colour/alpha from its geometry and encoder path.
+  MTLRenderPipelineDescriptor* skyDebugFillPd = [directBlendPd copy];
+  skyDebugFillPd.fragmentFunction =
+      [directLib newFunctionWithName:@"direct_fs_debug_fill"];
+  self.skyDebugFillPipeline =
+      [device newRenderPipelineStateWithDescriptor:skyDebugFillPd error:&err];
+  if (!self.skyDebugFillPipeline) {
+    NSLog(@"ottsel metal: sky debug-fill pipeline error %@", err);
+    return NO;
+  }
+  MTLRenderPipelineDescriptor* skyDebugTexPd = [directBlendPd copy];
+  skyDebugTexPd.fragmentFunction =
+      [directLib newFunctionWithName:@"direct_fs_debug_tex"];
+  self.skyDebugTexPipeline =
+      [device newRenderPipelineStateWithDescriptor:skyDebugTexPd error:&err];
+  if (!self.skyDebugTexPipeline) {
+    NSLog(@"ottsel metal: sky debug-tex pipeline error %@", err);
     return NO;
   }
   // Diagnostic-only no-depth variant for separating depth attachment/pipeline
@@ -879,6 +939,51 @@ class RenderEncoderEndGuard {
       NSLog(@"ottsel metal: scene no-TIE probe enabled");
     }
   }
+  if (!self.sceneSkyOpaqueProbe) {
+    const std::string sky_opaque_trigger = ottsel_ios_writable_dir() +
+                                            "ottsel-trace-metal-sky-opaque";
+    if (access(sky_opaque_trigger.c_str(), F_OK) == 0) {
+      unlink(sky_opaque_trigger.c_str());
+      self.sceneSkyOpaqueProbe = YES;
+      NSLog(@"ottsel metal: sky opaque probe enabled");
+    }
+  }
+  if (!self.sceneSkyDebugFillProbe) {
+    const std::string sky_debug_fill_trigger = ottsel_ios_writable_dir() +
+                                                "ottsel-trace-metal-sky-debug-fill";
+    if (access(sky_debug_fill_trigger.c_str(), F_OK) == 0) {
+      unlink(sky_debug_fill_trigger.c_str());
+      self.sceneSkyDebugFillProbe = YES;
+      NSLog(@"ottsel metal: sky debug-fill probe enabled");
+    }
+  }
+  if (!self.sceneSkyDebugTexProbe) {
+    const std::string sky_debug_tex_trigger = ottsel_ios_writable_dir() +
+                                               "ottsel-trace-metal-sky-debug-tex";
+    if (access(sky_debug_tex_trigger.c_str(), F_OK) == 0) {
+      unlink(sky_debug_tex_trigger.c_str());
+      self.sceneSkyDebugTexProbe = YES;
+      NSLog(@"ottsel metal: sky debug-tex probe enabled");
+    }
+  }
+  if (!self.sceneSkyDebugFillAllProbe) {
+    const std::string sky_debug_all_trigger = ottsel_ios_writable_dir() +
+                                              "ottsel-trace-metal-sky-debug-all";
+    if (access(sky_debug_all_trigger.c_str(), F_OK) == 0) {
+      unlink(sky_debug_all_trigger.c_str());
+      self.sceneSkyDebugFillAllProbe = YES;
+      NSLog(@"ottsel metal: sky debug-all probe enabled");
+    }
+  }
+  if (!self.sceneSkyEndProbe) {
+    const std::string sky_end_trigger = ottsel_ios_writable_dir() +
+                                        "ottsel-trace-metal-sky-end";
+    if (access(sky_end_trigger.c_str(), F_OK) == 0) {
+      unlink(sky_end_trigger.c_str());
+      self.sceneSkyEndProbe = YES;
+      NSLog(@"ottsel metal: sky end-of-pass probe enabled");
+    }
+  }
   if (!self.sceneNoMercProbe) {
     const std::string scene_no_merc_trigger = ottsel_ios_writable_dir() +
                                                "ottsel-trace-metal-scene-no-merc";
@@ -922,6 +1027,24 @@ class RenderEncoderEndGuard {
       unlink(scene_no_overlay_trigger.c_str());
       self.sceneNoOverlayProbe = YES;
       NSLog(@"ottsel metal: scene world-only overlay probe enabled");
+    }
+  }
+  if (!self.sceneNoSkyProbe) {
+    const std::string scene_no_sky_trigger = ottsel_ios_writable_dir() +
+                                             "ottsel-trace-metal-scene-no-sky";
+    if (access(scene_no_sky_trigger.c_str(), F_OK) == 0) {
+      unlink(scene_no_sky_trigger.c_str());
+      self.sceneNoSkyProbe = YES;
+      NSLog(@"ottsel metal: scene no-SKY probe enabled");
+    }
+  }
+  if (!self.sceneNoSpriteProbe) {
+    const std::string scene_no_sprite_trigger = ottsel_ios_writable_dir() +
+                                                "ottsel-trace-metal-scene-no-sprite";
+    if (access(scene_no_sprite_trigger.c_str(), F_OK) == 0) {
+      unlink(scene_no_sprite_trigger.c_str());
+      self.sceneNoSpriteProbe = YES;
+      NSLog(@"ottsel metal: scene no-SPRITE probe enabled");
     }
   }
   if (!self.sceneTieReferenceProjectionProbe) {
@@ -1234,11 +1357,32 @@ class RenderEncoderEndGuard {
   // opaque world queues. They are separate from Sprite3 so HUD ordering and
   // the existing diagnostic overlay remain unchanged.
   const auto sky_batches = _skyBatches.snapshot();
-  if (!sky_batches.empty() && !self.directFixtureIsolated && !self.sceneNoOverlayProbe) {
-    const unsigned int sky_state[5] = {0, 0, 0, 1, 0};
+  if (!sky_batches.empty() && !self.directFixtureIsolated && !self.sceneNoSkyProbe) {
+    unsigned int sky_state[6] = {0, 0, 0, 1, 0, 0};
     for (const auto& sky : sky_batches) {
-      [enc setRenderPipelineState:sky.blended ? self.directBlendPipeline
-                                              : self.directPipeline];
+      // Diagnostic scoping: the untextured 1x1 full-screen fans otherwise
+      // dominate any opaque-fragment experiment and hide the textured
+      // population, so restrict the debug pipelines to real textured sky.
+      if ((self.sceneSkyDebugFillProbe && self.skyDebugFillPipeline) ||
+          (self.sceneSkyDebugTexProbe && self.skyDebugTexPipeline)) {
+        if (self.sceneSkyDebugFillAllProbe) {
+          // Diagnostic: keep every batch.
+        } else if (sky.texture.width < 32 || sky.texture.height < 32) {
+          continue;
+        }
+      }
+      sky_state[5] = sky.ta0;
+      // Diagnostic only: forcing replace blending separates "the sky geometry
+      // never covers a pixel" from "the sky blends to nothing".
+      [enc setRenderPipelineState:(self.sceneSkyOpaqueProbe || !sky.blended)
+                                      ? self.directPipeline
+                                      : self.directBlendPipeline];
+      if (self.sceneSkyDebugFillProbe && self.skyDebugFillPipeline) {
+        [enc setRenderPipelineState:self.skyDebugFillPipeline];
+      }
+      if (self.sceneSkyDebugTexProbe && self.skyDebugTexPipeline) {
+        [enc setRenderPipelineState:self.skyDebugTexPipeline];
+      }
       [enc setDepthStencilState:self.overlayDepthState];
       [enc setVertexBuffer:sky.vertices offset:0 atIndex:0];
       [enc setFragmentTexture:sky.texture atIndex:0];
@@ -1246,11 +1390,158 @@ class RenderEncoderEndGuard {
       [enc setFragmentBytes:sky_state length:sizeof(sky_state) atIndex:1];
       [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:sky.vertex_count];
     }
+    // Diagnostic reference triangle: same encoder, pipeline and depth state as
+    // the sky batches, but a locally-owned vertex buffer.  If this paints and
+    // the sky batches do not, the defect is in the batch buffers, not the
+    // pipeline or encoder.
+    if (self.sceneSkyDebugFillAllProbe) {
+      static id<MTLBuffer> sky_ref_buffer = nil;
+      if (!sky_ref_buffer) {
+        DirectFixtureVertex ref[3] = {
+            {{-1.f, -1.f}, {0.f, 0.f}, {1.f, 1.f, 1.f, 1.f}},
+            {{1.f, -1.f}, {1.f, 0.f}, {1.f, 1.f, 1.f, 1.f}},
+            {{-1.f, 1.f}, {0.f, 1.f}, {1.f, 1.f, 1.f, 1.f}},
+        };
+        sky_ref_buffer = [self.device newBufferWithBytes:ref
+                                                  length:sizeof(ref)
+                                                 options:MTLResourceStorageModeShared];
+        NSLog(@"ottsel metal: SKYREF buffer=%p", sky_ref_buffer);
+      }
+      if (sky_ref_buffer) {
+        [enc setRenderPipelineState:self.skyDebugFillPipeline];
+        [enc setDepthStencilState:self.overlayDepthState];
+        [enc setVertexBuffer:sky_ref_buffer offset:0 atIndex:0];
+        [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+      }
+    }
     static bool sky_batch_logged = false;
     if (!sky_batch_logged) {
       sky_batch_logged = true;
       NSLog(@"ottsel metal: native Sky batches=%lu encoded=pre-world/no-depth",
             (unsigned long)sky_batches.size());
+      // Alpha distribution across every encoded sky batch: a batch whose
+      // vertex alpha is 0 contributes nothing under srcBlend=source alpha.
+      unsigned long alpha_zero = 0, alpha_pos = 0, cover_large = 0;
+      float alpha_max = 0.f;
+      for (const auto& sky : sky_batches) {
+        const OttselMetalSpriteVertex* sv =
+            (const OttselMetalSpriteVertex*)sky.vertices.contents;
+        float a = sv[0].color[3];
+        if (a <= 0.f) {
+          ++alpha_zero;
+        } else {
+          ++alpha_pos;
+        }
+        alpha_max = std::max(alpha_max, a);
+        float xspan = 0.f, yspan = 0.f;
+        for (NSUInteger i = 0; i < sky.vertex_count; ++i) {
+          xspan = std::max(xspan, fabsf(sv[i].pos[0]));
+          yspan = std::max(yspan, fabsf(sv[i].pos[1]));
+        }
+        if (xspan >= 1.f && yspan >= 1.f) {
+          ++cover_large;
+        }
+      }
+      NSLog(@"ottsel metal: SKY ALPHA batches=%lu alpha0=%lu alpha+%lu amax=%.3f "
+            "fullscreen-cover=%lu",
+            (unsigned long)sky_batches.size(), alpha_zero, alpha_pos, alpha_max,
+            cover_large);
+    }
+    // I1.1b diagnostic: per-batch NDC bounds on frames that actually carry a
+    // textured sky batch.  A packed fan can be "submitted" and still miss the
+    // drawable; this separates the untextured fill quad from the real sky.
+    static unsigned long sky_bounds_frames = 0;
+    bool sky_frame_textured = false;
+    for (const auto& sky : sky_batches) {
+      if (sky.texture.width >= 32 && sky.texture.height >= 32) {
+        sky_frame_textured = true;
+        break;
+      }
+    }
+    if (sky_frame_textured && sky_bounds_frames < 3) {
+      ++sky_bounds_frames;
+      NSLog(@"ottsel metal: SKYBOUNDFRAME n=%lu",
+            (unsigned long)sky_batches.size());
+      unsigned long bi = 0;
+      for (const auto& sky : sky_batches) {
+        if (bi >= 44) {
+          break;
+        }
+        const OttselMetalSpriteVertex* sv =
+            (const OttselMetalSpriteVertex*)sky.vertices.contents;
+        float mnx = 1e9f, mny = 1e9f, mxx = -1e9f, mxy = -1e9f;
+        float amin = 1e9f;
+        for (NSUInteger i = 0; i < sky.vertex_count; ++i) {
+          mnx = std::min(mnx, sv[i].pos[0]);
+          mny = std::min(mny, sv[i].pos[1]);
+          mxx = std::max(mxx, sv[i].pos[0]);
+          mxy = std::max(mxy, sv[i].pos[1]);
+          amin = std::min(amin, sv[i].color[3]);
+        }
+        NSLog(@"ottsel metal: SKYBOUND i=%lu tex=%lux%lu n=%lu blend=%d a=%.3f "
+              "ndc=(%.3f,%.3f)..(%.3f,%.3f)",
+              bi++, (unsigned long)sky.texture.width, (unsigned long)sky.texture.height,
+              (unsigned long)sky.vertex_count, sky.blended ? 1 : 0, amin, mnx, mny, mxx, mxy);
+      }
+    }
+    // I1.1b diagnostic: confirm the vertex words that actually reach the GPU
+    // match the NDC the decoder computed.  Bounded; observability only.
+    static unsigned int sky_vertex_dumps = 0;
+    if (ottsel_mobile_log_within_budget(sky_vertex_dumps, 6)) {
+      ++sky_vertex_dumps;
+      const OttselMetalSpriteVertex* vp =
+          (const OttselMetalSpriteVertex*)sky_batches.front().vertices.contents;
+      const NativeSpriteBatch& b = sky_batches.front();
+      NSLog(@"ottsel metal: SKY ENCODE batches=%lu n=%lu blend=%d "
+            "v0=(%.3f,%.3f) v1=(%.3f,%.3f) v2=(%.3f,%.3f) col=(%.2f,%.2f,%.2f,%.2f) "
+            "tex=%lux%lu uv0=(%.4f,%.4f) uv1=(%.4f,%.4f) uv2=(%.4f,%.4f)",
+            (unsigned long)sky_batches.size(), (unsigned long)b.vertex_count,
+            b.blended ? 1 : 0, vp[0].pos[0], vp[0].pos[1], vp[1].pos[0], vp[1].pos[1],
+            vp[2].pos[0], vp[2].pos[1], vp[0].color[0], vp[0].color[1], vp[0].color[2],
+            vp[0].color[3], (unsigned long)b.texture.width, (unsigned long)b.texture.height,
+            vp[0].uv[0], vp[0].uv[1], vp[1].uv[0], vp[1].uv[1], vp[2].uv[0], vp[2].uv[1]);
+    }
+  }
+  // Per-frame sky composition, throttled to 1 Hz so a screenshot can be
+  // correlated with the exact set of batches that were encoded for that
+  // frame.  Without this, "the sky is black" and "the captured frame happened
+  // to have no sky batches" are indistinguishable.  Observability only.
+  if (!sky_batches.empty()) {
+    static double last_sky_frame_log = 0.0;
+    const NSTimeInterval sky_now = CACurrentMediaTime();
+    if (sky_now - last_sky_frame_log >= 1.0) {
+      last_sky_frame_log = sky_now;
+      unsigned long tex1 = 0, tex32 = 0, tex64 = 0, tex_other = 0;
+      unsigned long alpha_zero = 0, alpha_half = 0;
+      float amax = 0.f;
+      for (const auto& sky : sky_batches) {
+        const NSUInteger tw = sky.texture.width;
+        if (tw == 1) {
+          ++tex1;
+        } else if (tw == 32) {
+          ++tex32;
+        } else if (tw == 64) {
+          ++tex64;
+        } else {
+          ++tex_other;
+        }
+        const OttselMetalSpriteVertex* sv =
+            (const OttselMetalSpriteVertex*)sky.vertices.contents;
+        float batch_amax = 0.f;
+        for (NSUInteger i = 0; i < sky.vertex_count; ++i) {
+          batch_amax = std::max(batch_amax, sv[i].color[3]);
+        }
+        if (batch_amax <= 0.f) {
+          ++alpha_zero;
+        } else if (batch_amax >= 0.5f) {
+          ++alpha_half;
+        }
+        amax = std::max(amax, batch_amax);
+      }
+      NSLog(@"ottsel metal: SKYFRAME batches=%lu tex1=%lu tex32=%lu tex64=%lu "
+            "texother=%lu alpha0=%lu alphaHalf=%lu amax=%.3f",
+            (unsigned long)sky_batches.size(), tex1, tex32, tex64, tex_other, alpha_zero,
+            alpha_half, amax);
     }
   }
   // Desktop bucket order draws opaque background TFRAG before normal TIE.
@@ -1307,13 +1598,32 @@ class RenderEncoderEndGuard {
     draw_mesh(_mercActorVertices, _mercActorIndices, _mercActorColors, _mercActorIndexCount,
               _mercActorDraws, false, true);
   }
-  const auto sprite_batches = _spriteBatches.snapshot();
+  // Tagged snapshot: remember which groups this frame encodes so the terminal
+  // erase can remove exactly those. Groups the game thread appends while this
+  // command buffer is being built must survive to the next frame instead of
+  // being cleared unencoded -- that drop is what tore the menu glyphs.
+  const auto sprite_tagged = _spriteBatches.snapshot_tagged();
+  std::vector<NativeSpriteBatch> sprite_batches;
+  std::vector<unsigned long long> ottsel_sprite_drawn_tags;
+  sprite_batches.reserve(sprite_tagged.size());
+  ottsel_sprite_drawn_tags.reserve(sprite_tagged.size());
+  for (const auto& tagged : sprite_tagged) {
+    sprite_batches.push_back(tagged.second);
+    if (!tagged.second.persistent) {
+      ottsel_sprite_drawn_tags.push_back(tagged.first);
+    }
+  }
   static unsigned int sprite_draw_logs = 0;
-  if (!sprite_batches.empty() && !self.directFixtureIsolated && !self.sceneNoOverlayProbe) {
-    const unsigned int sprite_state[5] = {ottsel::sprite3_alpha_test_enabled(),
-                                          ottsel::sprite3_alpha_test_gequal(),
-                                          ottsel::sprite3_primary_alpha_ref(), 1, 0};
+  // BOT49 probe: the game thread appends sprite groups while this thread builds
+  // the command buffer, so a group produced in that window is cleared without
+  // ever being encoded.  Record both sides of that window.
+  const size_t ottsel_sprite_batches_drawn = sprite_batches.size();
+  if (!sprite_batches.empty() && !self.directFixtureIsolated && !self.sceneNoSpriteProbe) {
+    unsigned int sprite_state[6] = {ottsel::sprite3_alpha_test_enabled(),
+                                    ottsel::sprite3_alpha_test_gequal(),
+                                    ottsel::sprite3_primary_alpha_ref(), 1, 0, 0};
     for (const auto& sprite : sprite_batches) {
+      sprite_state[5] = sprite.ta0;
       [enc setRenderPipelineState:sprite.blended ? self.directBlendPipeline
                                                  : self.directPipeline];
       [enc setDepthStencilState:self.sceneNoDepthProbe ? self.overlayDepthState
@@ -1331,6 +1641,57 @@ class RenderEncoderEndGuard {
               (unsigned long)sprite_batches.size(), ottsel::sprite3_alpha_test_gequal(),
               ottsel::sprite3_primary_alpha_ref());
       }
+    }
+  }
+  // Foreground Direct/GIF text: the desktop debug bucket draws after the world
+  // and after sprites.  Always-pass depth (overlayDepthState) matches how the
+  // sky batches are already composited, so text is never occluded by world
+  // depth.  Only the touch overlay is suppressed by -scene-no-overlay.
+  // Tagged snapshot for the same reason as sprites: Direct/GIF text packets
+  // appended by the game thread while this command buffer is being built must
+  // not be wiped by the terminal clear before they are ever encoded.  That
+  // drop is what made the menu labels appear in fragments that changed every
+  // frame.
+  const auto direct_tagged = _directBatches.snapshot_tagged();
+  std::vector<NativeSpriteBatch> direct_batches;
+  std::vector<unsigned long long> ottsel_direct_drawn_tags;
+  direct_batches.reserve(direct_tagged.size());
+  ottsel_direct_drawn_tags.reserve(direct_tagged.size());
+  for (const auto& tagged : direct_tagged) {
+    direct_batches.push_back(tagged.second);
+    if (!tagged.second.persistent) {
+      ottsel_direct_drawn_tags.push_back(tagged.first);
+    }
+  }
+  static unsigned int direct_text_draw_logs = 0;
+  static unsigned int ottsel_direct_frame_logs = 0;
+  if (ottsel_mobile_log_within_budget(ottsel_direct_frame_logs, 3000)) {
+    ++ottsel_direct_frame_logs;
+    lg::info("OTTSEL DIRECT FRAME: n={} drawn={}", ottsel_direct_frame_logs,
+             (unsigned long)direct_batches.size());
+  }
+  if (!direct_batches.empty() && !self.directFixtureIsolated) {
+    unsigned int direct_text_state[6] = {0, 0, 0, 1, 0, 0};
+    for (const auto& direct_batch : direct_batches) {
+      direct_text_state[5] = direct_batch.ta0;
+      [enc setRenderPipelineState:direct_batch.blended ? self.directBlendPipeline
+                                                       : self.directPipeline];
+      [enc setDepthStencilState:self.overlayDepthState];
+      [enc setVertexBuffer:direct_batch.vertices offset:0 atIndex:0];
+      [enc setFragmentTexture:direct_batch.texture atIndex:0];
+      [enc setFragmentSamplerState:self.directSampler atIndex:0];
+      [enc setFragmentBytes:direct_text_state length:sizeof(direct_text_state) atIndex:1];
+      [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0
+              vertexCount:direct_batch.vertex_count];
+    }
+    if (ottsel_mobile_log_within_budget(direct_text_draw_logs, 8)) {
+      ++direct_text_draw_logs;
+      NSLog(@"ottsel metal: direct text draw batches=%lu vertices=%lu texture=%lux%lu blend=%s",
+            (unsigned long)direct_batches.size(),
+            (unsigned long)direct_batches.front().vertex_count,
+            (unsigned long)direct_batches.front().texture.width,
+            (unsigned long)direct_batches.front().texture.height,
+            direct_batches.front().blended ? "enabled" : "disabled");
     }
   }
   // D0-NORMAL Direct owns the same final drawable as the existing composition.
@@ -1356,8 +1717,8 @@ class RenderEncoderEndGuard {
       [enc setFragmentTexture:self.directTex atIndex:0];
       [enc setFragmentSamplerState:self.directSampler atIndex:0];
     }
-    const unsigned int direct_state[5] = {self.directAlphaTestEnable, self.directAlphaTest,
-                                          self.directAlphaRef, self.directTcc, self.directTfx};
+    const unsigned int direct_state[6] = {self.directAlphaTestEnable, self.directAlphaTest,
+                                          self.directAlphaRef, self.directTcc, self.directTfx, 0};
     [enc setFragmentBytes:direct_state length:sizeof(direct_state) atIndex:1];
     if (self.directScissorX1 > self.directScissorX0 && self.directScissorY1 > self.directScissorY0) {
       // DirectRenderer's fragment shader maps GS scissor through the Jak 1
@@ -1400,10 +1761,72 @@ class RenderEncoderEndGuard {
     [enc setVertexBuffer:self.touchOverlayVertices offset:0 atIndex:0];
     [enc setFragmentTexture:self.touchOverlayTex atIndex:0];
     [enc setFragmentSamplerState:self.directSampler atIndex:0];
-    const unsigned int overlay_state[5] = {0, 0, 0, 0, 0};
+    const unsigned int overlay_state[6] = {0, 0, 0, 0, 0, 0};
     [enc setFragmentBytes:overlay_state length:sizeof(overlay_state) atIndex:1];
     [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0
             vertexCount:self.touchOverlayVertexCount];
+  }
+  // BOT40 I1.1c diagnostic: settle the sky draw path with ONE question.
+  // The sky is encoded before every opaque bucket in this pass, so a probe
+  // drawn inside the sky loop can be overdrawn by later TFRAG/TIE/Merc/Sprite
+  // and read as "dead" even when the pipeline is fine.  Draw the same debug
+  // pipeline here, at the END of the pass, with the known-working
+  // overlayDepthState (compare ALWAYS, no depth write) and a locally-owned
+  // buffer: a magenta full-screen triangle proves vertex layout + pipeline +
+  // encoder all reach pixels.  Observability only; never product output.
+  if (self.sceneSkyDebugFillAllProbe && self.skyDebugFillPipeline) {
+    static id<MTLBuffer> sky_path_probe_vertices = nil;
+    if (!sky_path_probe_vertices) {
+      const DirectFixtureVertex probe[3] = {
+          {{-1.f, -1.f}, {0.f, 0.f}, {1.f, 1.f, 1.f, 1.f}},
+          {{1.f, -1.f}, {1.f, 0.f}, {1.f, 1.f, 1.f, 1.f}},
+          {{-1.f, 1.f}, {0.f, 1.f}, {1.f, 1.f, 1.f, 1.f}},
+      };
+      sky_path_probe_vertices = [self.device newBufferWithBytes:probe
+                                                        length:sizeof(probe)
+                                                       options:MTLResourceStorageModeShared];
+      NSLog(@"ottsel metal: ENCPROBE buffer=%p", sky_path_probe_vertices);
+    }
+    if (sky_path_probe_vertices) {
+      [enc setRenderPipelineState:self.skyDebugFillPipeline];
+      [enc setDepthStencilState:self.overlayDepthState];
+      [enc setVertexBuffer:sky_path_probe_vertices offset:0 atIndex:0];
+      [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    }
+  }
+  // BOT40 I1.1c diagnostic: redraw the captured sky batches at the END of the
+  // pass with the REAL product pipeline and texture.  The magenta probe above
+  // already proved pipeline/layout/encoder reach pixels; if the sky paints here
+  // but not in its normal pre-world slot, the defect is pass position or state
+  // residue.  If it does not paint here either, the fault is the sampled
+  // texture content.  Observability only; never product output.
+  if (self.sceneSkyEndProbe) {
+    const auto end_sky_batches = _skyBatches.snapshot();
+    unsigned int end_sky_state[6] = {0, 0, 0, 1, 0, 0};
+    for (const auto& sky : end_sky_batches) {
+      end_sky_state[5] = sky.ta0;
+      [enc setRenderPipelineState:sky.blended ? self.directBlendPipeline
+                                              : self.directPipeline];
+      [enc setDepthStencilState:self.overlayDepthState];
+      [enc setVertexBuffer:sky.vertices offset:0 atIndex:0];
+      [enc setFragmentTexture:sky.texture atIndex:0];
+      [enc setFragmentSamplerState:self.directSampler atIndex:0];
+      [enc setFragmentBytes:end_sky_state length:sizeof(end_sky_state) atIndex:1];
+      [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0
+              vertexCount:sky.vertex_count];
+    }
+    static bool end_sky_logged = false;
+    if (!end_sky_logged) {
+      end_sky_logged = true;
+      NSLog(@"ottsel metal: SKYENDREDRAW batches=%lu first=%lux%lu",
+            (unsigned long)end_sky_batches.size(),
+            end_sky_batches.empty()
+                ? 0ul
+                : (unsigned long)end_sky_batches.front().texture.width,
+            end_sky_batches.empty()
+                ? 0ul
+                : (unsigned long)end_sky_batches.front().texture.height);
+    }
   }
   encoder_guard.end();
   // One-shot diagnostic readback only. This copies the actual composed Metal
@@ -1478,7 +1901,19 @@ class RenderEncoderEndGuard {
   }
   [cb presentDrawable:drawable];
   [cb commit];
-  [self clearTransientSpriteBatches];
+  static unsigned int ottsel_sprite_frame_logs = 0;
+  const size_t ottsel_sprite_batches_late = _spriteBatches.snapshot().size();
+  if (ottsel_mobile_log_within_budget(ottsel_sprite_frame_logs, 8000)) {
+    ++ottsel_sprite_frame_logs;
+    lg::info("OTTSEL SPRITE FRAME: n={} drawn={} appended-during-encode={}",
+             ottsel_sprite_frame_logs, ottsel_sprite_batches_drawn,
+             ottsel_sprite_batches_late);
+  }
+  // Erase only the groups encoded above. Sky and Direct keep their existing
+  // whole-store clear: this change is scoped to the sprite/text path.
+  _spriteBatches.erase_tags(ottsel_sprite_drawn_tags);
+  _skyBatches.clear();
+  _directBatches.erase_tags(ottsel_direct_drawn_tags);
 }
 
 - (void)setTieMesh:(const void*)vertices
@@ -1514,7 +1949,8 @@ class RenderEncoderEndGuard {
                    rgba:(const unsigned char*)rgba
                   width:(NSUInteger)width
                  height:(NSUInteger)height
-                blended:(BOOL)blended {
+                blended:(BOOL)blended
+                    ta0:(unsigned char)ta0 {
   if (!vertices || !vertexCount || !rgba || !width || !height || !self.device ||
       !self.directPipeline) {
     return;
@@ -1537,7 +1973,41 @@ class RenderEncoderEndGuard {
              mipmapLevel:0
                withBytes:rgba
              bytesPerRow:width * 4];
-  _skyBatches.append({vertex_buffer, texture, vertexCount, blended, false});
+  _skyBatches.append({vertex_buffer, texture, vertexCount, blended, ta0, false});
+}
+
+// Foreground Direct/GIF batch.  Same upload contract as the sky batch; only the
+// draw position differs (after sprites, so text lands on top of the world).
+- (void)appendDirectMeshNow:(const OttselMetalSpriteVertex*)vertices
+                vertexCount:(NSUInteger)vertexCount
+                      rgba:(const unsigned char*)rgba
+                     width:(NSUInteger)width
+                    height:(NSUInteger)height
+                   blended:(BOOL)blended
+                       ta0:(unsigned char)ta0 {
+  if (!vertices || !vertexCount || !rgba || !width || !height || !self.device ||
+      !self.directPipeline) {
+    return;
+  }
+  MTLTextureDescriptor* desc = [MTLTextureDescriptor
+      texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                   width:width
+                                  height:height
+                               mipmapped:NO];
+  desc.usage = MTLTextureUsageShaderRead;
+  id<MTLTexture> texture = [self.device newTextureWithDescriptor:desc];
+  id<MTLBuffer> vertex_buffer = [self.device
+      newBufferWithBytes:vertices
+                   length:vertexCount * sizeof(OttselMetalSpriteVertex)
+                  options:MTLResourceStorageModeShared];
+  if (!texture || !vertex_buffer) {
+    return;
+  }
+  [texture replaceRegion:MTLRegionMake2D(0, 0, width, height)
+             mipmapLevel:0
+               withBytes:rgba
+             bytesPerRow:width * 4];
+  _directBatches.append({vertex_buffer, texture, vertexCount, blended, ta0, false});
 }
 
 - (void)setTieCamera:(const float*)pcCamera
@@ -1987,7 +2457,7 @@ class RenderEncoderEndGuard {
   if (!vertex_buffer) {
     return;
   }
-  _spriteBatches.append({vertex_buffer, texture, vertexCount, blended, false});
+  _spriteBatches.append({vertex_buffer, texture, vertexCount, blended, 0, false});
   self.spriteTex = texture;
   self.spriteVertices = vertex_buffer;
   self.spriteVertexCount = vertexCount;
@@ -2020,6 +2490,23 @@ class RenderEncoderEndGuard {
 }
 
 - (void)clearSpriteBatches {
+  // BOT49 probe: this is the only path that drops accumulated sprite groups.
+  // A non-zero discard here means a single-mesh upload wiped groups a producer
+  // (for example the HUD atlas) had already appended for this frame.
+  static unsigned int ottsel_sprite_clear_logs = 0;
+  const std::vector<NativeSpriteBatch> ottsel_sprite_clear_discarded = _spriteBatches.snapshot();
+  if (!ottsel_sprite_clear_discarded.empty() &&
+      ottsel_mobile_log_within_budget(ottsel_sprite_clear_logs, 400)) {
+    ++ottsel_sprite_clear_logs;
+    unsigned long ottsel_sprite_clear_atlas = 0;
+    for (const NativeSpriteBatch& batch : ottsel_sprite_clear_discarded) {
+      if (batch.texture && batch.texture.width == 512 && batch.texture.height == 512) {
+        ++ottsel_sprite_clear_atlas;
+      }
+    }
+    lg::info("OTTSEL SPRITE CLEAR: discarded={} hud_atlas={}",
+             (unsigned long)ottsel_sprite_clear_discarded.size(), ottsel_sprite_clear_atlas);
+  }
   _spriteBatches.clear();
   self.spriteVertices = nil;
   self.spriteTex = nil;
@@ -2031,6 +2518,7 @@ class RenderEncoderEndGuard {
   _spriteBatches.erase_if(
       [](const NativeSpriteBatch& batch) { return !batch.persistent; });
   _skyBatches.clear();
+  _directBatches.clear();
 }
 
 - (void)drainSpriteUploads {
@@ -2547,7 +3035,8 @@ void ottsel_metal_append_sky_mesh_n(OttselMetal* m,
                                     const unsigned char* rgba,
                                     unsigned int width,
                                     unsigned int height,
-                                    int blended) {
+                                    int blended,
+                                    unsigned char ta0) {
   if (!m || !vertices || vertex_count == 0) {
     return;
   }
@@ -2558,7 +3047,31 @@ void ottsel_metal_append_sky_mesh_n(OttselMetal* m,
                   rgba:rgba
                  width:width
                 height:height
-               blended:blended != 0];
+               blended:blended != 0
+                   ta0:ta0];
+  }
+}
+
+void ottsel_metal_append_direct_mesh_n(OttselMetal* m,
+                                       const OttselMetalSpriteVertex* vertices,
+                                       unsigned int vertex_count,
+                                       const unsigned char* rgba,
+                                       unsigned int width,
+                                       unsigned int height,
+                                       int blended,
+                                       unsigned char ta0) {
+  if (!m || !vertices || vertex_count == 0) {
+    return;
+  }
+  @autoreleasepool {
+    OttselMetalRenderer* r = ((__bridge OttselMetalRenderer*)m);
+    [r appendDirectMeshNow:vertices
+               vertexCount:vertex_count
+                     rgba:rgba
+                    width:width
+                   height:height
+                  blended:blended != 0
+                      ta0:ta0];
   }
 }
 
