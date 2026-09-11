@@ -3715,3 +3715,18 @@ logo-intro-2` is now gone and fields read `abs=8 rel=8`, `transfers=64 glyphs=0`
 `master=progress`. START was stolen by a leftover Mac `game/gk` eating the shared
 `/tmp/ottsel-press-*` triggers, and the progress screen does load - only its text
 and logo fail to draw. Evidence: `docs/evidence/I1/BOT44-kprint-and-trigger-race.md`.
+
+2026-09-11 (BOT45, CORRECTION): "the Mac gets past the intro, the iPad stalls" is
+confounded - the Mac log never pressed Start, the iPad log did. Clean launch, no
+input: 15/15 `LOI2.STR` parts, `logo-loop` reached, `loader stall on art`=0.
+Start injected at `title-wait-ready`: `loader stall on art logo-intro-2 12`=309
+and `logo-loop` never reached, because `activate-progress` takes the two
+`external-art-control` buffers the spool holds across `loader.gc:692`.
+Evidence: `docs/evidence/I1/BOT45-intro-spool-start-stall.md`.
+
+2026-09-11 (BOT45, CORRECTION): the `OTTSEL SKY TEXEL` probe clamps uv on the CPU,
+so it cannot report what the GPU samples; the default sampler is `Repeat`
+(`metal_shell.mm:671`), where `uv=(-3.844,-3.688)` is legal. The
+`g_direct_texture_metadata`-keyed-by-`dest`-alone sky lead is not confirmed
+(`key-present=1 meta-same-dest=1`, `SKY BLEND produced copies=3 misses=0`).
+Evidence: `docs/evidence/I1/BOT45-sky-probe-misleading.md`.
