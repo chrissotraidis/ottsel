@@ -2,7 +2,7 @@
 
 ## Current board — 2026-09-11
 
-`docs/BOT40_PROMPT.md` is the authoritative queue (supersedes BOT38/BOT39). Platform order is resolved:
+`docs/BOT43_PROMPT.md` is the authoritative queue (supersedes BOT42/BOT41/BOT40). Platform order is resolved:
 macOS is frozen as the accepted behavioral/visual reference, the iPad Simulator
 renderer is the active engineering gate (I1), and iPhone/device work stays
 behind a coherent iPad route. The 2026-08-21 self-audit below is preserved
@@ -3689,3 +3689,12 @@ from it (`key-present=1`, fault log 0 bytes). Sky content is still not a
 gradient, so I1 stays OPEN; next suspect is `g_direct_texture_metadata`, keyed
 by `dest` alone, letting a page reusing `dest=0x20` alias the sky record
 (`docs/evidence/I1/i1-direct-texture-registry-2026-09-11.md`).
+
+2026-09-11 (BOT43, REFRAME): the BOT42 framing is refuted by measurement. The
+camera and scene are LIVE (screenshots 8 s apart differ on 5.34% of pixels;
+cam-accepted rises 1:1 with chain; merc-submits rises ~90 per 90 chains), so the
+scene is not deduplicated or latched. The visible defect is the Sprite3 layer:
+with `ottsel-trace-metal-scene-no-sprite` armed every flat rectangle disappears
+and a correct textured training-level village remains. Two sprite data defects
+are measured: `tbp=0x24f2` 64x64 PSM19 decodes to alpha-max=0, and Sprite3
+groups arrive with `tex0=0`. Evidence: `docs/evidence/I1/BOT43-camera-live-sprite-defect.md`.

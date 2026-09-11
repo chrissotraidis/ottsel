@@ -1,4 +1,13 @@
-# Gate A/C evidence — the app is parked in the intro; the player mesh stops being submitted
+# Gate A/C evidence - the app is parked in the intro; the player mesh stops being submitted
+
+> **PARTLY REFUTED 2026-09-11 by BOT43.** Three claims below are disproven by
+> re-measurement on the same device: the app *does* leave the intro
+> (`enter village1` then `enter misty` then `enter training`; the scene-level
+> ledger reads `village1`), host input *does* reach the shell, and the player
+> mesh *does not* stop being submitted (`merc-submits` rises one per frame).
+> The camera and scene are live. See
+> `docs/evidence/I1/BOT43-camera-live-sprite-defect.md` for the corrected state.
+> The rest of this document is retained as measurement history, not current fact.
 
 Measured 2026-09-11 on iPad Pro 11-inch M4 Simulator,
 UDID `08636791-2675-4675-8335-EF72EF954DCF`, bundle `com.ottsel.shell`,
