@@ -2537,6 +2537,7 @@ struct OttselGifDecoder {
   u32 prims_logged = 0;
   u32 chain_no = 0;
   u32 reglist_dumps = 0;
+  u32 native_packed_dumps = 0;
   std::vector<ottsel::DirectIrEvent> ordered_ir;
   u32 direct_min_x = UINT32_MAX;
   u32 direct_min_y = UINT32_MAX;
@@ -2557,6 +2558,9 @@ struct OttselGifDecoder {
   u32 native_texture_misses = 0;
   u32 native_prim_starts = 0;
   u32 native_vertex_words = 0;
+  u32 native_untextured_primitives = 0;
+  u32 native_tex0_writes = 0;
+  u64 native_tex0_last = 0;
 
   void capture_native_primitive(int count) {
     if (!native_capture) {
@@ -2572,7 +2576,19 @@ struct OttselGifDecoder {
     auto texture = native_texture_cache[st.tex0];
     u32 texture_width = 0;
     u32 texture_height = 0;
-    if (!texture) {
+    // GS PRIM TME=0: the desktop DirectRenderer selects DIRECT_BASIC and never
+    // samples a texture, so an untextured primitive must not be dropped just
+    // because TEX0 is zero.  A 1x1 white texel keeps the shared direct_fs path
+    // exact (out = vertex_rgba * 1).
+    static const std::shared_ptr<std::vector<u8>> kUntexturedWhiteTexel =
+        std::make_shared<std::vector<u8>>(std::vector<u8>{255, 255, 255, 255});
+    if (!gp.tme()) {
+      texture = kUntexturedWhiteTexel;
+      texture_width = 1;
+      texture_height = 1;
+      ++native_untextured_primitives;
+    }
+    if (gp.tme() && !texture) {
       const auto relocated_it = g_direct_relocated_textures.find(
           direct_texture_cache_key(tex0.tbp0(), (u32)tex0.psm()));
       if (relocated_it != g_direct_relocated_textures.end() &&
@@ -2583,7 +2599,7 @@ struct OttselGifDecoder {
         native_texture_cache[st.tex0] = texture;
       }
     }
-    if (!texture) {
+    if (gp.tme() && !texture) {
       bool used_vram = false;
       auto decoded = decode_direct_vram_texture(st.tex0, texture_width, texture_height, used_vram);
       if (decoded.empty()) {
@@ -2598,7 +2614,7 @@ struct OttselGifDecoder {
       }
       texture = std::make_shared<std::vector<u8>>(std::move(decoded));
       native_texture_cache[st.tex0] = texture;
-    } else {
+    } else if (gp.tme()) {
       texture_width = 1u << tex0.tw();
       texture_height = 1u << tex0.th();
     }
@@ -2782,7 +2798,7 @@ struct OttselGifDecoder {
     vert_count = 0;
   }
 
-  void log_triangle_strip() {
+  void log_triangle_strip(const char* kind_name = "TRI_STRIP") {
     GsPrim gp(st.prim);
     GsTex0 gt(st.tex0);
     if (g_mobile_direct_trace.active && g_mobile_direct_trace.decoding_direct) {
@@ -2800,9 +2816,9 @@ struct OttselGifDecoder {
       return;
     }
     prims_logged++;
-    lg::info("OTTSEL PRIM: chain={} kind=TRI_STRIP tme={} abe={} tex0(tbp=0x{:x} tw={} th={} "
+    lg::info("OTTSEL PRIM: chain={} kind={} tme={} abe={} tex0(tbp=0x{:x} tw={} th={} "
              "psm=0x{:x}) nv=3",
-             chain_no, (int)gp.tme(), (int)gp.abe(), gt.tbp0(), gt.tw(), gt.th(),
+             chain_no, kind_name, (int)gp.tme(), (int)gp.abe(), gt.tbp0(), gt.tw(), gt.th(),
              (u32)gt.psm());
     for (int i = 0; i < 3; i++) {
       const OttselVertex& v = verts[i];
@@ -2863,8 +2879,30 @@ struct OttselGifDecoder {
           vert_count = 2;
         }
         break;
+      // Upstream DirectRenderer handles TRI_FAN (DirectRenderer.cpp:1296); the
+      // native walk previously fell through to no case at all, so a fan
+      // accumulated vertices to the 8-slot cap and never completed.  A fan
+      // keeps vertex 0 as the centre and reuses the previous vertex, so only
+      // slot 1 is refilled (TRI_STRIP shifts both).
+      case GsPrim::Kind::TRI_FAN:
+        if (vert_count == 3) {
+          log_triangle_strip("TRI_FAN");
+          verts[1] = verts[2];
+          vert_count = 2;
+        }
+        break;
       default:
         break;
+    }
+  }
+
+  // Single TEX0 write path so a capture walk can tell "this chain never set
+  // TEX0" apart from "TEX0 arrived and we lost it".
+  void note_tex0(u64 value) {
+    st.tex0 = value;
+    if (native_capture) {
+      ++native_tex0_writes;
+      native_tex0_last = value;
     }
   }
 
@@ -2875,7 +2913,7 @@ struct OttselGifDecoder {
         break;
       case GsRegisterAddress::TEX0_1:
       case GsRegisterAddress::TEX0_2:
-        st.tex0 = value;
+        note_tex0(value);
         record_ir(ottsel::DirectIrKind::Tex0, value);
         break;
       case GsRegisterAddress::TEX1_1:
@@ -2998,6 +3036,23 @@ void decode_gif_packets(const u8* g, u32 size, OttselGifDecoder& dec) {
                  dec.chain_no, offset - 16, tag.nloop(), nreg, (int)tag.pre(), tag.prim(),
                  *(u64*)(g + offset - 16), *(u64*)(g + offset - 8));
       }
+      // Probe-scoped packed descriptor dump.  The REGLIST path already has an
+      // equivalent bounded trace, so a probe window that reports
+      // prim-starts>0 with candidates=0 can be read directly instead of
+      // inferred.  Gated on native_capture, so product logging is unchanged.
+      if (dec.native_capture && dec.native_packed_dumps < 4) {
+        ++dec.native_packed_dumps;
+        lg::info("OTTSEL PACKED: chain={} dump={} nloop={} nreg={} pre={} prim=0x{:x}",
+                 dec.chain_no, dec.native_packed_dumps, tag.nloop(), nreg, (int)tag.pre(),
+                 tag.prim());
+        for (u32 r = 0; r < nreg && r < 12; r++) {
+          u64 lo = 0, hi = 0;
+          memcpy(&lo, g + offset + (size_t)r * 16, 8);
+          memcpy(&hi, g + offset + (size_t)r * 16 + 8, 8);
+          lg::info("OTTSEL PACKED:   reg[{}] desc={} lo=0x{:016x} hi=0x{:016x}", r,
+                   (int)reg_desc[r], lo, hi);
+        }
+      }
       if (tag.pre()) {
         dec.on_prim_start(tag.prim());
       }
@@ -3069,7 +3124,7 @@ void decode_gif_packets(const u8* g, u32 size, OttselGifDecoder& dec) {
            case GifTag::RegisterDescriptor::TEX0_2: {
              u64 v = 0;
              memcpy(&v, rec, 8);
-             dec.st.tex0 = v;
+             dec.note_tex0(v);
            } break;
            default:
               if (g_mobile_direct_trace.active &&
@@ -3257,11 +3312,40 @@ void decode_transfer(const DmaTransfer& t, OttselGifDecoder& dec) {
   }
 }
 
+// I1.1 discrimination helper: name the leading DMA tag kind without pulling in
+// dma.cpp's DmaTag::print(), which is not part of the iOS runtime archive.
+static const char* mobile_dma_kind_name(DmaTag::Kind kind) {
+  switch (kind) {
+    case DmaTag::Kind::REFE:
+      return "REFE";
+    case DmaTag::Kind::CNT:
+      return "CNT";
+    case DmaTag::Kind::NEXT:
+      return "NEXT";
+    case DmaTag::Kind::REF:
+      return "REF";
+    case DmaTag::Kind::REFS:
+      return "REFS";
+    case DmaTag::Kind::CALL:
+      return "CALL";
+    case DmaTag::Kind::RET:
+      return "RET";
+    case DmaTag::Kind::END:
+      return "END";
+  }
+  return "?";
+}
+
 static u32 submit_mobile_native_sky_bucket(const void* data,
                                            u32 start_offset,
                                            u32 next_bucket,
-                                           OttselGifDecoder& decoder) {
+                                           OttselGifDecoder& decoder,
+                                           u32 sample_index) {
   DmaFollower dma(data, start_offset);
+  // I1.1 discrimination: the leading tag kind decides whether this window is
+  // a real Sky draw list or a CALL/RET chain that upstream's SkyRenderer would
+  // short-circuit.  Observability only; no renderer behavior changes.
+  const DmaTag leading_tag = dma.current_tag();
   const bool saved_capture = decoder.native_capture;
   OttselRaster* saved_raster = decoder.rst;
   const auto saved_trace = g_mobile_direct_trace;
@@ -3276,6 +3360,10 @@ static u32 submit_mobile_native_sky_bucket(const void* data,
   decoder.native_texture_misses = 0;
   decoder.native_prim_starts = 0;
   decoder.native_vertex_words = 0;
+  decoder.native_untextured_primitives = 0;
+  decoder.native_tex0_writes = 0;
+  decoder.native_tex0_last = 0;
+  decoder.native_packed_dumps = 0;
   decoder.st = OttselDrawState{};
   decoder.vert_count = 0;
   decoder.prims_logged = 0;
@@ -3296,12 +3384,22 @@ static u32 submit_mobile_native_sky_bucket(const void* data,
         primitive.blended ? 1 : 0);
     ++submitted;
   }
-  lg::info("OTTSEL SKY PRODUCT: transfers={} direct-transfers={} gif-tags={} prim-starts={} "
-           "vertex-words={} candidates={} rejected={} texture-misses={} primitives={} "
-           "submitted={} end=0x{:x} expected=0x{:x}",
-           transfers, g_mobile_direct_trace.direct_transfers, g_mobile_direct_trace.gif_tags,
-           decoder.native_prim_starts, decoder.native_vertex_words, decoder.native_primitive_candidates,
-           decoder.native_primitive_rejected, decoder.native_texture_misses,
+  lg::info("OTTSEL SKY PRODUCT: sample={} leading-kind={} leading-qwc={} leading-addr=0x{:x} "
+           "transfers={} direct-transfers={} gif-tags={} packed-tags={} reglist-tags={} "
+           "image-tags={} prim-starts={} vertex-words={} candidates={} rejected={} "
+           "texture-misses={} untextured={} tex0-writes={} tex0-last=0x{:x} "
+           "triangles={} sprites={} strips={} unhandled-packed={} "
+           "primitives={} submitted={} end=0x{:x} expected=0x{:x}",
+           sample_index, mobile_dma_kind_name(leading_tag.kind), leading_tag.qwc,
+           leading_tag.addr, transfers, g_mobile_direct_trace.direct_transfers,
+           g_mobile_direct_trace.gif_tags, g_mobile_direct_trace.packed_tags,
+           g_mobile_direct_trace.reglist_tags, g_mobile_direct_trace.image_tags,
+           decoder.native_prim_starts, decoder.native_vertex_words,
+           decoder.native_primitive_candidates, decoder.native_primitive_rejected,
+           decoder.native_texture_misses, decoder.native_untextured_primitives,
+           decoder.native_tex0_writes, decoder.native_tex0_last,
+           g_mobile_direct_trace.triangles, g_mobile_direct_trace.sprites,
+           g_mobile_direct_trace.strips, g_mobile_direct_trace.unhandled_packed_registers,
            decoder.native_primitives.size(), submitted, dma.current_tag_offset(), next_bucket);
   decoder.native_primitives.clear();
   decoder.native_texture_cache.clear();
@@ -6393,15 +6491,23 @@ void gfx_send_chain(const void* data, u32 offset) {
   if (sprite_bucket.addr && debug_bucket.addr) {
     static u32 native_sky_product_vsync = UINT32_MAX;
     static u32 native_sky_product_submissions = 0;
+    // I1.1 discrimination: sample one chain per vsync across several Village1
+    // frames.  The earlier single-shot form captured whichever chain arrived
+    // first, which cannot distinguish "Sky has no PRIM" from "this chain's
+    // Sky did not draw" (upstream SkyRenderer short-circuits on CALL).
+    constexpr u32 kSkyProductSampleChains = 8;
     if (native_sky_product_requested && mobile_sprite_village1_phase() &&
         native_sky_product_vsync != g_ottsel_ios_vsync_count &&
-        native_sky_product_submissions < 1) {
+        native_sky_product_submissions < kSkyProductSampleChains) {
       native_sky_product_vsync = g_ottsel_ios_vsync_count;
       submit_mobile_native_sky_bucket(
           data, ottsel_mobile_jak1_bucket_boundary(offset, 3),
-          ottsel_mobile_jak1_bucket_boundary(offset, 4), g_dec);
+          ottsel_mobile_jak1_bucket_boundary(offset, 4), g_dec,
+          native_sky_product_submissions);
       ++native_sky_product_submissions;
-      native_sky_product_requested = false;
+      if (native_sky_product_submissions >= kSkyProductSampleChains) {
+        native_sky_product_requested = false;
+      }
     }
     MobileSpriteFrameJak1 inherited_frame{};
     MobileSpriteMatrix inherited_matrix{};

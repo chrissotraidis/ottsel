@@ -8,9 +8,11 @@ renderer is the active engineering gate (I1), and iPhone/device work stays
 behind a coherent iPad route. The 2026-08-21 self-audit below is preserved
 evidence history; its "macOS first / mobile paused" ordering is superseded.
 
-Blocker: the AGENTS.md disk precondition FAILS (Avail 20Gi on `/`, 0 temp
-packs), so no build, boot, or recording may run. Restoring the 40 GB floor
-requires a user-approved, named cleanup.
+Disk: the AGENTS.md 40 GB precondition is still below the floor (Avail ~15Gi on
+`/`, 0 temp packs). On 2026-09-10 the user explicitly authorized proceeding
+("theres space to work, just keep working"), so the Simulator renderer lane is
+active again under the repository's other rules. This is not a cleanup
+authorization; nothing is deleted without a separately named action.
 
 Measured on 2026-09-10 (read-only; nothing deleted). Authoritative volume is
 `/System/Volumes/Data` (the `/` row shows a sealed snapshot and is
@@ -3651,3 +3653,14 @@ transfers (6 DIRECT, 24 GIF tags) but 0 PRIM/XYZ callbacks and 0 submissions;
 the native product walk is OPEN and the frame remains malformed. Next session
 must reconcile its bucket start/tag forms with the SKY IR trace before adding
 generated Sky textures. Evidence: `docs/evidence/I1/i1-sky-native-capture-boundary-2026-09-04.md`.
+
+2026-09-10 I1.1 SKY_DRAW root cause: bucket 3 carries PRIM after all. The packed
+sky tags are `pre=1 prim=0x5d` = `TRI_FAN`, which the native `push_vertex`
+switch never handled, so 16-18 prim starts accumulated to the 8-slot cap and
+produced 0 candidates; upstream handles it at `DirectRenderer.cpp:1296`. Adding
+the case moves the packed population from `candidates=0 strips=0` to
+`candidates=34..40 rejected=0 strips=34..40` with `unhandled-packed=0`. The
+completions still do not render because all of them sample `tbp0=0x1fa0`
+(64x64 PSMCT32) with no VRAM source, so they are pruned as texture misses; that
+source is the unimplemented SkyBlend bucket 32. Sky is still black; no
+playability claim. Evidence: `docs/evidence/I1/i1-sky-draw-tri-fan-2026-09-10.md`.
