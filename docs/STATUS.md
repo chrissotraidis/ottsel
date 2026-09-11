@@ -3664,3 +3664,18 @@ completions still do not render because all of them sample `tbp0=0x1fa0`
 (64x64 PSMCT32) with no VRAM source, so they are pruned as texture misses; that
 source is the unimplemented SkyBlend bucket 32. Sky is still black; no
 playability claim. Evidence: `docs/evidence/I1/i1-sky-draw-tri-fan-2026-09-10.md`.
+
+2026-09-11 BOT40 opens (`docs/BOT40_PROMPT.md`, supersedes BOT39) under the
+user's standing disk-gate override (Avail 14Gi, 0 temp packs). I1.1c settles
+the disputed sky draw path: a magenta probe through `skyDebugFillPipeline`
+drawn at the END of the encoder paints 49.7% of the frame, and redrawing the
+captured `_skyBatches` there with the real product pipeline paints textured sky
+geometry. The sky draw path is ALIVE; BOT39's "the draw path is dead" and the
+stale-binary "floods cyan" claim are both refuted. The real defect is placement:
+the native Direct/sky NDC conversion (`metal_gfx.mm:2659-2671`) is the suspect,
+though that placement reading is NOT settled: same-binary launches at t=45 s
+differ on 39.5% of pixels and the camera is live, so single-screenshot A/Bs are
+inside the noise floor (`docs/evidence/I1/i1-frame-determinism-2026-09-11.md`).
+One fresh frame does show recognizable Village1 huts/palms/water. Sky is still
+black; no playability claim. Evidence:
+`docs/evidence/I1/i1-sky-draw-path-alive-2026-09-11.md`.
