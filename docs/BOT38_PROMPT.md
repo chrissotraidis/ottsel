@@ -127,10 +127,28 @@ texture-required drop inside `capture_native_primitive` (`metal_gfx.mm:2561`,
 `on_prim_start` (`metal_gfx.mm:2707`) is the only place `native_prim_starts`
 increments.
 
+Frame-selection caveat, and why the two retained Sky runs disagree. The
+`SKY IR` run reported 2 triangle-strip streams and 0 IR errors (so PRIM *was*
+present), while the later native-capture run reported `prim-starts=0`. Both
+probes walk the same window (`ottsel_mobile_jak1_bucket_boundary(offset, 3)` to
+`(offset, 4)`), gate on `mobile_sprite_village1_phase()`, and consume a
+one-shot trigger (`metal_gfx.mm:6333-6342` and `6396-6402`), so each captures
+whichever Village1 chain arrives first in that session. Upstream
+`SkyRenderer::render` short-circuits and draws nothing when
+`dma.current_tag().kind == DmaTag::Kind::CALL` ("sky renderer didn't run"), and
+the mobile walk has no equivalent check. A `prim-starts=0` capture is therefore
+equally consistent with "Sky has no PRIM" and with "this run captured a frame
+where Sky did not draw". The differing transfer counts between the two runs
+(`8` vs `11`) are direct evidence that the captured DMA content is not stable
+across runs. Do not conclude anything about PRIM presence until that is
+discriminated.
+
 Probe: extend the `OTTSEL SKY PRODUCT` log at `metal_gfx.mm:3299` with the
 already-counted `g_mobile_direct_trace.packed_tags`, `reglist_tags`, and
 `image_tags` (declared `metal_gfx.mm:138-140`, incremented at `2940-2949`).
-The counter set is the whole experiment: no renderer behavior changes.
+Add the leading `DmaTag` kind of the window, and decode across several
+Village1 chains rather than one. Observability only; no renderer behavior
+changes.
 
 Exit: either the tag mix proves Sky has no PRIM (then re-anchor the search on
 the Direct/texture-copy contract) or a PRIM appears and the walk can be fixed.
