@@ -3837,3 +3837,137 @@ a cache defect. The 236-sample `access()` cost is the game's own file probes und
 fly-through, screenshot sha256 a78fa32e...); the stray rectangles are the frozen touch
 overlay. Gate N1 is still unproven — Start -> Cross reaches the PC title menu and Cross
 lands on loading `/100` at `9%`. Next: docs/BOT50_PROMPT.md.
+
+2026-09-11 (BOT52, FIX, confirmed): the mobile PC_PORT walker's bucket candidate set
+omitted the terrain/TIE buckets carrying `add-pc-tfrag3-data`, so the 400-byte camera
+packet was never scanned and `cam-entries` froze at 6994. The predicate now scans
+`bucket_id < 70`; `PC_PORT CAMERA: chain=3 bucket=6 n=11` proves capture in tfrag-0.
+
+2026-09-11 (BOT52, STATE): `cam-entries` climbs 604 -> 12941 with zero level rejects and
+the frame is live (eight screenshots 1.5 s apart gave eight distinct md5s, ~17 chains/s
+in village1), but `eichar` is frozen at 722 while `merc-submits` passes 25,000. Gate N1
+unproven. Next: docs/BOT52_PROMPT.md.
+
+2026-09-11 (BOT53, MEASUREMENT): the presented frame is not frozen and not blank. On the
+live training scene (`scene-level='training'`) the renderer advances `chain` 8730 -> 9270
+in 51 s (~7 chains/s) and the game loop `scePadRead` #34001 -> #35001 in 33 s (~30/s)
+while `eichar` climbs past 6285. Consecutive captures are nonetheless frequently
+bit-identical because the content is a mostly-static HUD pose. Frame SHA is therefore
+not a liveness test; use a per-pixel diff.
+
+2026-09-11 (BOT53, CORRECTION): the earlier "three distinct frame SHAs = live and
+animating" reading was wrong. Those SHAs differed only by the status-bar clock.
+
+2026-09-11 (BOT53, FIX/ISOLATION, proven): the intermittent full-screen yellow quad is
+emitted by the mobile 2D sprite/HUD path, not by TFRAG/TIE/Sky/depth/camera. A/B on the
+existing `ottsel-trace-metal-scene-no-sprite` probe: baseline 4 of 23 captures showed
+35.3-35.5% solid yellow spanning the whole drawable; armed, 0 of 30 captures did.
+See docs/evidence/I1/i1-hud-sprite-giant-quad-2026-09-11.md.
+
+2026-09-11 (BOT53, FINDING): informative runtime logging stops after ~[10:48] while the
+frame loop keeps running (`SUBMITSTAT`/`VU1STAT` last at `chain=8190`, `chain` now
+past 9700). Treat stale counters as budget-capped, not as a stopped engine.
+
+2026-09-11 (BOT53, STATE): `ottsel_metal_gfx_game_frame()` is still a stub returning 0,
+so the presented image is the Metal TFRAG/TIE/Sprite mesh over the (8,10,18) base. Gate
+N1 unproven; no playability claim. Next: docs/BOT54_PROMPT.md.
+
+2026-09-11 (BOT57, Q1 ANSWERED, branch A): the game's own VIF -> VU1 -> GIF path is viable
+but unwired. With SIMCTL_CHILD_OTTSEL_ENABLE_CPU_VU_DIAGNOSTICS=1, per 90-chain period:
+vu1-runs 3485/10206/8538, gif-words 433564/496580/190744, last-pc 1694. Early run# lines are
+mscal imm=0x0 top=0x0 pc=79 gif_out=0 (empty frag list, spins to the cap by design).
+metal_gfx.mm:6711 gates this behind !g_metal || getenv, so vu1-runs=0 was the shell's own
+switch; lifting it does NOT change the frame (matched black fraction product 19-42% vs
+diagnostic 14-55%). BOT56 Q2 refuted: eichar-attempts 13168, not 4. N1 unproven; next: BOT57_PROMPT.md.
+BOT57 Q3 2026-09-11: the presented frame is the Metal pass, not the CPU g_rgba fill. ottsel_metal_gfx_game_frame
+is `return 0` (metal_gfx.mm:8754), so main.cpp:1081 always presents g_rgba; the black backdrop is the pass
+clear colour (0.03,0.04,0.07) = (8,10,18), measured pixel-for-pixel across the sky region.
+Sky submits 40 single-triangle batches, blend=1, a=0.502, real 32/64 textures, geometry covering the drawable.
+A/B: -sky-debug-fill (opaque magenta, alpha 1.0) gives 0.00% magenta in the sky region, while the
+-sky-debug-all local reference triangle through the same pipeline paints the whole screen.
+Depth/blend/winding/descriptor/pool/pass-structure exonerated. Next: one-batch sky-buffer fixture or GPU capture.
+Evidence: docs/evidence/I1/BOT57-q3-sky-drawn-but-no-fragments.md
+
+2026-09-11 (BOT58, FIX-PATH): the blocker is the intro stream, not the renderer.
+The game loops its logo/title spool forever -- LOLOOP.STR chunks 3/4 reload 587 -> 655 times in
+20 s (~3.4/s), with LOI2/LOINTRO/NDINTRO loaded and model='logo-cam-lod0' level='title'. In that
+state consecutive frames are byte-identical, eichar=4 eichar-attempts=4 never moves, and injected
+input is delivered but inert. Input is exonerated: OTTSEL MOBILE INPUT decodes START (buttons=0x8),
+CROSS (0x4000) and four DOWN (0x40) presses -- the Gate I0 route title-wait -> Start -> Cross ->
+Down x4 -> Cross reaches the app intact and changes nothing. Driving the game's own (bg 'village1)
+unblocks it: eichar 4 -> 35 -> 125 -> 215 -> 305, one submit per game frame, and the frame becomes a
+ground-level gameplay camera at 93.9% drawn / 6.1% clear with the sky region going 7.6% -> 88.4%
+painted. So the renderer, camera, player-submit path and frame loop already work in village1
+gameplay; what blocks playability is the state machine staying in the intro stream.
+2026-09-11 (BOT58, CORRECTION): audio is NOT zero. PLAYER RPC loaded COMMON bank sounds=461,
+VILLAGE1 bank sounds=43, named fly7/bird-2 plays, and 'mixed 48000 frames' windows ramping from
+window 1 pcm-peak=0 to window 260 pcm-peak=8113 (sustained 7000-10000). The zero-PCM inherited
+from BOT35/BOT37 is stale. Also: SKYFRAME/SKYRGB are NSLog, absent from ottsel-runtime.log by log
+target, not by failure; read them via simctl spawn log show with predicate 'eventMessage CONTAINS
+"ottsel metal"'. The RGBAQ decode is verified correct against DirectRenderer.cpp:1127-1132 and
+:923-928 -- do not chase a decode fix. Gate N1 unproven; no playability claim. Next: docs/BOT58_PROMPT.md.
+Evidence: docs/evidence/I1/BOT58-title-spool-blocks-gameplay.md
+
+2026-09-11 (BOT59, GATE I1): JAK IS ON SCREEN. The MERC vertex path applied `transformed.z -= 1.0` on
+top of the hvdf_offset the pc_camera path already normalised, so z_merc = z_world - 2; every MERC
+vertex sat behind the near plane and GEQUAL rejected it. Frozen camera, one variable: mode 0 drew no
+player, modes 1-4 all drew him; eichar unclogged from a frozen 4 to 382 -> 472.
+2026-09-11 (BOT59, CORRECTIONS): BOT58's "sky region painted 88.4%" row measured the yellow HUD
+banner, not sky, and "the player-submit path works" is refuted -- eichar climbing was submission,
+not visibility. Jak is still unlit, sky still black, raster-draws=0. Not playable; no playability
+claim. Next: docs/BOT59_PROMPT.md Q1. Evidence: docs/evidence/I1/BOT59-merc-z-near-plane.md
+
+2026-09-11 (BOT60, GATE I1): THE ROUTE CLOSES VIA THE GAME'S OWN FRONT END. Title -> NEW GAME ->
+save-file screen -> CONTINUE WITHOUT SAVING -> Village1, by real pad input: accept screen=27 index=0,
+then edge screen=18 index=0..4, accept screen=18 index=4, GAMEPLAY: enter village1, CAMERA START:
+cp "intro-start", INTRO: preloading misty before sequence A. 2026-09-11 (BOT60, THE FINDING): the
+Village1 frame is FROZEN -- 8 of 423000 scene pixels change per second; only the corrupted top strip
+and status bar move. The EE/GOAL loop is healthy at ~60 Hz (chain 44100->45360 in 20 s), so the
+freeze is in the simulated state, not pacing. D-pad, a full-left synthetic stick ("0 128 700"), and
+START/CROSS/DOWN holds all leave Jak's silhouette identical to 0.1 px: input reaches the game (it
+closed the menu route) but there is nothing moving to observe. Not playable; no playability claim.
+Next: docs/BOT60_PROMPT.md Q1. 2026-09-11 (BOT60, 60 s WINDOW): the freeze is slow drift, not zero --
+scene pixels change 2.47% over 60 s (a few px of camera/TOD drift), but zero CAMERA START or INTRO
+lines appear in that minute, so the intro sequence never advances and never hands over control.
+Evidence: docs/evidence/I1/BOT60-q1-frozen-cutscene.md
+
+2026-09-11 (BOT64, GATE N3 PRE-WORK): the 20:24 fault was DIAGNOSTIC-INDUCED, not product. A control
+run with NO probes armed ran 210 s of Village1 with ottsel-fault.log at 0 bytes and the process alive,
+and the scene changed across the window. Four cumulative sky probes armed together (each allocating a
+fresh MTLBuffer per frame in the SKYCOPY path, metal_shell.mm:1532-1550) caused the GOAL-tag fault.
+RULE GOING FORWARD: one diagnostic probe per run.
+2026-09-11 (BOT64, THE FINDING): the shell's VU1 interpreter produces ZERO in gameplay. Same installed
+binary, SIMCTL_CHILD_OTTSEL_ENABLE_CPU_VU_DIAGNOSTICS=1: title/logo chains 90-180 give xgkicks=108391
+gif-words=433564 draws=177, but Village1 chains 270/360/450 give vu1-runs=7290 capped=5670
+xgkicks=0 gif-words=0 draws=0. BOT57's "the interpreter works" numbers were the TITLE SPOOL, and
+BOT63's premise (game-accurate producer exists, merely unwired) is REFUTED for gameplay. Wiring
+gif_out would present nothing. Evidence: docs/evidence/I1/BOT64-vu1-zero-in-gameplay.md
+2026-09-11 (BOT64, THE ARCHITECTURE): the desktop renders correctly because it CALLS mips2c VU1
+programs (game/mips2c/jak1_functions/tfrag.cpp, generic_tie.cpp, generic_merc.cpp, sky_tng.cpp …)
+from an OpenGLRenderer bucket runner. The shell instead EMULATES microcode in tools/ottsel_vu1/vu1.cpp
+(microcode loaded at metal_gfx.mm:6990) and re-derives transforms per class. build-ios.sh already
+compiles the desktop's mips2c programs into libottsel-runtime.a; it does NOT compile
+game/graphics/opengl_renderer/* (the runner). That inversion, not any one constant, is why 60 rounds
+did not converge. New lane: run the desktop's VU1 programs; port the runner. docs/BOT64_PROMPT.md
+2026-09-11 (BOT64, SKY SCOPE): sky submission is healthy and was never the whole defect.
+SKYFRAME batches=44 (6x1x1, 6x32x32, 32x64x64) stable over six seconds, pre-world block at
+metal_shell.mm:1465 IS entered, SKYBOUND shows the 1x1 fans reaching the drawable at
+ndc=(-4.000,-4.009)..(4.000,3.991). But SKYRGB 1x1=(0.000,0.000,0.000) and the 20:35 frame is 29.9%
+black plus a 26.1% pure-yellow hard-edged wedge. Do not re-litigate submission; it is the per-class
+transform/texture/blend math.
+2026-09-11 (BOT64, GROUND TRUTH): the macOS oracle was run and driven to Village1 for the first time
+(Return=START, Space=CROSS, Down=DOWN): /tmp/ottsel-diag/mac/village1.png shows correct blue sky,
+correct terrain and Jak on the ground. Also refuted: BOT60's "Village1 is frozen" -- the 20:28 and
+20:32 frames differ (propeller angle, HUD banner cleared). Not playable; no playability claim.
+2026-09-11 (BOT65, LANE CORRECTION): BOT64's "run the desktop's mips2c VU1 programs; port the runner" is refuted for world geometry. Desktop world meshes are prebuilt out/jak1/fr3/*.fr3 (tfrag3::Level, Loader.cpp:249, drawn by TFragment/Tie3/Merc, which contain zero Mips2C refs); the shell already loads the same files (metal_gfx.mm:1342-1360) and draws NORMAL/TRANS/DIRT. VU1/mips2c covers dynamic effects only. BOT65 lane: close the sky, then whole-frame parity vs the macOS oracle. docs/BOT65_PROMPT.md
+2026-09-11 (BOT65, SKY BLEND POPULATED): OTTSEL SKY BLEND dest tbp=0x1f80 32x32 nonzero=4087 peak=254 mean=134; dest tbp=0x1fa0 64x64 nonzero=16384 peak=252 mean=119. The blended sky is not black, so with SKYFRAME batches=44 and SKYBOUND ndc=(-4.000,-4.009)..(4.000,3.991) the residual sky defect is fan texture identity or fan UV, not submission or blend.
+2026-09-11 (BOT65, ANOMALY): sky source tbp=0x10 cbp=0x50 reads an all-zero CLUT block from the shell VRAM mirror; tbp=0x14 (cbp=0x4c) and tbp=0x20 (cbp=0x40) read real CLUTs. Unresolved.
+2026-09-11 (BOT65, PROBE RULE): arm ONE diagnostic probe per run -- four cumulative sky probes caused the 20:24 GOAL type-tag fault, while zero probes ran 210 s at fault=0.
+2026-09-12 (BOT66, FRAME STATE CORRECTED): RETRACTED "iPad is stuck at a blank frame" (BOT64/BOT65). With -press-start the iPad boots to village1 and renders lit textured terrain, foliage, palms, a thatched hut, the water plane, distant mountains and the Jak model; SEPARATE frames show a camera pan, i.e. live input reaches the game loop. mac build behaves the same on the same content.
+2026-09-12 (BOT66, SKY EXONERATED): armed -sky-end, which redraws the captured sky batches at the END of the pass through the real product pipeline with nothing left to overdraw them. Result is 99.3% exact pass clear rgb(8,10,18) in the top 40%. Per that probe's documented matrix this refutes pass position/state residue and isolates the sampled texture content.
+2026-09-12 (BOT66, SKY ISO): a fragment that SAMPLES the texture writes no fragments; a fragment returning a constant paints 99.5% magenta from the same buffers, same descriptor, same depth state. The only unshared step is the setFragmentTexture/setFragmentSamplerState/setFragmentBytes triple. NEXT: rewrite direct_fs_debug_tex to return fract(in.uv) to split "texture bind is the defect" from "draw is dropped".
+2026-09-12 (BOT66, LANE): docs/BOT66_PROMPT.md. Close the sky, then whole-frame parity vs the macOS oracle, then the P1 input/camera exit bar. Still no playability claim.
+2026-09-12 (BOT67, ZOOM-OUT): the sky lane is bounded and has a positive control, so it is not what blocks iPad. A fresh 06:56 frame is the INTRO/logo state, not village1: there is no navigation past the intro, so nothing after it can be measured. The app is also not running (kernel machine shutdown 19:56:44) and the log container is 2.3 GB on 11 GiB free.
+2026-09-12 (BOT67, PROCESS): 715 lines of uncommitted diagnostics and 60 rounds sit on top of the product path, all in service of one bucket. The shell boots and draws the world; the gap to the oracle is scope of coverage, not one constant. Stop probing; publish the diagnostics or revert them.
+2026-09-12 (BOT67, POSITIVE CONTROL): with -sky-debug-fill the same batch0 that yields zero fragments paints 99.5% magenta. So the draw, the vertex buffer, the pipeline, the depth state and the pass position all execute; only the sampled value differs. That is the whole sky result and it has been stable for two days.
+2026-09-12 (BOT67, NEXT): (1) navigate intro->village1 deterministically and assert the scene; (2) one bounded BEFORE/AFTER of one bucket against the oracle; (3) only then the sky sample. Full lane in docs/BOT67_PROMPT.md. Still no playability claim.
