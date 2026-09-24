@@ -15,6 +15,12 @@
 # --shell-only reuses the runtime, dependencies, and generated AOT slice from
 # a prior full build. Run a full build first after nested runtime/GOAL changes
 # (regenerating affected GOAL artifacts first), or toolchain/flag changes.
+#
+# OTTSEL_PLATFORM=device builds the same app for a physical iPhone/iPad
+# (iphoneos SDK) into out/ios-device/. Set OTTSEL_SIGN_IDENTITY (an "Apple
+# Development: ..." identity from `security find-identity -v -p codesigning`)
+# and OTTSEL_PROVISIONING_PROFILE (a .mobileprovision file) to produce an
+# installable bundle; without them the device build is ad-hoc signed.
 
 set -euo pipefail
 
@@ -32,11 +38,17 @@ fi
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WORKTREE="$REPO_DIR/out/jak-project"
 SDL_SRC="$WORKTREE/third-party/SDL"
-SDL_BUILD="$WORKTREE/out/ios/sdl"
+PLATFORM="${OTTSEL_PLATFORM:-simulator}"
+case "$PLATFORM" in
+  simulator) IOS_OUT="$WORKTREE/out/ios" ;;
+  device) IOS_OUT="$WORKTREE/out/ios-device" ;;
+  *) echo "OTTSEL_PLATFORM must be simulator or device" >&2; exit 2 ;;
+esac
+SDL_BUILD="$IOS_OUT/sdl"
 ZSTD_PROJECT="$WORKTREE/out/ios/zstd-project"
-ZSTD_BUILD="$WORKTREE/out/ios/zstd-build"
+ZSTD_BUILD="$IOS_OUT/zstd-build"
 ZSTD_LIB="$ZSTD_BUILD/zstd/liblibzstd_static.a"
-APP_BUILD="$WORKTREE/out/ios/app"
+APP_BUILD="$IOS_OUT/app"
 OBJ="$APP_BUILD/obj"
 APP="$APP_BUILD/OttselShell.app"
 SLICE_DIR="$APP_BUILD/a11-slice"
@@ -89,8 +101,12 @@ if $SHELL_ONLY; then
 fi
 
 SDK=iphonesimulator26.5
-TARGET=arm64-apple-ios18.5-simulator
 DEPLOY=18.5
+TARGET=arm64-apple-ios$DEPLOY-simulator
+if [ "$PLATFORM" = device ]; then
+  SDK=iphoneos
+  TARGET=arm64-apple-ios$DEPLOY
+fi
 SDKROOT="$(xcrun --sdk "$SDK" --show-sdk-path)"
 
 COMMON_FLAGS=(-std=c++20 -O2 -fno-omit-frame-pointer -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE \
@@ -424,7 +440,25 @@ for text in "$WORKTREE"/out/jak1/iso/*.TXT; do
   fi
 done
 plutil -lint "$APP/Info.plist" >/dev/null
-codesign --force --sign - "$APP"
+if [ "$PLATFORM" = device ] && [ -n "${OTTSEL_SIGN_IDENTITY:-}" ] && [ -n "${OTTSEL_PROVISIONING_PROFILE:-}" ]; then
+  # The bundle id and entitlements come from the profile so they always match it.
+  cp "$OTTSEL_PROVISIONING_PROFILE" "$APP/embedded.mobileprovision"
+  security cms -D -i "$OTTSEL_PROVISIONING_PROFILE" > "$APP_BUILD/profile.plist"
+  /usr/libexec/PlistBuddy -x -c 'Print :Entitlements' "$APP_BUILD/profile.plist" > "$APP_BUILD/entitlements.plist"
+  APP_ID="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$APP_BUILD/profile.plist")"
+  BUNDLE_ID="${APP_ID#*.}"
+  case "$BUNDLE_ID" in *'*'*) BUNDLE_ID="${OTTSEL_BUNDLE_ID:-com.ottsel.shell}" ;; esac
+  /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$APP/Info.plist"
+  /usr/libexec/PlistBuddy -c 'Add :CFBundleSupportedPlatforms array' \
+    -c 'Add :CFBundleSupportedPlatforms:0 string iPhoneOS' "$APP/Info.plist"
+  codesign --force --sign "$OTTSEL_SIGN_IDENTITY" --entitlements "$APP_BUILD/entitlements.plist" "$APP"
+  echo "signed for device: $BUNDLE_ID with $OTTSEL_SIGN_IDENTITY"
+else
+  codesign --force --sign - "$APP"
+  if [ "$PLATFORM" = device ]; then
+    echo "NOTE: ad-hoc signed; set OTTSEL_SIGN_IDENTITY and OTTSEL_PROVISIONING_PROFILE to install on a device" >&2
+  fi
+fi
 codesign --verify --deep --strict "$APP"
 
 # Publish a reusable cache identity only after the complete bundle verifies.
@@ -432,6 +466,13 @@ if ! $SHELL_ONLY; then
   SIGNED_RECORD_ARGS=("${SIGNED_PROFILE_ARGS[@]}")
   if $SIGNED_ENABLED; then SIGNED_RECORD_ARGS+=(--generation "$SIGNED_INPUT_DIR"); fi
   python3 "$REPO_DIR/scripts/signed-module-build-profile.py" record "${SIGNED_RECORD_ARGS[@]}"
+  # Each full build emits a ~240 MB module generation. Keep the one just
+  # recorded plus the three newest; older ones are unreferenced cache.
+  if $SIGNED_ENABLED; then
+    ls -1dt "$SIGNED_DIR"/modules.* 2>/dev/null | tail -n +4 | while read -r stale; do
+      [ "$stale" = "$SIGNED_GENERATION" ] || rm -rf "$stale"
+    done
+  fi
 fi
 
 echo "OK: $APP"

@@ -4,7 +4,7 @@ These guards establish cache/source agreement, not whole-game signed coverage.
 A selected name must be the named container's code member, not the same-named
 art member GAME.CGO repeats for it.
 """
-import argparse,hashlib,json,pathlib,struct
+import argparse,hashlib,json,os,pathlib,struct
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('action',choices=['names','preflight','check','record'])
 p.add_argument('--repo',type=pathlib.Path,required=True)
@@ -78,7 +78,8 @@ if names:
   if name=='gcommon':require(b'ottsel-signed-function-valid?\0' in source,'Regenerate signed valid? Gcommon prerequisite')
   identity['sources'][name]=hashlib.sha256(source).hexdigest()
 if a.action=='preflight':raise SystemExit(0)
-cache=work/'out/ios/app/signed-module-profile.json'
+# build-ios.sh keeps simulator and device builds in separate trees (OTTSEL_PLATFORM).
+cache=work/('out/ios-device' if os.environ.get('OTTSEL_PLATFORM')=='device' else 'out/ios')/'app/signed-module-profile.json'
 if a.action=='check':
  if not names and not cache.exists():raise SystemExit(0)  # Preserve unsigned legacy shell-only reuse.
  require(cache.is_file(),'Missing signed module profile')

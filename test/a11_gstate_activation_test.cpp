@@ -197,7 +197,7 @@ int main(int argc,char** argv) try {
   activate_gstate(module,activated);
   check(activated,"complete genuine signed Gstate top returned");
   const char* names[]={"inherit-state","enter-state","send-event-function","looping-code"};
-  const u32 offsets[]={308,724,2708,3076};
+  const u32 offsets[]={308,724,2836,3204};  // gstate entries after the .ret guard (2026-09-22)
   for(size_t i=0;i<4;++i) {
     const u32 registered=jak1::intern_from_c(names[i])->value;
     std::printf("SIGNED REGISTRATION %s actual=0x%x expected=0x%x\n",names[i],registered,
