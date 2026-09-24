@@ -3,7 +3,29 @@
 Target tree: `open-goal/jak-project` pinned at
 `641fb572e876750d8618434d9f7c1a531b43b366`.
 
-## Canonical patch (apply this one)
+## Reconstruction (use this)
+
+**`ottsel-jak-project.patch`** is the entire nested delta against the pin:
+tracked edits, the local `49324a47e` commit, and every new file. One patch,
+one apply:
+
+```sh
+git clone https://github.com/open-goal/jak-project out/jak-project
+git -C out/jak-project checkout 641fb572e876750d8618434d9f7c1a531b43b366
+git -C out/jak-project apply --binary ../../patches/ottsel-jak-project.patch
+```
+
+Refresh it whenever nested source changes, and commit it with the change:
+
+```sh
+scripts/snapshot-jak-project.sh write    # rewrites the patch, then verifies
+scripts/snapshot-jak-project.sh verify   # PASS iff pin + patch == live nested tree
+```
+
+The overlay patches below are kept as per-change history and for the existing
+`verify-*` regressions. They are no longer the reconstruction path.
+
+## Historical canonical patch
 
 - **`h3-jak1-host-boot.patch`** — the full Ottsel diff vs the pin: ARM64
   goalc codegen (H1), no-emit runtime (H2), packaging shim (H2.5), and the
