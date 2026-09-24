@@ -74,11 +74,12 @@ the Simulator enforces what a device will. *Exit:* coverage exit 0; two strict S
 Training and through one level transition with the switch on and a 0-byte fault log; then remove the
 `#error` device guard in `ottsel_signed_gstate.cpp`.
 
-**G2 Runs on a physical iPad.** `OTTSEL_PLATFORM=device` with the strict profile builds for `iphoneos`
-into `out/ios-device/`; set `OTTSEL_SIGN_IDENTITY` and `OTTSEL_PROVISIONING_PROFILE` (a free Personal
-Team is enough; signing in to Xcode with an Apple ID and attaching the iPad once are the user-owned
-steps) and install with `xcrun devicectl device install app`. *Exit:* two cold launches reach Training
-on the iPad with a 0-byte fault log.
+**G2 Runs on a physical iPad.** User-owned once: sign in to Xcode with an Apple ID (a free Personal Team
+is enough), connect and trust the iPad, enable Developer Mode. Then
+`scripts/install-ios-device.sh <pack-directory>` finds the identity, has Xcode create the development
+profile if needed (generated stub project), builds the strict `iphoneos` app, installs it, copies the
+pack into the app's Documents and launches it. *Exit:* two cold launches reach Training on the iPad
+with a 0-byte fault log.
 
 **G3 Plays at a usable frame rate on the iPad.** Measure presented fps over five minutes of Training on
 the device (the Simulator number is not a product measurement). *Exit:* 30 fps or better sustained. If it

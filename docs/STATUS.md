@@ -12,8 +12,8 @@ Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
   ([evidence](evidence/G3/upstream-gl-renderer-title-2026-09-24.md)). The Metal renderer is deleted (last: `df31425`).
 - G1: all 518 code modules signed; `OTTSEL_STRICT_EXEC` makes runtime code loading fatal; the whole intro
   plays to Geyser Rock in strict mode with 0 aborts ([evidence](evidence/G1/g1-all-code-signed-strict-2026-09-24.md)).
-- Device build: `OTTSEL_PLATFORM=device` builds strict. To install: sign in to Xcode with an Apple ID
-  (Personal Team), connect the iPad, then set `OTTSEL_SIGN_IDENTITY`/`OTTSEL_PROVISIONING_PROFILE`.
+- Device: waiting on the user. Sign in to Xcode with an Apple ID (Personal Team), connect and trust the
+  iPad, enable Developer Mode, then run `scripts/install-ios-device.sh /tmp/ottsel-user-pack-strict1`.
 - Input works on the GL renderer (LOAD GAME -> Training, stick moves Jak). The `iphoneos` build links
   OpenGLES with all 92 translated shaders. Next without the device: a level transition (warp gate).
 - Lane: iPad Pro 11-inch (M4) `08636791`; `/tmp/ottsel-tools/full.sh <tag>` (polled session).
