@@ -3863,15 +3863,15 @@ index cf6042eca..ce8ebf9dd 100644
 +}
 diff --git a/game/kernel/common/ottsel_signed_exports.cpp b/game/kernel/common/ottsel_signed_exports.cpp
 new file mode 100644
-index 000000000..f0904c014
+index 000000000..6ab667689
 --- /dev/null
 +++ b/game/kernel/common/ottsel_signed_exports.cpp
 @@ -0,0 +1,105 @@
 +#include "ottsel_signed_exports.h"
 +#ifdef OTTSEL_SIGNED_EXPORT_BANKS
 +#include <TargetConditionals.h>
-+#if TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
-+#error Signed export banks are an experiment; complete signed runtime is not ready for device
++#if TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR && !defined(OTTSEL_STRICT_EXEC)
++#error Device builds must be strict: all code signed, no runtime executable pages (OTTSEL_STRICT_EXEC)
 +#endif
 +#include <mach/mach.h>
 +#include <mach/vm_map.h>
