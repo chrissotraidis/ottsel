@@ -469,10 +469,11 @@ PYTHON
 fi
 compile "$REPO_DIR/src/shell/main.cpp" "$OBJ/shell_main.o"
 compile "$REPO_DIR/src/shell/ios_boot.cpp" "$OBJ/ios_boot.o"
+compile_objc "$REPO_DIR/src/shell/touch_controls.mm" "$OBJ/touch_controls.o"
 
 xcrun --sdk "$SDK" clang++ "${COMMON_FLAGS[@]}" \
   ${SIGNED_OBJECTS[@]+"${SIGNED_OBJECTS[@]}"} \
-  "$OBJ/shell_main.o" "$OBJ/ios_boot.o" \
+  "$OBJ/shell_main.o" "$OBJ/ios_boot.o" "$OBJ/touch_controls.o" \
   "$APP_BUILD/libottsel-runtime.a" "$ZSTD_LIB" "$SDL_BUILD/libSDL3.a" \
   "${FRAMEWORKS[@]}" -lobjc \
   -o "$APP_BUILD/OttselShell"

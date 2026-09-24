@@ -2999,7 +2999,7 @@ index 000000000..0d32c5b75
 +void ottsel_gles_load_missing(void* (*get_proc)(const char*));
 +#endif
 diff --git a/game/graphics/pipelines/opengl.cpp b/game/graphics/pipelines/opengl.cpp
-index d8d15c873..8b0ed9d57 100644
+index d8d15c873..9680d25bc 100644
 --- a/game/graphics/pipelines/opengl.cpp
 +++ b/game/graphics/pipelines/opengl.cpp
 @@ -27,6 +27,8 @@
@@ -3035,7 +3035,7 @@ index d8d15c873..8b0ed9d57 100644
    // Before we process the current frames SDL events we for keyboard/mouse button inputs.
    //
    // This technically means that keyboard/mouse button inputs will be a frame behind but the
-@@ -868,3 +879,230 @@ const GfxRendererModule gRendererOpenGL = {
+@@ -868,3 +879,215 @@ const GfxRendererModule gRendererOpenGL = {
      GfxPipeline::OpenGL,     // pipeline
      "OpenGL 4.3"             // name
  };
@@ -3053,8 +3053,7 @@ index d8d15c873..8b0ed9d57 100644
 +void ottsel_set_gfx_renderer(const GfxRendererModule* module);  // game/ios_stubs.cpp
 +
 +namespace {
-+std::mutex g_view_mutex;  // overlay and status are set from shell code, drawn in ottsel_gl_render
-+std::vector<OttselOverlayVertex> g_overlay;
++std::mutex g_view_mutex;  // the status surface is set from shell code, drawn in ottsel_gl_render
 +std::vector<unsigned char> g_status;
 +int g_status_w = 0, g_status_h = 0;
 +bool g_status_dirty = false;
@@ -3080,7 +3079,7 @@ index d8d15c873..8b0ed9d57 100644
 +  return shader;
 +}
 +
-+// One program for both layers: vertex colour, optionally multiplied by the status texture.
++// Vertex colour, optionally multiplied by the status texture.
 +void init_view_program() {
 +  const char* vs =
 +      "#version 300 es\n"
@@ -3114,10 +3113,10 @@ index d8d15c873..8b0ed9d57 100644
 +  glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(verts.size() / 8));
 +}
 +
-+// The shell's status surface (full window) and touch controls, drawn over the finished game frame.
++// The shell's status surface (full window), drawn over the finished game frame.
 +void draw_view_layers(int fb_w, int fb_h) {
 +  std::lock_guard<std::mutex> lock(g_view_mutex);
-+  if (g_overlay.empty() && g_status.empty()) return;
++  if (g_status.empty()) return;
 +  if (!g_view_program) init_view_program();
 +  glBindFramebuffer(GL_FRAMEBUFFER, 0);
 +  glViewport(0, 0, fb_w, fb_h);
@@ -3149,15 +3148,6 @@ index d8d15c873..8b0ed9d57 100644
 +    for (auto& v : q) verts.insert(verts.end(), {v[0], v[1], 1, 1, 1, 1, v[2], v[3]});
 +    draw_view_triangles(verts, true);
 +  }
-+  if (!g_overlay.empty()) {
-+    std::vector<float> verts;
-+    verts.reserve(g_overlay.size() * 8);
-+    for (auto& v : g_overlay) {
-+      verts.insert(verts.end(),
-+                   {v.pos[0], v.pos[1], v.color[0], v.color[1], v.color[2], v.color[3], 0, 0});
-+    }
-+    draw_view_triangles(verts, false);
-+  }
 +  glBindVertexArray(0);
 +  glDisable(GL_BLEND);
 +}
@@ -3188,11 +3178,6 @@ index d8d15c873..8b0ed9d57 100644
 +  lg::info("OTTSEL GL: {} | {} | window fbo {}", (const char*)glGetString(GL_VERSION),
 +           (const char*)glGetString(GL_RENDERER), g_ottsel_gles_window_fbo);
 +  return true;
-+}
-+
-+void ottsel_gl_set_overlay(const OttselOverlayVertex* vertices, unsigned count) {
-+  std::lock_guard<std::mutex> lock(g_view_mutex);
-+  g_overlay.assign(vertices, vertices ? vertices + count : vertices);
 +}
 +
 +void ottsel_gl_set_status(const unsigned char* rgba, int width, int height) {
@@ -3268,29 +3253,21 @@ index d8d15c873..8b0ed9d57 100644
 +#endif
 diff --git a/game/graphics/pipelines/ottsel_gl_view.h b/game/graphics/pipelines/ottsel_gl_view.h
 new file mode 100644
-index 000000000..5d1388d2c
+index 000000000..b11373f82
 --- /dev/null
 +++ b/game/graphics/pipelines/ottsel_gl_view.h
-@@ -0,0 +1,27 @@
+@@ -0,0 +1,19 @@
 +#pragma once
 +// Ottsel iOS: what the shell (src/shell/main.cpp) needs from OpenGOAL's OpenGL pipeline, which renders the
 +// game on an OpenGL ES 3.0 context (implemented in pipelines/opengl.cpp).
 +
 +struct SDL_Window;
 +
-+// One vertex of the touch-control overlay: normalized device coordinates and a straight-alpha colour.
-+struct OttselOverlayVertex {
-+  float pos[2];
-+  float color[4];
-+};
-+
 +// Create the GL context on the window and register the renderer with the game (call once, main thread).
 +bool ottsel_gl_attach(SDL_Window* window);
-+// Render one game frame, draw the status surface and touch overlay over it, present, and release the
++// Render one game frame, draw the status surface over it, present, and release the
 +// game thread waiting in vsync. Main thread.
 +void ottsel_gl_render(SDL_Window* window);
-+// Triangle list drawn over the game; null or 0 clears it.
-+void ottsel_gl_set_overlay(const OttselOverlayVertex* vertices, unsigned count);
 +// Full-window RGBA surface drawn over the game (status, settings, import instructions); null clears it.
 +void ottsel_gl_set_status(const unsigned char* rgba, int width, int height);
 +// Percentage of the window's pixels the game renders at (50-100).

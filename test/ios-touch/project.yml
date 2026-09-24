@@ -1,0 +1,23 @@
+name: OttselUITest
+options:
+  bundleIdPrefix: local.ottsel
+targets:
+  Stub:
+    type: application
+    platform: iOS
+    deploymentTarget: "18.5"
+    sources: [stub]
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+      PRODUCT_BUNDLE_IDENTIFIER: local.ottsel.uitest.stub
+  OttselUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "18.5"
+    sources: [tests]
+    dependencies:
+      - target: Stub
+    settings:
+      GENERATE_INFOPLIST_FILE: YES
+      TEST_TARGET_NAME: Stub
+      PRODUCT_BUNDLE_IDENTIFIER: local.ottsel.uitest.tests

@@ -29,6 +29,7 @@
 #include "font5x7.h"
 #include "ios_boot.h"
 #include "game/graphics/pipelines/ottsel_gl_view.h"
+#include "touch_controls.h"
 
 namespace {
 
@@ -62,97 +63,8 @@ SDL_Gamepad* g_gamepad = nullptr;
 SDL_JoystickID g_gamepad_id = 0;
 
 void select_mobile_gamepad();
-void toggle_touch_editor();
 
-enum class TouchRegion : size_t {
-  LeftStick = 0,
-  Camera,
-  Circle,
-  Cross,
-  Square,
-  Triangle,
-  DpadUp,
-  DpadRight,
-  DpadDown,
-  DpadLeft,
-  Start,
-  L1,
-  R1,
-  // I3: the persistent three-dot settings entry the completion plan names.  Appended after R1 so no
-  // existing region index (and therefore no saved layout) shifts meaning.
-  Menu,
-  Count,
-};
-
-struct TouchRegionLayout {
-  float x = 0.f;
-  float y = 0.f;
-  float w = 0.f;
-  float h = 0.f;
-};
-
-struct TouchLayout {
-  std::array<TouchRegionLayout, static_cast<size_t>(TouchRegion::Count)> regions{};
-  float opacity = 1.f;
-};
-
-constexpr size_t kTouchRegionCount = static_cast<size_t>(TouchRegion::Count);
-
-// The default regions, per device class (P1).  A region's tap size in surface units is its fraction times
-// that axis, so one table gives very different targets on a phone and on a tablet - which is why the
-// classes do not share one.  Every table is clamped into bounds by clamp_touch_region() before it is
-// written, and load_touch_layout() accepts anything that survived that.
-constexpr std::array<TouchRegionLayout, kTouchRegionCount> kTouchDefaultsTablet = {{
-    {0.055f, 0.605f, 0.13f, 0.165f},  // left stick
-    {0.70f, 0.36f, 0.16f, 0.10f},     // camera
-    {0.785f, 0.615f, 0.055f, 0.055f}, // circle
-    {0.875f, 0.715f, 0.055f, 0.055f}, // cross
-    {0.875f, 0.615f, 0.055f, 0.055f}, // square
-    // Keep the right edge on screen: 0.965 + 0.055 ran 2% of the width off the screen, which made the
-    // whole default table unsaveable (see clamp_touch_region).
-    {0.945f, 0.665f, 0.055f, 0.055f}, // triangle
-    // I3 (2026-09-22): the game's own frontend navigates with the D-pad (cpad-pressed? 0 down and
-    // friends) and the analog stick does not synthesise D-pad bits, so a touch-only player had no way
-    // through any menu.  A compact cross sits between the stick and the middle of the screen.
-    // Heights are the axis this surface is short in, so the D-pad arms and the top bars are sized to clear
-    // the 44 pt tap guideline: at 0.05 x 834 and 0.045 x 834 they were 42 pt and 38 pt.
-    {0.275f, 0.395f, 0.05f, 0.055f},  // dpad up
-    {0.335f, 0.445f, 0.05f, 0.055f},  // dpad right
-    {0.275f, 0.495f, 0.05f, 0.055f},  // dpad down
-    {0.215f, 0.445f, 0.05f, 0.055f},  // dpad left
-    {0.43f, 0.075f, 0.14f, 0.055f},   // start
-    {0.08f, 0.075f, 0.12f, 0.055f},   // L1
-    {0.80f, 0.075f, 0.12f, 0.055f},   // R1
-    {0.62f, 0.075f, 0.06f, 0.055f},   // menu (three-dot settings entry)
-}};
-
-// P1 (2026-09-22): the same controls sized for a phone's shorter screen.  On the iPhone 16 Pro's 874x402
-// surface the tablet table gave 48x22 pt face buttons and 44x20 pt D-pad arms - about half the 44 pt a tap
-// target wants - because those regions are fractions of each axis and the phone's aspect is wider.  These
-// fractions come out on that surface as 60x58 pt face buttons, 48x48 pt D-pad arms, 175x80 pt camera,
-// 166x92 pt stick and 114x46 pt top bars, every region inside the screen and no two overlapping.
-constexpr std::array<TouchRegionLayout, kTouchRegionCount> kTouchDefaultsPhone = {{
-    {0.045f, 0.585f, 0.190f, 0.230f}, // left stick
-    {0.620f, 0.200f, 0.200f, 0.200f}, // camera
-    {0.780f, 0.572f, 0.069f, 0.145f}, // circle
-    {0.880f, 0.572f, 0.069f, 0.145f}, // cross
-    {0.780f, 0.408f, 0.069f, 0.145f}, // square
-    {0.880f, 0.408f, 0.069f, 0.145f}, // triangle
-    {0.272f, 0.341f, 0.055f, 0.119f}, // dpad up
-    {0.332f, 0.460f, 0.055f, 0.119f}, // dpad right
-    {0.272f, 0.581f, 0.055f, 0.119f}, // dpad down
-    {0.212f, 0.460f, 0.055f, 0.119f}, // dpad left
-    {0.435f, 0.018f, 0.130f, 0.115f}, // start
-    {0.085f, 0.018f, 0.130f, 0.115f}, // L1
-    {0.785f, 0.018f, 0.130f, 0.115f}, // R1
-    {0.585f, 0.018f, 0.085f, 0.115f}, // menu (three-dot settings entry)
-}};
-
-TouchLayout g_touch_layout = {kTouchDefaultsTablet, 1.f};
-std::string g_touch_layout_path;
-std::string g_touch_layout_dir;
-
-// I3: shell-owned settings, persisted beside the layout.  The completion plan says to implement useful
+// I3: shell-owned settings, persisted per device class.  The completion plan says to implement useful
 // settings only with working behaviour and persistence, no decorative controls, so every field here is a
 // value something actually reads.
 struct ShellSettings {
@@ -239,133 +151,23 @@ void load_settings() {
            g_settings.log_overlay, g_settings.camera_sensitivity, g_settings.invert_camera_y,
            g_settings.render_scale, g_settings_path);
 }
-// True once a persisted layout has replaced the class defaults: the player's placement is theirs and is not
-// moved out of the safe area, only the shell's own defaults are.
-bool g_touch_layout_from_file = false;
-bool g_touch_editor = false;
-bool g_touch_editor_active = false;
-SDL_FingerID g_touch_editor_finger = 0;
-TouchRegion g_touch_editor_region = TouchRegion::LeftStick;
+// True while a keyboard, mouse or physical controller is the input in use; the touch controls hide
+// (setting "Automatically") until a finger touches the screen again.
 bool g_native_input_mode = false;
+std::string g_writable_dir;
 
-// I3/P1 (2026-09-22): the layout file's own bounds.  save_touch_layout() clamps to them, so every state
-// the editor can produce is loadable.  The compiled default table broke that invariant: its triangle row
-// was 0.965 + 0.055 = 1.020, so the first editor save wrote a file load_touch_layout() rejected and the
-// player silently got the defaults back on the next boot (measured on iPad with an otherwise identical
-// file: triangle 0.965 -> no load line, triangle 0.945 -> loaded).
-constexpr float kTouchRegionMinSize = 0.03f;
-constexpr float kTouchRegionBoundTolerance = 1e-4f;
-
-TouchRegionLayout clamp_touch_region(TouchRegionLayout region) {
-  region.w = std::clamp(region.w, kTouchRegionMinSize, 1.f);
-  region.h = std::clamp(region.h, kTouchRegionMinSize, 1.f);
-  region.x = std::clamp(region.x, 0.f, 1.f - region.w);
-  region.y = std::clamp(region.y, 0.f, 1.f - region.h);
-  return region;
+void update_touch_visibility() {
+  ottsel_touch_set_hidden(g_native_input_mode);
 }
 
-// P1 (2026-09-22): keep a region out of the safe area, which in landscape can hold the sensor housing on one
-// side and the home indicator on the bottom edge.  A region is shrunk only if the usable strip is narrower
-// than the region itself, so the tap size the class table asked for survives wherever it fits.
-TouchRegionLayout clamp_touch_region_to_safe_area(TouchRegionLayout region, float left, float top,
-                                                 float right, float bottom) {
-  const float available_w = std::max(kTouchRegionMinSize, 1.f - left - right);
-  const float available_h = std::max(kTouchRegionMinSize, 1.f - top - bottom);
-  region.w = std::min(region.w, available_w);
-  region.h = std::min(region.h, available_h);
-  region.x = std::clamp(region.x, left, 1.f - right - region.w);
-  region.y = std::clamp(region.y, top, 1.f - bottom - region.h);
-  return clamp_touch_region(region);
-}
-
-// One Start double-tap opens the layout editor and another closes it.  The gesture has to be recognised
-// before the editor consumes the event: while g_touch_editor is set handle_touch_editor() returns true for
-// every finger event, so the game-input path that owns this check never runs and the editor could be
-// entered by touch but never left by one (measured on iPhone 16 Pro: the second double-tap was swallowed
-// and only dragged and saved a region; only the F6 key could close it).
-Uint64 g_start_tap_ns = 0;
-bool start_double_tap(Uint64 timestamp_ns) {
-  if (g_start_tap_ns != 0 && timestamp_ns >= g_start_tap_ns &&
-      timestamp_ns - g_start_tap_ns <= 400000000ULL) {
-    g_start_tap_ns = 0;
-    return true;
-  }
-  g_start_tap_ns = timestamp_ns;
-  return false;
-}
-
-// The class is decided by the platform idiom, not by anything measured at runtime, so the defaults can be
-// applied before the surface exists and a persisted file can then override them.
-void apply_default_touch_layout() {
-  g_touch_layout.regions =
-      ottsel_ios_shell_is_phone() ? kTouchDefaultsPhone : kTouchDefaultsTablet;
-  g_touch_layout_from_file = false;
-}
-
-// The class defaults are placed against the real safe area once the platform can report it.  A persisted
-// layout is skipped: the player put those regions where they wanted them.  Returns true once there is
-// nothing left to do, so a caller can retry while the window is still coming up.
-bool apply_safe_area_to_default_touch_layout() {
-  static bool applied = false;
-  if (applied) {
-    return true;
-  }
-  if (g_touch_layout_from_file) {
-    return true;
-  }
-  float left = 0.f;
-  float top = 0.f;
-  float right = 0.f;
-  float bottom = 0.f;
-  if (!ottsel_ios_shell_safe_area(&left, &top, &right, &bottom) ||
-      left + top + right + bottom <= 0.f) {
-    return false;
-  }
-  for (auto& region : g_touch_layout.regions) {
-    region = clamp_touch_region_to_safe_area(region, left, top, right, bottom);
-  }
-  applied = true;
-  lg::info("OTTSEL TOUCH: defaults kept out of the safe area lrtb={:.0f}x{:.0f}x{:.0f}x{:.0f}",
-           (double)(left * g_surf_w), (double)(top * g_surf_h), (double)(right * g_surf_w),
-           (double)(bottom * g_surf_h));
-  return true;
-}
-
-// The class is fixed at boot but the surface size is not known until the CAMetalLayer has laid out, and the
-// tap size a region ends up with is its fraction times that size - so report the class, the surface and the
-// smallest region box once per surface size.  This is the number the P1 reachability check reads.
-void log_touch_layout_metrics() {
-  static int last_w = 0;
-  static int last_h = 0;
-  if (g_surf_w == last_w && g_surf_h == last_h) {
+void hide_touch_overlay_for_native_input() {
+  if (g_native_input_mode) {
     return;
   }
-  last_w = g_surf_w;
-  last_h = g_surf_h;
-  float min_w = 0.f;
-  float min_h = 0.f;
-  for (size_t i = 0; i < kTouchRegionCount; ++i) {
-    const auto& region = g_touch_layout.regions[i];
-    const float w = region.w * static_cast<float>(g_surf_w);
-    const float h = region.h * static_cast<float>(g_surf_h);
-    min_w = i == 0 ? w : std::min(min_w, w);
-    min_h = i == 0 ? h : std::min(min_h, h);
-  }
-  float left = 0.f;
-  float top = 0.f;
-  float right = 0.f;
-  float bottom = 0.f;
-  if (!ottsel_ios_shell_safe_area(&left, &top, &right, &bottom)) {
-    left = top = right = bottom = 0.f;
-  }
-  lg::info("OTTSEL TOUCH: class={} surface={}x{} min-region={:.0f}x{:.0f} safe-lrtb={:.0f}x{:.0f}x{:.0f}x{:.0f}",
-           ottsel_ios_shell_is_phone() ? "phone" : "tablet", g_surf_w, g_surf_h,
-           (double)min_w, (double)min_h, (double)(left * g_surf_w), (double)(top * g_surf_h),
-           (double)(right * g_surf_w), (double)(bottom * g_surf_h));
+  g_native_input_mode = true;
+  update_touch_visibility();
+  lg::info("OTTSEL INPUT: native keyboard/mouse/controller active; touch controls hidden");
 }
-
-int touch_region_at(float x, float y);
-void hide_touch_overlay_for_native_input();
 
 // The mobile shell does not create the desktop Display/InputManager.  It
 // nevertheless delivers the same completed DualShock snapshot to GOAL, via
@@ -382,18 +184,7 @@ struct ShellPadInput {
   bool mouse_position_valid = false;
   float last_mouse_x = 0.f;
   float last_mouse_y = 0.f;
-  SDL_FingerID left_stick_finger = 0;
-  SDL_FingerID action_finger = 0;
-  SDL_FingerID camera_finger = 0;
-  bool left_stick_active = false;
-  bool action_active = false;
-  bool camera_active = false;
-  ottsel::platform_input::Button action_button =
-      static_cast<ottsel::platform_input::Button>(0);
-  float camera_origin_x = 0.f;
-  float camera_origin_y = 0.f;
-  float stick_origin_x = 0;
-  float stick_origin_y = 0;
+  OttselTouchPad touch_prev;
 
   void publish() const { ottsel::platform_input::set_pad_state(0, state); }
 
@@ -582,110 +373,38 @@ struct ShellPadInput {
     trace("gamepad-axis");
   }
 
-  void touch(const SDL_Event& event) {
+  // The touch overlay (touch_controls.mm) reports its whole pad on every change; apply only what changed so
+  // a held keyboard key or controller button is not released by an unrelated touch.
+  void touch_pad(const OttselTouchPad& pad) {
     using namespace ottsel::platform_input;
-    const auto& finger = event.tfinger;
-    if (event.type == SDL_EVENT_FINGER_DOWN) {
-      // I3: AUTO follows the input actually in use, but a keyboard, pad or mouse event hid the surface for
-      // good - measured on the iPad lane, where one stray keyboard event removed the touch controls for the
-      // rest of the run and a touch-only player had no way to bring them back.  A real touch means touch is
-      // the input in use again, so the frame loop's upload gate puts the surface back.
-      g_native_input_mode = false;
-      const int region = touch_region_at(finger.x, finger.y);
-      if (region == static_cast<int>(TouchRegion::L1) && !action_active) {
-        // The top bars are L1/Start/R1 in the same order as the visible
-        // tablet layout. They take precedence over the left-stick half.
-        action_finger = finger.fingerID;
-        action_active = true;
-        action_button = L1;
-        set_button(&state, action_button, true);
-      } else if (region == static_cast<int>(TouchRegion::Start) && !action_active) {
-        if (start_double_tap(finger.timestamp)) {
-          toggle_touch_editor();
-          return;
+    const auto axis = [](float v) {
+      return static_cast<u8>(std::clamp(127 + static_cast<int>(std::lround(v * 128.f)), 0, 255));
+    };
+    const u16 changed = pad.buttons ^ touch_prev.buttons;
+    for (int bit = 0; bit < 16; ++bit) {
+      if (changed & (1u << bit)) {
+        const auto button = static_cast<Button>(1u << bit);
+        const bool pressed = (pad.buttons & (1u << bit)) != 0;
+        set_button(&state, button, pressed);
+        // Same latch as a keyboard tap: a short press survives until the game thread samples the pad.
+        if (pressed) {
+          latch_native_button(0, button);
         }
-        action_finger = finger.fingerID;
-        action_active = true;
-        action_button = Start;
-        set_button(&state, action_button, true);
-      } else if (region == static_cast<int>(TouchRegion::R1) && !action_active) {
-        action_finger = finger.fingerID;
-        action_active = true;
-        action_button = R1;
-        set_button(&state, action_button, true);
-      } else if (region == static_cast<int>(TouchRegion::LeftStick) && !left_stick_active) {
-        left_stick_finger = finger.fingerID;
-        left_stick_active = true;
-        stick_origin_x = finger.x;
-        stick_origin_y = finger.y;
-      } else if (region == static_cast<int>(TouchRegion::Camera) && !camera_active) {
-        // The upper-right open region is the camera gesture surface. Keep it
-        // independent from the face-button finger so movement + action +
-        // camera can be sampled simultaneously.
-        camera_finger = finger.fingerID;
-        camera_active = true;
-        camera_origin_x = finger.x;
-        camera_origin_y = finger.y;
-      } else if (region >= static_cast<int>(TouchRegion::Circle) &&
-                 region <= static_cast<int>(TouchRegion::Triangle) && !action_active) {
-        // Map the visible face-button regions to the same canonical buttons
-        // used by SDL gamepads; this remains the shared ShellPadInput/PadState
-        // producer.
-        action_finger = finger.fingerID;
-        action_active = true;
-        action_button = Circle;
-        if (region == static_cast<int>(TouchRegion::Cross)) action_button = Cross;
-        if (region == static_cast<int>(TouchRegion::Square)) action_button = Square;
-        if (region == static_cast<int>(TouchRegion::Triangle)) action_button = Triangle;
-        set_button(&state, action_button, true);
-      } else if (region >= static_cast<int>(TouchRegion::DpadUp) &&
-                 region <= static_cast<int>(TouchRegion::DpadLeft) && !action_active) {
-        // I3: the D-pad reaches the game as its own digital bits (the frontend's menus read
-        // cpad-pressed? 0 up/down/left/right), which the analog stick never produces.
-        action_finger = finger.fingerID;
-        action_active = true;
-        action_button = DpadDown;
-        if (region == static_cast<int>(TouchRegion::DpadUp)) action_button = DpadUp;
-        if (region == static_cast<int>(TouchRegion::DpadRight)) action_button = DpadRight;
-        if (region == static_cast<int>(TouchRegion::DpadLeft)) action_button = DpadLeft;
-        set_button(&state, action_button, true);
       }
-    } else if (event.type == SDL_EVENT_FINGER_MOTION && left_stick_active &&
-               finger.fingerID == left_stick_finger) {
-      state.leftx = static_cast<u8>(std::clamp(127 + int((finger.x - stick_origin_x) * 510), 0, 255));
-      state.lefty = static_cast<u8>(std::clamp(127 + int((finger.y - stick_origin_y) * 510), 0, 255));
-    } else if (event.type == SDL_EVENT_FINGER_MOTION && camera_active &&
-               finger.fingerID == camera_finger) {
-      // GAMEPLAY: the camera region is the shell's own producer, so its drag gain and vertical direction
-      // are the shell's to offer.  Both default to the previous behaviour (100%, not inverted).
-      const float camera_gain = 510.f * (float)g_settings.camera_sensitivity / 100.f;
-      const float camera_sign = g_settings.invert_camera_y ? -1.f : 1.f;
-      state.rightx = static_cast<u8>(std::clamp(127 + int((finger.x - camera_origin_x) * camera_gain), 0, 255));
-      state.righty = static_cast<u8>(
-          std::clamp(127 + int((finger.y - camera_origin_y) * camera_gain * camera_sign), 0, 255));
-    } else if ((event.type == SDL_EVENT_FINGER_UP || event.type == SDL_EVENT_FINGER_CANCELED) &&
-               left_stick_active && finger.fingerID == left_stick_finger) {
-      left_stick_finger = 0;
-      left_stick_active = false;
-      state.leftx = 127;
-      state.lefty = 127;
-    } else if ((event.type == SDL_EVENT_FINGER_UP || event.type == SDL_EVENT_FINGER_CANCELED) &&
-               camera_active && finger.fingerID == camera_finger) {
-      camera_finger = 0;
-      camera_active = false;
-      state.rightx = 127;
-      state.righty = 127;
-    } else if ((event.type == SDL_EVENT_FINGER_UP || event.type == SDL_EVENT_FINGER_CANCELED) &&
-               action_active && finger.fingerID == action_finger) {
-      action_finger = 0;
-      action_active = false;
-      set_button(&state, action_button, false);
-      action_button = static_cast<Button>(0);
-    } else {
-      return;
     }
+    if (pad.lx != touch_prev.lx || pad.ly != touch_prev.ly) {
+      state.leftx = axis(pad.lx);
+      state.lefty = axis(pad.ly);
+    }
+    if (pad.rx != touch_prev.rx || pad.ry != touch_prev.ry) {
+      const float gain = (float)g_settings.camera_sensitivity / 100.f;
+      state.rightx = axis(pad.rx * gain);
+      state.righty = axis(pad.ry * gain * (g_settings.invert_camera_y ? -1.f : 1.f));
+    }
+    const bool buttons_changed = changed != 0;
+    touch_prev = pad;
     publish();
-    if (event.type != SDL_EVENT_FINGER_MOTION) {
+    if (buttons_changed) {
       trace("touch");
     }
   }
@@ -696,40 +415,9 @@ struct ShellPadInput {
     trace("lifecycle");
   }
 
-  // I3: which touch regions are held right now, as a bitmask over TouchRegion, so the on-screen
-  // surface can show pressed/neutral feedback.  It is derived from the same state that routes input
-  // (the stick/camera/action fingers), so the feedback cannot disagree with what the game receives.
-  int pressed_region_mask() const {
-    using namespace ottsel::platform_input;
-    int mask = 0;
-    const auto mark = [&mask](TouchRegion region) {
-      mask |= 1 << static_cast<int>(region);
-    };
-    if (left_stick_active) mark(TouchRegion::LeftStick);
-    if (camera_active) mark(TouchRegion::Camera);
-    if (action_active) {
-      switch (action_button) {
-        case Cross: mark(TouchRegion::Cross); break;
-        case Circle: mark(TouchRegion::Circle); break;
-        case Square: mark(TouchRegion::Square); break;
-        case Triangle: mark(TouchRegion::Triangle); break;
-        case DpadUp: mark(TouchRegion::DpadUp); break;
-        case DpadRight: mark(TouchRegion::DpadRight); break;
-        case DpadDown: mark(TouchRegion::DpadDown); break;
-        case DpadLeft: mark(TouchRegion::DpadLeft); break;
-        case Start: mark(TouchRegion::Start); break;
-        case L1: mark(TouchRegion::L1); break;
-        case R1: mark(TouchRegion::R1); break;
-        default: break;
-      }
-    }
-    return mask;
-  }
 };
 
 ShellPadInput g_input;
-std::vector<OttselOverlayVertex> g_touch_overlay;
-bool g_touch_overlay_uploaded = false;
 
 void release_mobile_gamepad(const char* reason) {
   if (!g_gamepad) {
@@ -796,458 +484,20 @@ void handle_mobile_gamepad_remapped(SDL_JoystickID instance_id) {
   select_mobile_gamepad();
 }
 
-int touch_region_at(float x, float y) {
-  for (size_t i = 0; i < static_cast<size_t>(TouchRegion::Count); ++i) {
-    const auto& region = g_touch_layout.regions[i];
-    if (x >= region.x && x <= region.x + region.w && y >= region.y &&
-        y <= region.y + region.h) {
-      return static_cast<int>(i);
-    }
-  }
-  return -1;
-}
-
-void load_touch_layout() {
-  if (g_touch_layout_path.empty()) {
-    return;
-  }
-  std::ifstream file(g_touch_layout_path);
-  int version = 0;
-  if (!(file >> version) || version != 1) {
-    return;
-  }
-  TouchLayout candidate = g_touch_layout;
-  if (!(file >> candidate.opacity)) {
-    return;
-  }
-  for (auto& region : candidate.regions) {
-    if (!(file >> region.x >> region.y >> region.w >> region.h)) {
-      return;
-    }
-  }
-  if (!std::isfinite(candidate.opacity) || candidate.opacity < 0.1f || candidate.opacity > 1.f) {
-    return;
-  }
-  for (const auto& region : candidate.regions) {
-    if (!std::isfinite(region.x) || !std::isfinite(region.y) || !std::isfinite(region.w) ||
-        !std::isfinite(region.h) || region.w < kTouchRegionMinSize || region.h < kTouchRegionMinSize ||
-        region.x < -kTouchRegionBoundTolerance || region.y < -kTouchRegionBoundTolerance ||
-        region.x + region.w > 1.f + kTouchRegionBoundTolerance ||
-        region.y + region.h > 1.f + kTouchRegionBoundTolerance) {
-      return;
-    }
-  }
-  g_touch_layout = candidate;
-  g_touch_layout_from_file = true;
-  lg::info("OTTSEL TOUCH: loaded persistent layout {}", g_touch_layout_path);
-}
-
-void save_touch_layout() {
-  if (g_touch_layout_path.empty()) {
-    return;
-  }
-  std::ofstream file(g_touch_layout_path, std::ios::trunc);
-  if (!file) {
-    lg::warn("OTTSEL TOUCH: unable to save layout {}", g_touch_layout_path);
-    return;
-  }
-  file << "1\n" << std::setprecision(7) << g_touch_layout.opacity << "\n";
-  for (auto& region : g_touch_layout.regions) {
-    region = clamp_touch_region(region);
-  }
-  for (const auto& region : g_touch_layout.regions) {
-    file << region.x << ' ' << region.y << ' ' << region.w << ' ' << region.h << "\n";
-  }
-  lg::info("OTTSEL TOUCH: saved persistent layout {}", g_touch_layout_path);
-}
-
-// I3/P1 (2026-09-22): the layout file is per device class.  The class is the platform idiom, not the
-// surface width: the drawable is only known after the CAMetalLayer has laid out (at window creation it
-// still reads the 1024x768 request, which is what handed the phone the tablet file when this was
-// `g_surf_w < 1000`), and a device's layer reports points scaled by its contentsScale, so the same test
-// would call a real iPhone a tablet.  load_touch_layout() is a no-op when the class' file is absent, so
-// the class defaults survive.
-void refresh_touch_layout_path() {
-  if (g_touch_layout_dir.empty()) {
-    return;
-  }
-  const std::string want =
-      g_touch_layout_dir +
-      (ottsel_ios_shell_is_phone() ? "touch-layout-phone.cfg" : "touch-layout-tablet.cfg");
-  if (want == g_touch_layout_path) {
-    return;
-  }
-  g_touch_layout_path = want;
-  load_touch_layout();
-}
-
-// I3: the settings file follows the layout's per-class convention, so an iPhone and an iPad can carry
+// I3: the settings file is per device class, so an iPhone and an iPad can carry
 // different choices without one clobbering the other.
 void refresh_settings_path() {
-  if (g_touch_layout_dir.empty()) {
+  if (g_writable_dir.empty()) {
     return;
   }
   const std::string want =
-      g_touch_layout_dir +
+      g_writable_dir +
       (ottsel_ios_shell_is_phone() ? "settings-phone.cfg" : "settings-tablet.cfg");
   if (want == g_settings_path) {
     return;
   }
   g_settings_path = want;
   load_settings();
-}
-
-void build_touch_overlay(int pressed_mask = 0);
-void upload_touch_overlay();
-
-bool handle_touch_editor(const SDL_Event& event) {
-  if (!g_touch_editor) {
-    return false;
-  }
-  const auto& finger = event.tfinger;
-  if (event.type == SDL_EVENT_FINGER_DOWN && !g_touch_editor_active) {
-    const int region = touch_region_at(finger.x, finger.y);
-    if (region == static_cast<int>(TouchRegion::Start) && start_double_tap(finger.timestamp)) {
-      // The gesture that opens the editor also closes it.  This handler owns every finger event while
-      // the editor is open, so the check has to live here as well as on the game-input path.
-      toggle_touch_editor();
-      return true;
-    }
-    if (region >= 0) {
-      g_touch_editor_active = true;
-      g_touch_editor_finger = finger.fingerID;
-      g_touch_editor_region = static_cast<TouchRegion>(region);
-    }
-    return true;
-  }
-  if (g_touch_editor_active && finger.fingerID == g_touch_editor_finger &&
-      event.type == SDL_EVENT_FINGER_MOTION) {
-    auto& region = g_touch_layout.regions[static_cast<size_t>(g_touch_editor_region)];
-    region.x = std::clamp(finger.x - region.w * 0.5f, 0.f, 1.f - region.w);
-    region.y = std::clamp(finger.y - region.h * 0.5f, 0.f, 1.f - region.h);
-    build_touch_overlay();
-    upload_touch_overlay();
-    return true;
-  }
-  if (g_touch_editor_active && finger.fingerID == g_touch_editor_finger &&
-      (event.type == SDL_EVENT_FINGER_UP || event.type == SDL_EVENT_FINGER_CANCELED)) {
-    g_touch_editor_active = false;
-    g_touch_editor_finger = 0;
-    save_touch_layout();
-    g_input.neutralize();
-    return true;
-  }
-  return true;
-}
-
-void toggle_touch_editor() {
-  g_touch_editor = !g_touch_editor;
-  g_touch_editor_active = false;
-  g_input.neutralize();
-  build_touch_overlay();
-  upload_touch_overlay();
-  lg::info("OTTSEL TOUCH: editor={} layout={}", g_touch_editor ? "on" : "off",
-           g_touch_layout_path);
-}
-
-void adjust_touch_opacity(float delta) {
-  if (!g_touch_editor) {
-    return;
-  }
-  g_touch_layout.opacity = std::clamp(g_touch_layout.opacity + delta, 0.1f, 1.f);
-  build_touch_overlay();
-  upload_touch_overlay();
-  save_touch_layout();
-  lg::info("OTTSEL TOUCH: editor opacity={:.2f}", g_touch_layout.opacity);
-}
-
-void add_touch_rect(float x, float y, float w, float h,
-                    float r, float g, float b, float a) {
-  const float left = x * 2.f - 1.f;
-  const float right = (x + w) * 2.f - 1.f;
-  const float top = 1.f - y * 2.f;
-  const float bottom = 1.f - (y + h) * 2.f;
-  const float color[4] = {r, g, b, a};
-  const float positions[6][2] = {{left, bottom}, {right, bottom}, {right, top},
-                                 {left, bottom}, {right, top}, {left, top}};
-  for (const auto& position : positions) {
-    OttselOverlayVertex vertex = {};
-    vertex.pos[0] = position[0];
-    vertex.pos[1] = position[1];
-    memcpy(vertex.color, color, sizeof(color));
-    g_touch_overlay.push_back(vertex);
-  }
-}
-
-struct TouchPoint {
-  float x;
-  float y;
-};
-
-// The overlay is a triangle list, so shapes are all that is needed for the PS2 button reference: a disc, a
-// cross of two bars, a square and a triangle, each built in unit space (radius 1) and mapped into the
-// region's own box with the axis aspect folded in, so the symbol is round on screen and inside its region.
-void add_touch_unit_triangle(float cx, float cy, float radius, float aspect, float angle, float u0,
-                             float v0, float u1, float v1, float u2, float v2, float r, float g,
-                             float b, float a) {
-  const float ca = cosf(angle);
-  const float sa = sinf(angle);
-  const auto map = [&](float u, float v) {
-    const float su = u * ca - v * sa;
-    const float sv = u * sa + v * ca;
-    return TouchPoint{cx + su * radius * aspect, cy + sv * radius};
-  };
-  const TouchPoint p0 = map(u0, v0);
-  const TouchPoint p1 = map(u1, v1);
-  const TouchPoint p2 = map(u2, v2);
-  const float color[4] = {r, g, b, a};
-  const TouchPoint points[3] = {p0, p1, p2};
-  for (const TouchPoint& point : points) {
-    OttselOverlayVertex vertex = {};
-    vertex.pos[0] = point.x * 2.f - 1.f;
-    vertex.pos[1] = 1.f - point.y * 2.f;
-    memcpy(vertex.color, color, sizeof(color));
-    g_touch_overlay.push_back(vertex);
-  }
-}
-
-void add_touch_unit_bar(float cx, float cy, float radius, float aspect, float angle, float half_length,
-                        float half_width, float r, float g, float b, float a) {
-  add_touch_unit_triangle(cx, cy, radius, aspect, angle, -half_length, -half_width, half_length,
-                          -half_width, half_length, half_width, r, g, b, a);
-  add_touch_unit_triangle(cx, cy, radius, aspect, angle, -half_length, -half_width, half_length,
-                          half_width, -half_length, half_width, r, g, b, a);
-}
-
-void add_touch_unit_disc(float cx, float cy, float radius, float aspect, int segments, float r, float g,
-                         float b, float a) {
-  for (int i = 0; i < segments; ++i) {
-    const float a0 = 6.2831855f * (float)i / (float)segments;
-    const float a1 = 6.2831855f * (float)(i + 1) / (float)segments;
-    add_touch_unit_triangle(cx, cy, radius, aspect, 0.f, 0.f, 0.f, cosf(a0), sinf(a0), cosf(a1),
-                            sinf(a1), r, g, b, a);
-  }
-}
-
-// The PS2 face symbols and the four D-pad arrowheads, drawn inside their own regions.
-void add_touch_face_symbol(TouchRegion region, float cx, float cy, float radius, float aspect, float r,
-                           float g, float b, float a) {
-  switch (region) {
-    case TouchRegion::Circle:
-      add_touch_unit_disc(cx, cy, radius, aspect, 16, r, g, b, a);
-      break;
-    case TouchRegion::Cross:
-      add_touch_unit_bar(cx, cy, radius, aspect, 0.7853982f, 1.15f, 0.30f, r, g, b, a);
-      add_touch_unit_bar(cx, cy, radius, aspect, -0.7853982f, 1.15f, 0.30f, r, g, b, a);
-      break;
-    case TouchRegion::Square:
-      add_touch_unit_bar(cx, cy, radius, aspect, 0.f, 1.f, 1.f, r, g, b, a);
-      break;
-    default:
-      add_touch_unit_triangle(cx, cy, radius, aspect, 0.f, 0.f, -1.15f, -1.f, 1.f, 1.f, 1.f, r, g, b,
-                              a);
-      break;
-  }
-}
-
-void add_touch_dpad_arrow(TouchRegion region, float cx, float cy, float radius, float aspect, float r,
-                          float g, float b, float a) {
-  float angle = 0.f;
-  switch (region) {
-    case TouchRegion::DpadRight: angle = 1.5707963f; break;
-    case TouchRegion::DpadDown: angle = 3.1415927f; break;
-    case TouchRegion::DpadLeft: angle = -1.5707963f; break;
-    default: break;
-  }
-  add_touch_unit_triangle(cx, cy, radius, aspect, angle, 0.f, -1.25f, -1.f, 0.95f, 1.f, 0.95f, r, g, b,
-                          a);
-}
-
-// I3: labels for the control surface.  The overlay's vertices sample a 1x1 white texture, so a glyph is
-// emitted as one quad per lit pixel of the same column-major 5x7 font the shell status screen uses.  A
-// three-character label is about forty quads, which is nothing beside the world's vertex budget.
-void add_touch_glyph(float x, float y, float pixel_x, float pixel_y, char c, float r, float g, float b,
-                     float a) {
-  if (c < 32 || c > 126) {
-    return;
-  }
-  const uint8_t* glyph = kFont5x7[(int)c - 32];
-  for (int col = 0; col < kFontW; ++col) {
-    const uint8_t bits = glyph[col];
-    for (int row = 0; row < kFontH; ++row) {
-      if (bits & (1 << row)) {
-        add_touch_rect(x + (float)col * pixel_x, y + (float)row * pixel_y, pixel_x * 0.95f,
-                       pixel_y * 0.95f, r, g, b, a);
-      }
-    }
-  }
-}
-
-// The layout is stored in fractions of each axis, so a square glyph needs pixel_x = pixel_y * (h/w).
-void add_touch_label(float cx, float cy, float pixel_y, float aspect, const char* text, float r,
-                     float g, float b, float a) {
-  const int length = (int)std::strlen(text);
-  if (!length) {
-    return;
-  }
-  const float pixel_x = pixel_y * aspect;
-  const float width = (float)(length * (kFontW + 1) - 1) * pixel_x;
-  float x = cx - width * 0.5f;
-  const float y = cy - (float)kFontH * pixel_y * 0.5f;
-  for (int i = 0; i < length; ++i) {
-    add_touch_glyph(x, y, pixel_x, pixel_y, text[i], r, g, b, a);
-    x += (float)(kFontW + 1) * pixel_x;
-  }
-}
-
-// Short ASCII labels; the settings entry keeps its three dots as its own label.
-const char* touch_region_label(TouchRegion region) {
-  switch (region) {
-    case TouchRegion::LeftStick: return "STK";
-    case TouchRegion::Camera: return "CAM";
-    case TouchRegion::Circle: return "O";
-    case TouchRegion::Cross: return "X";
-    case TouchRegion::Square: return "[]";
-    case TouchRegion::Triangle: return "TR";
-    case TouchRegion::DpadUp: return "^";
-    case TouchRegion::DpadRight: return ">";
-    case TouchRegion::DpadDown: return "v";
-    case TouchRegion::DpadLeft: return "<";
-    case TouchRegion::Start: return "ST";
-    case TouchRegion::L1: return "L1";
-    case TouchRegion::R1: return "R1";
-    default: return "";
-  }
-}
-
-void build_touch_overlay(int pressed_mask) {
-  g_touch_overlay.clear();
-  constexpr float colors[static_cast<size_t>(TouchRegion::Count)][4] = {
-      {0.20f, 0.70f, 1.0f, 0.20f}, {0.95f, 0.75f, 0.20f, 0.16f},
-      {1.0f, 0.35f, 0.35f, 0.24f}, {1.0f, 0.35f, 0.35f, 0.24f},
-      {1.0f, 0.35f, 0.35f, 0.24f}, {1.0f, 0.35f, 0.35f, 0.24f},
-      {0.85f, 0.55f, 0.95f, 0.20f}, {0.85f, 0.55f, 0.95f, 0.20f},
-      {0.85f, 0.55f, 0.95f, 0.20f}, {0.85f, 0.55f, 0.95f, 0.20f},
-      {0.95f, 0.65f, 0.20f, 0.22f}, {0.65f, 0.65f, 0.75f, 0.18f},
-      {0.65f, 0.65f, 0.75f, 0.18f}, {0.95f, 0.95f, 0.98f, 0.30f}};
-  for (size_t i = 0; i < static_cast<size_t>(TouchRegion::Count); ++i) {
-    const auto& region = g_touch_layout.regions[i];
-    if (i == static_cast<size_t>(TouchRegion::Menu)) {
-      // I3: the settings entry reads as three dots instead of a block, so it is recognisable without a
-      // label glyph.  The dots are small quads inside the region the hit-test already owns.
-      const float dot = 0.008f;
-      const float gap = 0.017f;
-      const float cx = region.x + region.w * 0.5f;
-      const float cy = region.y + region.h * 0.5f;
-      for (int dot_index = -1; dot_index <= 1; ++dot_index) {
-        add_touch_rect(cx + dot_index * gap - dot * 0.5f, cy - dot * 0.5f, dot, dot, 0.97f, 0.97f,
-                       1.0f, 0.85f);
-      }
-      continue;
-    }
-    float r = colors[i][0];
-    float g = colors[i][1];
-    float b = colors[i][2];
-    float a = colors[i][3] * g_touch_layout.opacity;
-    if (pressed_mask & (1 << static_cast<int>(i))) {
-      // I3 pressed/neutral feedback: a held region lifts toward white and deepens its tint, so the
-      // player can see which control the game is receiving.  The neutral look is unchanged.
-      // The lift and the alpha gain are chosen from measurement: at 0.45/3.0 over the training level's
-      // foliage the pressed region moved its own static box by only ~2.4/255 per channel, which a player
-      // cannot see, so the pressed state is a near-opaque light tint instead.
-      constexpr float lift = 0.80f;
-      r += (1.f - r) * lift;
-      g += (1.f - g) * lift;
-      b += (1.f - b) * lift;
-      a = std::min(1.0f, a * 4.0f + 0.25f);
-    }
-    add_touch_rect(region.x, region.y, region.w, region.h, r, g, b, a);
-    // I3: the mark sits inside its own hit region and brightens with the held state, so the surface says what
-    // each control is and shows what the game is receiving.  The four face buttons and the D-pad arms carry
-    // the PS2 symbols; the rest carry their short text label.
-    const TouchRegion region_id = static_cast<TouchRegion>(i);
-    const bool held = (pressed_mask & (1 << static_cast<int>(i))) != 0;
-    const float aspect = (float)g_surf_h / (float)std::max(1, g_surf_w);
-    const float cx = region.x + region.w * 0.5f;
-    const float cy = region.y + region.h * 0.5f;
-    const float symbol_radius = std::min(region.w / aspect, region.h) * 0.34f;
-    const float ink_alpha = held ? 1.0f : 0.85f;
-    if (region_id >= TouchRegion::Circle && region_id <= TouchRegion::Triangle) {
-      add_touch_face_symbol(region_id, cx, cy, symbol_radius, aspect, 0.97f, 0.97f, 1.0f, ink_alpha);
-    } else if (region_id >= TouchRegion::DpadUp && region_id <= TouchRegion::DpadLeft) {
-      add_touch_dpad_arrow(region_id, cx, cy, symbol_radius, aspect, 0.97f, 0.97f, 1.0f, ink_alpha);
-    } else {
-      const char* label = touch_region_label(region_id);
-      if (label[0]) {
-        // Fit the glyph to its own region on both axes: the tablet's wide bars and the phone's narrower arms
-        // do not share a workable fixed size (a fixed 0.007 overflowed the phone's 0.055-wide D-pad arms), and
-        // the normalized axes differ, so the pixel is square on screen only with the aspect folded in.
-        const int label_length = (int)std::strlen(label);
-        const float label_units = (float)(label_length * (kFontW + 1) - 1);
-        const float by_height = region.h / (float)(kFontH + 2);
-        const float by_width = region.w * 0.82f / std::max(1.f, label_units * aspect);
-        const float pixel_y = std::min(std::min(by_height, by_width), 0.0115f);
-        add_touch_label(cx, cy, pixel_y, aspect, label,
-                        0.92f + (held ? 0.08f : 0.f), 0.96f + (held ? 0.04f : 0.f), 1.0f,
-                        ink_alpha);
-      }
-    }
-  }
-}
-
-void upload_touch_overlay() {
-  // I3 setting: AUTO follows the input in use (a physical device hides the surface), ALWAYS keeps it up and
-  // HIDDEN never draws it.  The overlay builder and the hit-testing are unaffected.
-  const bool surface_visible = g_settings.surface_visibility == 1 ||
-                               (g_settings.surface_visibility == 0 && !g_native_input_mode);
-  g_touch_overlay_uploaded = surface_visible && !g_touch_overlay.empty();
-  ottsel_gl_set_overlay(g_touch_overlay_uploaded ? g_touch_overlay.data() : nullptr,
-                        g_touch_overlay_uploaded ? (unsigned)g_touch_overlay.size() : 0);
-}
-
-// I3: re-upload the touch surface only when the set of held regions changes, so pressed feedback costs
-// one mask compare per frame and nothing else.  Called once per frame after input and the touch triggers
-// have been processed, so the drawn state is the state the game was just handed.
-void update_touch_overlay_feedback() {
-  static int uploaded_mask = -1;
-  static int logged = 0;
-  const int mask = g_input.pressed_region_mask();
-  if (mask == uploaded_mask) {
-    return;
-  }
-  uploaded_mask = mask;
-  build_touch_overlay(mask);
-  upload_touch_overlay();
-  // I3 observability: bounded (20 lines) so the feedback path can be measured from the log even when a
-  // capture is dominated by the scene's own animation.
-  if (logged < 20) {
-    ++logged;
-    lg::info("OTTSEL TOUCH: feedback mask=0x{:x} vertices={} uploaded={}", mask,
-             g_touch_overlay.size(), g_touch_overlay_uploaded ? 1 : 0);
-    // The pressed region's first vertex carries the lifted RGBA, so the log states the feedback the
-    // overlay was actually built with, not just that a rebuild happened.
-    for (unsigned region = 0; region < static_cast<unsigned>(TouchRegion::Count); ++region) {
-      const unsigned first_vertex = 6u * region;
-      if (!(mask & (1 << region)) || g_touch_overlay.size() <= first_vertex) {
-        continue;
-      }
-      const float* color = g_touch_overlay[first_vertex].color;
-      lg::info("OTTSEL TOUCH: feedback region={} color=({:.3f},{:.3f},{:.3f},{:.3f})", region,
-               color[0], color[1], color[2], color[3]);
-      break;
-    }
-  }
-}
-
-void hide_touch_overlay_for_native_input() {
-  if (g_native_input_mode) {
-    return;
-  }
-  g_native_input_mode = true;
-  g_touch_overlay_uploaded = false;
-  g_touch_overlay.clear();
-  ottsel_gl_set_overlay(nullptr, 0);
-  lg::info("OTTSEL INPUT: native keyboard/mouse active; touch overlay hidden");
 }
 
 void put_pixel(int x, int y, unsigned char r, unsigned char g, unsigned char b) {
@@ -1372,142 +622,6 @@ void render_surface() {
 // no glyph geometry in the overlay vertex path.  The completion plan names six sections; only sections whose
 // entries have real behaviour are offered (no decorative controls), and each section screen holds its own
 // rows plus BACK.
-enum class SettingId {
-  CameraSensitivity,
-  InvertCameraY,
-  SurfaceOpacity,
-  SurfaceVisible,
-  ResetLayout,
-  RenderScale,
-  MusicVolume,
-  UserPack,
-  DataRoot,
-  LogOverlay,
-};
-
-struct SettingDef {
-  const char* section;
-  const char* label;
-  SettingId id;
-  bool actionable;
-};
-
-constexpr SettingDef kSettingDefs[] = {
-    {"GAMEPLAY", "CAMERA SENSITIVITY", SettingId::CameraSensitivity, true},
-    {"GAMEPLAY", "INVERT CAMERA Y", SettingId::InvertCameraY, true},
-    {"CONTROLS", "SURFACE OPACITY", SettingId::SurfaceOpacity, true},
-    {"CONTROLS", "SURFACE VISIBLE", SettingId::SurfaceVisible, true},
-    {"CONTROLS", "RESET LAYOUT", SettingId::ResetLayout, true},
-    {"VIDEO", "RENDER SCALE", SettingId::RenderScale, true},
-    // Drives the music handler's own groups (1 and 2, see apply_music_volume); it was briefly labelled MASTER
-    // VOLUME while it still drove group 16, which muted the whole mix.
-    {"AUDIO", "MUSIC VOLUME", SettingId::MusicVolume, true},
-    {"DATA & SAVES", "USER PACK", SettingId::UserPack, false},
-    {"DATA & SAVES", "DATA ROOT", SettingId::DataRoot, false},
-    {"DIAGNOSTICS", "LOG OVERLAY", SettingId::LogOverlay, true},
-};
-constexpr int kSettingCount = (int)(sizeof(kSettingDefs) / sizeof(kSettingDefs[0]));
-
-bool g_settings_screen = false;
-int g_settings_level = 0;    // 0 = the section list, 1 = one section's rows
-int g_settings_section = 0;  // index into the distinct section names
-int g_settings_row = 0;      // row inside the current section screen
-
-int settings_section_count() {
-  int count = 0;
-  for (int i = 0; i < kSettingCount; ++i) {
-    if (i == 0 || std::strcmp(kSettingDefs[i].section, kSettingDefs[i - 1].section) != 0) {
-      ++count;
-    }
-  }
-  return count;
-}
-
-const char* settings_section_name(int index) {
-  int seen = -1;
-  for (int i = 0; i < kSettingCount; ++i) {
-    if (i == 0 || std::strcmp(kSettingDefs[i].section, kSettingDefs[i - 1].section) != 0) {
-      ++seen;
-      if (seen == index) {
-        return kSettingDefs[i].section;
-      }
-    }
-  }
-  return "";
-}
-
-int settings_section_first_row(int index) {
-  const char* name = settings_section_name(index);
-  for (int i = 0; i < kSettingCount; ++i) {
-    if (std::strcmp(kSettingDefs[i].section, name) == 0) {
-      return i;
-    }
-  }
-  return 0;
-}
-
-int settings_section_row_count(int index) {
-  const char* name = settings_section_name(index);
-  int count = 0;
-  for (int i = 0; i < kSettingCount; ++i) {
-    if (std::strcmp(kSettingDefs[i].section, name) == 0) {
-      ++count;
-    }
-  }
-  return count;
-}
-
-void fill_rect(int x, int y, int w, int h, unsigned char r, unsigned char g, unsigned char b) {
-  for (int yy = y; yy < y + h; ++yy) {
-    if (yy < 0 || yy >= g_surf_h) continue;
-    for (int xx = x; xx < x + w; ++xx) {
-      if (xx < 0 || xx >= g_surf_w) continue;
-      const size_t i = ((size_t)yy * g_surf_w + (size_t)xx) * 4;
-      g_rgba[i + 0] = r;
-      g_rgba[i + 1] = g;
-      g_rgba[i + 2] = b;
-      g_rgba[i + 3] = 255;
-    }
-  }
-}
-
-std::string settings_value(SettingId id) {
-  switch (id) {
-    case SettingId::CameraSensitivity: {
-      char buffer[16] = {};
-      snprintf(buffer, sizeof(buffer), "%d%%", g_settings.camera_sensitivity);
-      return buffer;
-    }
-    case SettingId::InvertCameraY:
-      return g_settings.invert_camera_y ? "ON" : "OFF";
-    case SettingId::SurfaceOpacity: {
-      char buffer[16] = {};
-      snprintf(buffer, sizeof(buffer), "%d%%", (int)(g_touch_layout.opacity * 100.f + 0.5f));
-      return buffer;
-    }
-    case SettingId::SurfaceVisible:
-      return surface_visibility_name(g_settings.surface_visibility);
-    case SettingId::RenderScale: {
-      char buffer[16] = {};
-      snprintf(buffer, sizeof(buffer), "%d%%", g_settings.render_scale);
-      return buffer;
-    }
-    case SettingId::MusicVolume: {
-      char buffer[16] = {};
-      snprintf(buffer, sizeof(buffer), "%d%%", g_settings.music_volume);
-      return buffer;
-    }
-    case SettingId::UserPack:
-      return ottsel_ios_has_user_data() ? "PRESENT" : "MISSING";
-    case SettingId::DataRoot:
-      return ottsel_ios_writable_dir();
-    case SettingId::LogOverlay:
-      return g_settings.log_overlay ? "ON" : "OFF";
-    default:
-      return "CROSS";
-  }
-}
-
 void apply_music_volume() {
   // The music handler drives groups 1 and 2 (`ssound.cpp` `SetMusicVol`), so scaling those is a real music
   // control; group 16 is the synth *master*, and driving it muted the whole mix - ambience and dialogue too.
@@ -1521,227 +635,38 @@ void apply_render_scale() {
   ottsel_gl_set_render_scale(g_settings.render_scale);
 }
 
-void show_log_surface() {
-  if (g_rgba.empty()) {
-    return;
-  }
-  read_log_tail();
-  render_surface();
-  ottsel_gl_set_status(g_rgba.data(), g_surf_w, g_surf_h);
+// The touch overlay's menu reads and changes these (touch_controls.h).
+int shell_setting(const char* key) {
+  const std::string k = key;
+  if (k == "controls") return g_settings.surface_visibility;
+  if (k == "render_scale") return g_settings.render_scale;
+  if (k == "music_volume") return g_settings.music_volume;
+  if (k == "camera_sensitivity") return g_settings.camera_sensitivity;
+  if (k == "invert_camera_y") return g_settings.invert_camera_y;
+  if (k == "log_overlay") return g_settings.log_overlay;
+  return 0;
 }
 
-void compose_settings_screen() {
-  fill_rect(0, 0, g_surf_w, g_surf_h, 10, 12, 20);
-  const int pad = 10 * g_font_scale;
-  const int line = (kFontH + 5) * g_font_scale;
-  const bool section_list = g_settings_level == 0;
-  const int rows = section_list ? settings_section_count() + 1
-                                : settings_section_row_count(g_settings_section) + 1;
-  int y = pad;
-  draw_text(pad, y, section_list ? "OTTSEL SETTINGS" : settings_section_name(g_settings_section),
-            150, 220, 255);
-  y += line * 2;
-  for (int row = 0; row < rows; ++row) {
-    std::string label;
-    std::string value;
-    if (section_list) {
-      label = (row == settings_section_count()) ? "CLOSE" : settings_section_name(row);
-    } else if (row == settings_section_row_count(g_settings_section)) {
-      label = "BACK";
-    } else {
-      const int index = settings_section_first_row(g_settings_section) + row;
-      label = kSettingDefs[index].label;
-      value = settings_value(kSettingDefs[index].id);
-    }
-    if (row == g_settings_row) {
-      fill_rect(pad - 4, y - 3, g_surf_w - 2 * (pad - 4), line, 34, 46, 70);
-    }
-    draw_text(pad, y, label, 235, 240, 250);
-    if (!value.empty()) {
-      draw_text(g_surf_w / 2, y, value, 255, 210, 120);
-    }
-    y += line;
+void set_shell_setting(const char* key, int value) {
+  const std::string k = key;
+  if (k == "controls") g_settings.surface_visibility = std::clamp(value, 0, 2);
+  if (k == "render_scale") {
+    g_settings.render_scale = value == 50 || value == 75 ? value : 100;
+    apply_render_scale();
   }
-  y += line;
-  draw_text(pad, y,
-            section_list ? "D-PAD UP/DOWN SELECT   CROSS OPEN   CIRCLE OR DOTS CLOSE"
-                         : "D-PAD UP/DOWN SELECT   CROSS OR LEFT/RIGHT CHANGE   CIRCLE BACK",
-            170, 180, 200);
-  y += line;
-  draw_text(pad, y, "AUDIO CHANGES NEED THE SOUND SUBSTRATE; LOG OVERLAY APPLIES WHEN THIS SCREEN CLOSES",
-            140, 150, 170);
-  if (g_settings_path.empty()) {
-    y += line;
-    draw_text(pad, y, "NOT PERSISTED: NO SETTINGS PATH YET", 255, 140, 140);
+  if (k == "music_volume") {
+    g_settings.music_volume = std::clamp(value, 0, 100);
+    apply_music_volume();
   }
+  if (k == "camera_sensitivity") g_settings.camera_sensitivity = std::clamp(value, 50, 200);
+  if (k == "invert_camera_y") g_settings.invert_camera_y = value ? 1 : 0;
+  if (k == "log_overlay") {
+    g_settings.log_overlay = value ? 1 : 0;
+    if (!value) ottsel_gl_set_status(nullptr, 0, 0);
+  }
+  save_settings();
 }
 
-void upload_settings_screen() {
-  if (g_rgba.empty()) {
-    return;
-  }
-  compose_settings_screen();
-  ottsel_gl_set_status(g_rgba.data(), g_surf_w, g_surf_h);
-}
-
-void close_settings_screen() {
-  if (!g_settings_screen) {
-    return;
-  }
-  g_settings_screen = false;
-  if (g_settings.log_overlay) {
-    // The diagnostics row is a real overlay: keep the shell log surface up over the game.
-    show_log_surface();
-  } else {
-    ottsel_gl_set_status(nullptr, 0, 0);
-  }
-  lg::info("OTTSEL SETTINGS: screen closed visible={} music={} log={}",
-           surface_visibility_name(g_settings.surface_visibility), g_settings.music_volume,
-           g_settings.log_overlay);
-}
-
-void open_settings_screen() {
-  g_settings_screen = true;
-  g_settings_level = 0;
-  g_settings_section = 0;
-  g_settings_row = 0;
-  apply_music_volume();
-  upload_settings_screen();
-  lg::info("OTTSEL SETTINGS: screen open level=0 visible={} music={} log={} sens={} invert={} scale={}",
-           surface_visibility_name(g_settings.surface_visibility), g_settings.music_volume,
-           g_settings.log_overlay, g_settings.camera_sensitivity, g_settings.invert_camera_y,
-           g_settings.render_scale);
-}
-
-void settings_activate_selected(int delta) {
-  if (g_settings_level != 1) {
-    return;
-  }
-  if (g_settings_row >= settings_section_row_count(g_settings_section)) {
-    g_settings_level = 0;  // BACK
-    g_settings_row = g_settings_section;
-    upload_settings_screen();
-    return;
-  }
-  const int index = settings_section_first_row(g_settings_section) + g_settings_row;
-  if (index < 0 || index >= kSettingCount) {
-    return;
-  }
-  const SettingDef& def = kSettingDefs[index];
-  if (!def.actionable) {
-    lg::info("OTTSEL SETTINGS: row={} value={} is read-only", def.label, settings_value(def.id));
-    return;
-  }
-  if (delta == 0) {
-    delta = 1;
-  }
-  switch (def.id) {
-    case SettingId::CameraSensitivity:
-      g_settings.camera_sensitivity =
-          std::clamp(g_settings.camera_sensitivity + 25 * delta, 50, 200);
-      save_settings();
-      break;
-    case SettingId::InvertCameraY:
-      g_settings.invert_camera_y = g_settings.invert_camera_y ? 0 : 1;
-      save_settings();
-      break;
-    case SettingId::SurfaceOpacity:
-      g_touch_layout.opacity =
-          std::clamp(g_touch_layout.opacity + 0.25f * (float)delta, 0.25f, 1.f);
-      build_touch_overlay(g_input.pressed_region_mask());
-      upload_touch_overlay();
-      save_touch_layout();
-      break;
-    case SettingId::SurfaceVisible:
-      g_settings.surface_visibility = (g_settings.surface_visibility + (delta > 0 ? 1 : 2)) % 3;
-      save_settings();
-      upload_touch_overlay();
-      break;
-    case SettingId::ResetLayout:
-      apply_default_touch_layout();
-      save_touch_layout();
-      build_touch_overlay(g_input.pressed_region_mask());
-      upload_touch_overlay();
-      break;
-    case SettingId::RenderScale:
-      // Cycle 100 -> 75 -> 50 -> 100, so the setting always lands on a value the drawable can take.
-      g_settings.render_scale = g_settings.render_scale == 100 ? 75
-                                : g_settings.render_scale == 75 ? 50
-                                                                : 100;
-      apply_render_scale();
-      save_settings();
-      break;
-    case SettingId::MusicVolume:
-      g_settings.music_volume = std::clamp(g_settings.music_volume + 10 * delta, 0, 100);
-      apply_music_volume();
-      save_settings();
-      break;
-    case SettingId::LogOverlay:
-      g_settings.log_overlay = g_settings.log_overlay ? 0 : 1;
-      save_settings();
-      break;
-    default:
-      break;
-  }
-  upload_settings_screen();
-  lg::info("OTTSEL SETTINGS: changed section={} row={} value={}", def.section, def.label,
-           settings_value(def.id));
-}
-
-// Returns true when the touch belongs to the settings surface.  While the screen is up the shell owns every
-// finger, so the game cannot be driven behind it; the Menu region opens it and Circle or Menu closes it.
-bool handle_settings_touch(const SDL_Event& event) {
-  if (event.type != SDL_EVENT_FINGER_DOWN && event.type != SDL_EVENT_FINGER_MOTION &&
-      event.type != SDL_EVENT_FINGER_UP && event.type != SDL_EVENT_FINGER_CANCELED) {
-    return false;
-  }
-  const int region = touch_region_at(event.tfinger.x, event.tfinger.y);
-  if (!g_settings_screen) {
-    if (event.type == SDL_EVENT_FINGER_DOWN && region == static_cast<int>(TouchRegion::Menu)) {
-      open_settings_screen();
-      return true;
-    }
-    return false;
-  }
-  if (event.type == SDL_EVENT_FINGER_DOWN) {
-    const int row_count = g_settings_level == 0 ? settings_section_count()
-                                                : settings_section_row_count(g_settings_section);
-    if (region == static_cast<int>(TouchRegion::Menu)) {
-      close_settings_screen();
-    } else if (region == static_cast<int>(TouchRegion::Circle)) {
-      if (g_settings_level == 1) {
-        g_settings_level = 0;
-        g_settings_row = g_settings_section;
-        upload_settings_screen();
-      } else {
-        close_settings_screen();
-      }
-    } else if (region == static_cast<int>(TouchRegion::DpadUp)) {
-      g_settings_row = (g_settings_row + row_count) % (row_count + 1);
-      upload_settings_screen();
-    } else if (region == static_cast<int>(TouchRegion::DpadDown)) {
-      g_settings_row = (g_settings_row + 1) % (row_count + 1);
-      upload_settings_screen();
-    } else if (region == static_cast<int>(TouchRegion::Cross) ||
-               region == static_cast<int>(TouchRegion::DpadRight)) {
-      if (g_settings_level == 0) {
-        if (g_settings_row < settings_section_count()) {
-          g_settings_level = 1;
-          g_settings_section = g_settings_row;
-          g_settings_row = 0;
-          upload_settings_screen();
-        } else {
-          close_settings_screen();
-        }
-      } else {
-        settings_activate_selected(1);
-      }
-    } else if (region == static_cast<int>(TouchRegion::DpadLeft)) {
-      settings_activate_selected(-1);
-    }
-  }
-  return true;
-}
 // Debug aid (S2.0): dump the exact presented CPU surface as a PPM so the
 // evidence set can be verified pixel-for-pixel against the Simulator
 // screenshot.  Triggered once per surface-size change.
@@ -1795,23 +720,9 @@ bool on_event_watch(void*, SDL_Event* ev) {
 
 }  // namespace
 
-// Device class and safe area for the touch layout (declared in ios_boot.h), from SDL's UIKit backend.
+// Device class for the per-class settings file (declared in ios_boot.h), from SDL's UIKit backend.
 bool ottsel_ios_shell_is_phone() {
   return !SDL_IsTablet();
-}
-
-int ottsel_ios_shell_safe_area(float* left, float* top, float* right, float* bottom) {
-  int w = 0, h = 0;
-  SDL_Rect safe;
-  if (!g_win || !SDL_GetWindowSize(g_win, &w, &h) || w <= 0 || h <= 0 ||
-      !SDL_GetWindowSafeArea(g_win, &safe)) {
-    return 0;
-  }
-  *left = (float)safe.x / (float)w;
-  *top = (float)safe.y / (float)h;
-  *right = (float)(w - safe.x - safe.w) / (float)w;
-  *bottom = (float)(h - safe.y - safe.h) / (float)h;
-  return 1;
 }
 
 int main(int argc, char** argv) {
@@ -1854,9 +765,7 @@ int main(int argc, char** argv) {
   SDL_free(prefs);
   ottsel_ios_set_writable_dir(writable);
   g_log_path = writable + "ottsel-runtime.log";
-  g_touch_layout_dir = writable;
-  apply_default_touch_layout();
-  refresh_touch_layout_path();
+  g_writable_dir = writable;
   refresh_settings_path();
 
   // All runtime log output (lg:: + kernel Msg/printstd) goes to this file;
@@ -1870,8 +779,8 @@ int main(int argc, char** argv) {
     return 1;
   }
   apply_render_scale();
-
-  load_touch_layout();
+  ottsel_touch_install(g_win, {[](const OttselTouchPad& pad) { g_input.touch_pad(pad); },
+                               shell_setting, set_shell_setting});
   // With the real IOP, OVERLORD's InitSound starts the sound system (game/overlord/jak1/ssound.cpp).
 
   std::thread boot(ottsel_ios_run_boot);
@@ -1896,15 +805,7 @@ int main(int argc, char** argv) {
           break;
         case SDL_EVENT_KEY_DOWN:
         case SDL_EVENT_KEY_UP:
-          if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_F6) {
-            toggle_touch_editor();
-          } else if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_LEFTBRACKET) {
-            adjust_touch_opacity(-0.05f);
-          } else if (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_RIGHTBRACKET) {
-            adjust_touch_opacity(0.05f);
-          } else {
-            g_input.keyboard(ev.key.key, ev.key.scancode, ev.type == SDL_EVENT_KEY_DOWN);
-          }
+          g_input.keyboard(ev.key.key, ev.key.scancode, ev.type == SDL_EVENT_KEY_DOWN);
           break;
         case SDL_EVENT_MOUSE_MOTION:
           if (ottsel::platform_input::routes_to_native_mouse(ev.motion.which,
@@ -1934,15 +835,11 @@ int main(int argc, char** argv) {
           g_input.gamepad_axis(ev.gaxis.which, ev.gaxis.axis, ev.gaxis.value);
           break;
         case SDL_EVENT_FINGER_DOWN:
-        case SDL_EVENT_FINGER_MOTION:
-        case SDL_EVENT_FINGER_UP:
-        case SDL_EVENT_FINGER_CANCELED:
-          // I3: the settings surface is a shell modal, so it sees the finger before the layout editor and
-          // before the game's pad producer.
-          if (!handle_settings_touch(ev)) {
-            if (!handle_touch_editor(ev)) {
-              g_input.touch(ev);
-            }
+          // Touches on the controls go to UIKit; one that reaches the game view while a controller or
+          // keyboard hid the controls means touch is the input in use again.
+          if (g_native_input_mode) {
+            g_native_input_mode = false;
+            update_touch_visibility();
           }
           break;
         default:
@@ -2061,76 +958,6 @@ int main(int argc, char** argv) {
           *hold.down = present;
           g_input.keyboard(hold.key, hold.scancode, present);
         }
-      }
-      // I3 (2026-09-22): touch is the iPad's primary control surface and there is no non-UI way to press a
-      // finger on it, so this bounded trigger drives the *same* path a real finger takes
-      // (handle_touch_editor then g_input.touch): create <writable>ottsel-touch-<region> to press that
-      // region's centre and remove it to release.  Names follow the TouchRegion order.
-      {
-        static const char* const kTouchTriggers[] = {"left-stick", "camera", "circle", "cross",
-                                                     "square", "triangle", "dpad-up", "dpad-right",
-                                                     "dpad-down", "dpad-left", "start", "l1", "r1",
-                                                     "menu"};
-        // One finger per present region, so a stick and a button can be held at the same time - the gesture
-        // the iPad actually plays with.  Each region keeps its own finger id and its own down state.
-        static std::array<bool, std::size(kTouchTriggers)> touch_down{};
-        for (size_t i = 0; i < std::size(kTouchTriggers); ++i) {
-          const std::string touch_path = writable + "ottsel-touch-" + kTouchTriggers[i];
-          const bool present = access(touch_path.c_str(), F_OK) == 0;
-          if (present == touch_down[i]) {
-            continue;
-          }
-          touch_down[i] = present;
-          const SDL_FingerID finger = 0x7f000000 + static_cast<SDL_FingerID>(i) + 1;
-          const auto& region = g_touch_layout.regions[i];
-          SDL_Event ev{};
-          ev.tfinger.fingerID = finger;
-          ev.tfinger.timestamp = SDL_GetTicksNS();
-          ev.tfinger.x = region.x + region.w * 0.5f;
-          ev.tfinger.y = region.y + region.h * 0.5f;
-          if (present) {
-            ev.type = SDL_EVENT_FINGER_DOWN;
-            if (!handle_settings_touch(ev)) {
-              if (!handle_touch_editor(ev)) {
-                g_input.touch(ev);
-              }
-            }
-            // A press alone leaves the stick centred (its state comes from drag), so follow it with a small
-            // drag; button regions ignore motion for a non-stick finger.
-            SDL_Event drag{};
-            drag.type = SDL_EVENT_FINGER_MOTION;
-            drag.tfinger.fingerID = finger;
-            drag.tfinger.timestamp = SDL_GetTicksNS();
-            drag.tfinger.x = std::min(1.f, ev.tfinger.x + 0.08f);
-            drag.tfinger.y = ev.tfinger.y - 0.04f;
-            if (!handle_settings_touch(drag)) {
-              if (!handle_touch_editor(drag)) {
-                g_input.touch(drag);
-              }
-            }
-          } else {
-            ev.type = SDL_EVENT_FINGER_UP;
-            if (!handle_settings_touch(ev)) {
-              if (!handle_touch_editor(ev)) {
-                g_input.touch(ev);
-              }
-            }
-          }
-        }
-      }
-    }
-    update_touch_overlay_feedback();
-    // I3: the overlay's geometry depends on the surface size twice over - the layout is clamped to it by the
-    // safe-area pass and a label's aspect (pixel_x = pixel_y * h / w) is derived from it - so rebuild the
-    // vertices whenever the drawable size moves instead of keeping the first size's proportions.
-    {
-      static int overlay_surface_w = 0;
-      static int overlay_surface_h = 0;
-      if (g_surf_w != overlay_surface_w || g_surf_h != overlay_surface_h) {
-        overlay_surface_w = g_surf_w;
-        overlay_surface_h = g_surf_h;
-        build_touch_overlay(g_input.pressed_region_mask());
-        upload_touch_overlay();
       }
     }
     // I3: a virtual gamepad behind a bounded trigger, so the gamepad path - discovery, mapping, stick and
@@ -2261,7 +1088,7 @@ int main(int argc, char** argv) {
       }
     }
     // The window's pixel size is only final after layout (and changes on rotation); the CPU status surface
-    // and the touch layout follow it.
+    // follows it.
     {
       int dw = 0, dh = 0;
       SDL_GetWindowSizeInPixels(g_win, &dw, &dh);
@@ -2270,18 +1097,8 @@ int main(int argc, char** argv) {
         g_surf_h = dh;
         g_rgba.assign((size_t)g_surf_w * g_surf_h * 4, 0);
         g_font_scale = std::max(3, g_surf_w / 430);
-        refresh_touch_layout_path();
-        refresh_settings_path();
-        apply_safe_area_to_default_touch_layout();
-        log_touch_layout_metrics();
         lg::info("OTTSEL SHELL: window {}x{} font scale {}", dw, dh, g_font_scale);
       }
-    }
-    // P1: the safe area can arrive after the window exists; the helper latches after its first answer.
-    apply_safe_area_to_default_touch_layout();
-    if (!g_touch_overlay_uploaded && !g_native_input_mode && g_frame >= 60) {
-      build_touch_overlay();
-      upload_touch_overlay();
     }
     {
       // F1/G2.6: with no user data the status screen names what to import and covers the game until a pack
@@ -2296,7 +1113,7 @@ int main(int argc, char** argv) {
         lg::info("OTTSEL DATA: status state={} data-missing={} live-scene={}", status_state,
                  data_missing ? 1 : 0, live ? 1 : 0);
       }
-      if (data_missing || !live) {
+      if (data_missing || !live || g_settings.log_overlay) {
         static int status_upload_countdown = 0;  // the surface is a full window of pixels
         if (status_upload_countdown-- <= 0) {
           status_upload_countdown = 30;
@@ -2305,12 +1122,12 @@ int main(int argc, char** argv) {
           ottsel_gl_set_status(g_rgba.data(), g_surf_w, g_surf_h);
           status_overlay_active = true;
         }
-      } else if (status_overlay_active && !g_settings_screen && !g_settings.log_overlay) {
+      } else if (status_overlay_active) {
         ottsel_gl_set_status(nullptr, 0, 0);
         status_overlay_active = false;
       }
     }
-    // OpenGOAL renders the frame, the touch controls and status surface go on top, then it presents.
+    // OpenGOAL renders the frame and the status surface goes on top; UIKit draws the touch controls.
     ottsel_gl_render(g_win);
     g_frame++;
     // This used to be an unconditional SDL_Delay(16), which pinned the loop

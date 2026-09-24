@@ -15,21 +15,15 @@ std::string ottsel_ios_bundle_dir();
 void ottsel_ios_set_writable_dir(const std::string& dir);
 std::string ottsel_ios_writable_dir();
 
-// True on a phone-shaped device (UIUserInterfaceIdiomPhone).  The shell keys the per-class touch layout
-// and its defaults on this, deliberately not on a surface size: the window's pixel size is only known
+// True on a phone-shaped device (UIUserInterfaceIdiomPhone).  The shell keys the per-class settings
+// file on this, deliberately not on a surface size: the window's pixel size is only known
 // after layout (it reads the 1024x768 window request at creation) and a device reports pixels
 // scaled by its display scale, so a raw pixel width would call a real iPhone a tablet.  Implemented in
 // src/shell/main.cpp on SDL (SDL_IsTablet).
 bool ottsel_ios_shell_is_phone();
 
-// The key window's safe-area insets as fractions of the window's own bounds (left, top, right, bottom), in
-// the current interface orientation.  Fractions rather than points so they are in the same coordinate space
-// as the touch layout and cannot drift with the display scale.  Returns 0 when
-// no window is available yet, in which case the caller leaves the layout alone.
-int ottsel_ios_shell_safe_area(float* left, float* top, float* right, float* bottom);
-
 // Diagnostic startup seam: prepare and cache the validated user-data root
-// before a caller creates native Metal resources.
+// before the renderer starts reading level files.
 void ottsel_ios_prepare_user_data();
 
 // True only after a validated user-owned pack has been selected or promoted.
