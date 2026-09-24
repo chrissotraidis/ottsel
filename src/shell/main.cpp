@@ -1120,28 +1120,6 @@ const char* touch_region_label(TouchRegion region) {
   }
 }
 
-// I3: the spoken name for each control.  VoiceOver reads these, so they are the full word rather than the
-// two- or three-character mark the surface draws; the mapping is the same region index the hit-test uses.
-const char* touch_region_accessibility_label(TouchRegion region) {
-  switch (region) {
-    case TouchRegion::LeftStick: return "Movement stick";
-    case TouchRegion::Camera: return "Camera look";
-    case TouchRegion::Circle: return "Circle";
-    case TouchRegion::Cross: return "Cross";
-    case TouchRegion::Square: return "Square";
-    case TouchRegion::Triangle: return "Triangle";
-    case TouchRegion::DpadUp: return "D-pad up";
-    case TouchRegion::DpadRight: return "D-pad right";
-    case TouchRegion::DpadDown: return "D-pad down";
-    case TouchRegion::DpadLeft: return "D-pad left";
-    case TouchRegion::Start: return "Start";
-    case TouchRegion::L1: return "Left shoulder";
-    case TouchRegion::R1: return "Right shoulder";
-    case TouchRegion::Menu: return "Settings";
-    default: return "";
-  }
-}
-
 void build_touch_overlay(int pressed_mask) {
   g_touch_overlay.clear();
   constexpr float colors[static_cast<size_t>(TouchRegion::Count)][4] = {
