@@ -22,7 +22,7 @@ def container():
   data+=struct.pack('<I60s',len(member),name.encode())+member+b'\0'*((-len(member))&15)
  (iso/'KERNEL.CGO').write_bytes(data)
 container();app=work/'out/ios/app';app.mkdir(parents=True)
-for relative in ['out/ios/sdl/libSDL3.a','out/ios/zstd-build/zstd/liblibzstd_static.a','out/ios/app/libottsel-runtime.a','out/ios/app/obj/a11_slice.o','out/ios/app/a11-slice/a11_slice_map.h','out/jak1/iso/GAME.CGO']:
+for relative in ['out/ios/sdl/libSDL3.a','out/ios/zstd-build/zstd/liblibzstd_static.a','out/ios/app/libottsel-runtime.a','out/jak1/iso/GAME.CGO']:
  path=work/relative;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('existence-only prerequisite\n')
 (app/'signed-gstate-mode').write_text('0\n');(app/'signed-export-bank-mode').write_text('0\n')
 selection=root/'config/signed-kernel-full.json';selection.parent.mkdir();selection.write_text(json.dumps({'schema':1,'modules':full}))

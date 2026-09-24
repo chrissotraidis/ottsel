@@ -25,7 +25,8 @@ Daxter: The Precursor Legacy* on top of
 
 ## What this repo contains
 - `docs/` — goal loop, status, Phase 1 research, evidence, reports, history
-- `src/shell/` — the iOS app shell and Metal renderer
+- `src/shell/` — the iOS app shell (window, touch controls, boot); the game renders through
+  OpenGOAL's own OpenGL renderer on OpenGL ES 3.0
 - `scripts/` — builds, route drivers, signed-AOT tools and regressions
 - `patches/` — `ottsel-jak-project.patch`, the whole delta against the
   pinned OpenGOAL checkout

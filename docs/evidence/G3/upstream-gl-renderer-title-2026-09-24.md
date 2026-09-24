@@ -37,6 +37,15 @@ renderer on iOS without being rewritten?
 
 ## Open
 
-The touch overlay is drawn by the Metal shell, so the GL lane has no on-screen controls yet. The intro
-and gameplay have not been run on this lane.
+## Intro and Metal removal (same day)
 
+- The shell's touch controls and status surface are drawn by the GL glue (`ottsel_gl_view.h`).
+- New Game -> Continue Without Saving plays the whole intro (Sony logo with particles, Sandover, Misty,
+  Samos) to `GAMEPLAY: enter training`; Jak and Daxter on Geyser Rock; strict exec, 0-byte fault log
+  (`/tmp/ottsel-gl10-d.png`). The Simulator ran it at 1.3-2.4 fps with time-ratio 4.
+- The Metal renderer (71 files: `metal_gfx.mm`, `metal_shell.mm`, VU1 emulator, policies, tests) was
+  deleted; the GL-only build boots to the status screen, then the title.
+
+## Open
+
+Gameplay input on this renderer, a level transition, and every frame-rate number (device only).

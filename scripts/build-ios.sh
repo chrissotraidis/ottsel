@@ -42,18 +42,10 @@ REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WORKTREE="$REPO_DIR/out/jak-project"
 SDL_SRC="$WORKTREE/third-party/SDL"
 PLATFORM="${OTTSEL_PLATFORM:-simulator}"
-# OTTSEL_RENDERER=gl runs OpenGOAL's own OpenGL renderer on an OpenGL ES 3.0 context
-# (game/graphics/ottsel_gles_compat.h); the default is the Metal shell renderer.
-RENDERER="${OTTSEL_RENDERER:-metal}"
 case "$PLATFORM" in
   simulator) IOS_OUT="$WORKTREE/out/ios" ;;
   device) IOS_OUT="$WORKTREE/out/ios-device" ;;
   *) echo "OTTSEL_PLATFORM must be simulator or device" >&2; exit 2 ;;
-esac
-case "$RENDERER" in
-  metal) ;;
-  gl) IOS_OUT="$IOS_OUT-gl" ;;
-  *) echo "OTTSEL_RENDERER must be metal or gl" >&2; exit 2 ;;
 esac
 export OTTSEL_IOS_OUT="$IOS_OUT"
 SDL_BUILD="$IOS_OUT/sdl"
@@ -63,7 +55,6 @@ ZSTD_LIB="$ZSTD_BUILD/zstd/liblibzstd_static.a"
 APP_BUILD="$IOS_OUT/app"
 OBJ="$APP_BUILD/obj"
 APP="$APP_BUILD/OttselShell.app"
-SLICE_DIR="$APP_BUILD/a11-slice"
 # Optional canonical JSON module list; full KERNEL is not whole-game coverage.
 SIGNED_GSTATE="${OTTSEL_SIGNED_GSTATE_EXPERIMENT:-0}"
 SIGNED_MODULE_LIST="${OTTSEL_SIGNED_MODULE_LIST:-}"
@@ -100,8 +91,7 @@ fi
 
 if $SHELL_ONLY; then
   for artifact in "$SDL_BUILD/libSDL3.a" "$ZSTD_LIB" \
-    "$APP_BUILD/libottsel-runtime.a" "$OBJ/a11_slice.o" \
-    "$SLICE_DIR/a11_slice_map.h" \
+    "$APP_BUILD/libottsel-runtime.a" \
     "$WORKTREE/out/jak1/iso/KERNEL.CGO" "$WORKTREE/out/jak1/iso/GAME.CGO"; do
     if [ ! -s "$artifact" ]; then
       echo "Shell-only prerequisite missing or empty: $artifact" >&2
@@ -137,11 +127,10 @@ if [ "$PLATFORM" = device ]; then STRICT_EXEC=1; fi
 if [ "$STRICT_EXEC" = 1 ]; then
   COMMON_FLAGS+=(-DOTTSEL_STRICT_EXEC)
 fi
-GLES_INCLUDE=()
-if [ "$RENDERER" = gl ]; then
-  COMMON_FLAGS+=(-DOTTSEL_GLES)
-  GLES_INCLUDE=(-include "$WORKTREE/game/graphics/ottsel_gles_compat.h")
-fi
+# The game renders through OpenGOAL's own OpenGL renderer on an OpenGL ES 3.0 context; the few
+# desktop-only GL calls it makes are mapped by one force-included header (graphics sources only).
+COMMON_FLAGS+=(-DOTTSEL_GLES)
+GLES_INCLUDE=(-include "$WORKTREE/game/graphics/ottsel_gles_compat.h")
 INCS=(-I"$WORKTREE" \
   -I"$WORKTREE/third-party/fmt/include" \
   -I"$WORKTREE/third-party/fmt/src" \
@@ -154,7 +143,6 @@ INCS=(-I"$WORKTREE" \
   -I"$WORKTREE/third-party/cubeb/cubeb/include" \
   -I"$WORKTREE/third-party/cubeb/include" \
   -I"$SDL_SRC/include" \
-  -I"$REPO_DIR/tools/ottsel_vu1" \
   -I"$WORKTREE/third-party/glad/include")
 FRAMEWORKS=(-framework UIKit -framework Foundation -framework CoreGraphics \
   -framework QuartzCore -framework Metal -framework AudioToolbox \
@@ -348,8 +336,8 @@ KERNEL_SRC="$KERNEL_SRC
   third-party/libco/libco.c
 "
 
-if [ "$RENDERER" = gl ]; then
-  # OpenGOAL's renderer, minus the three files whose symbols the iOS stubs provide.
+# OpenGOAL's renderer, minus the files whose symbols the iOS stubs provide.
+if true; then
   GFX_SRC="$(cd "$WORKTREE" && rg -o 'graphics/[A-Za-z0-9_/]+\.cpp' game/CMakeLists.txt | sort -u |
     rg -v 'gfx_test|graphics/gfx\.cpp|graphics/display\.cpp|sceGraphicsInterface' | sed 's#^#game/#')"
   KERNEL_SRC="$KERNEL_SRC
@@ -406,11 +394,8 @@ fi
 
 echo "== [3/4] compile + link app =="
 if ! $SHELL_ONLY; then
-mkdir -p "$SLICE_DIR"
-echo "== [3a/4] generate A1.1 slice (offline linker) =="
+echo "== [3a/4] build the offline module emitter =="
 cmake --build "$WORKTREE/build/h1" --target ottsel-a11-slice -j 8
-"$WORKTREE/build/h1/goalc/ottsel-a11-slice" "$SLICE_DIR"
-xcrun --sdk "$SDK" clang "${COMMON_FLAGS[@]}" -c "$SLICE_DIR/slice.s" -o "$OBJ/a11_slice.o"
 fi
 if $SIGNED_ENABLED; then
   mkdir -p "$SIGNED_DIR"
@@ -484,18 +469,10 @@ PYTHON
 fi
 compile "$REPO_DIR/src/shell/main.cpp" "$OBJ/shell_main.o"
 compile "$REPO_DIR/src/shell/ios_boot.cpp" "$OBJ/ios_boot.o"
-compile_objc "$REPO_DIR/src/shell/metal_shell.mm" "$OBJ/metal_shell.o"
-compile_objc "$REPO_DIR/src/shell/metal_gfx.mm" "$OBJ/metal_gfx.o"
-compile "$REPO_DIR/tools/ottsel_vu1/vu1.cpp" "$OBJ/vu1.o"
-xcrun --sdk "$SDK" clang++ "${COMMON_FLAGS[@]}" -fobjc-arc \
-  "${INCS[@]}" -I"$SLICE_DIR" -c "$REPO_DIR/src/shell/a11_slice_runner.mm" -o "$OBJ/a11_slice_runner.o"
 
 xcrun --sdk "$SDK" clang++ "${COMMON_FLAGS[@]}" \
   ${SIGNED_OBJECTS[@]+"${SIGNED_OBJECTS[@]}"} \
-  "$OBJ/shell_main.o" "$OBJ/ios_boot.o" "$OBJ/metal_shell.o" "$OBJ/metal_gfx.o" \
-  "$OBJ/vu1.o" \
-  "$OBJ/a11_slice_runner.o" "$OBJ/a11_slice.o" \
-  -I"$SLICE_DIR" \
+  "$OBJ/shell_main.o" "$OBJ/ios_boot.o" \
   "$APP_BUILD/libottsel-runtime.a" "$ZSTD_LIB" "$SDL_BUILD/libSDL3.a" \
   "${FRAMEWORKS[@]}" -lobjc \
   -o "$APP_BUILD/OttselShell"
@@ -508,12 +485,11 @@ mkdir -p "$APP"
 rm -f "$APP"/*.CGO
 cp "$APP_BUILD/OttselShell" "$APP/"
 cp "$REPO_DIR/src/shell/Info.plist" "$APP/"
-if [ "$RENDERER" = gl ]; then
-  mkdir -p "$APP/game/graphics/opengl_renderer"
-  rm -rf "$APP/game/graphics/opengl_renderer/shaders"
-  python3 "$REPO_DIR/scripts/translate-gl-shaders.py" "$WORKTREE/game/graphics/opengl_renderer/shaders" \
-    "$APP/game/graphics/opengl_renderer/shaders"
-fi
+# The renderer's GLSL 4.10 shaders, cross-compiled to GLSL ES 3.00 (brew install glslang spirv-cross).
+mkdir -p "$APP/game/graphics/opengl_renderer"
+rm -rf "$APP/game/graphics/opengl_renderer/shaders"
+python3 "$REPO_DIR/scripts/translate-gl-shaders.py" "$WORKTREE/game/graphics/opengl_renderer/shaders" \
+  "$APP/game/graphics/opengl_renderer/shaders"
 cp "$WORKTREE/out/jak1/iso/KERNEL.CGO" "$APP/KERNEL.CGO"
 cp "$WORKTREE/out/jak1/iso/GAME.CGO" "$APP/GAME.CGO"
 # Local Simulator research bundle only: the DGO/TEXT resources copied below

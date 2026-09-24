@@ -1,10 +1,9 @@
-// Ottsel S1.3 / S2.0 — iOS shell: SDL window + no-emit runtime boot.
+// Ottsel iOS shell: SDL window, touch controls and the signed runtime boot.
 //
-// The window surface is the visible log surface: the last lines of the
-// runtime log are drawn with a built-in 5x7 bitmap font into a CPU RGBA
-// buffer.  S2.0: the buffer is presented through a Metal CAMetalLayer
-// pipeline (metal_shell.mm); the SDL software surface remains as a
-// fallback if Metal init fails.  The runtime boots on a background thread.
+// The game draws through OpenGOAL's own OpenGL renderer on an OpenGL ES 3.0 context
+// (game/graphics/pipelines/opengl.cpp, see gl_view.h). The shell adds the touch controls and a
+// CPU-drawn status surface (log tail, settings, "import your data"), both composited over the game.
+// The runtime boots on a background thread.
 
 #include <unistd.h>
 
@@ -28,18 +27,7 @@
 
 #include "font5x7.h"
 #include "ios_boot.h"
-#include "metal_shell.h"
-
-#ifdef OTTSEL_GLES
-// OpenGOAL's own OpenGL renderer on an OpenGL ES 3.0 context (game/graphics/pipelines/opengl.cpp).
-struct GfxRendererModule;
-extern const GfxRendererModule gRendererOpenGL;
-bool ottsel_gl_attach(SDL_Window* window);
-void ottsel_gl_render(SDL_Window* window);
-void ottsel_metal_gfx_set_renderer(const GfxRendererModule* m);
-#endif
-
-int ottsel_metal_gfx_has_live_scene();
+#include "game/graphics/pipelines/ottsel_gl_view.h"
 
 namespace {
 
@@ -57,8 +45,6 @@ constexpr int kSurfWDefault = 1024;
 constexpr int kSurfHDefault = 768;
 
 SDL_Window* g_win = nullptr;
-SDL_Surface* g_surf = nullptr;
-OttselMetal* g_metal = nullptr;
 int g_surf_w = kSurfWDefault;
 int g_surf_h = kSurfHDefault;
 int g_font_scale = 2;
@@ -741,7 +727,7 @@ struct ShellPadInput {
 };
 
 ShellPadInput g_input;
-std::vector<OttselMetalOverlayVertex> g_touch_overlay;
+std::vector<OttselOverlayVertex> g_touch_overlay;
 bool g_touch_overlay_uploaded = false;
 
 void release_mobile_gamepad(const char* reason) {
@@ -984,11 +970,9 @@ void add_touch_rect(float x, float y, float w, float h,
   const float positions[6][2] = {{left, bottom}, {right, bottom}, {right, top},
                                  {left, bottom}, {right, top}, {left, top}};
   for (const auto& position : positions) {
-    OttselMetalOverlayVertex vertex = {};
+    OttselOverlayVertex vertex = {};
     vertex.pos[0] = position[0];
     vertex.pos[1] = position[1];
-    vertex.uv[0] = 0.f;
-    vertex.uv[1] = 0.f;
     memcpy(vertex.color, color, sizeof(color));
     g_touch_overlay.push_back(vertex);
   }
@@ -1018,11 +1002,9 @@ void add_touch_unit_triangle(float cx, float cy, float radius, float aspect, flo
   const float color[4] = {r, g, b, a};
   const TouchPoint points[3] = {p0, p1, p2};
   for (const TouchPoint& point : points) {
-    OttselMetalOverlayVertex vertex = {};
+    OttselOverlayVertex vertex = {};
     vertex.pos[0] = point.x * 2.f - 1.f;
     vertex.pos[1] = 1.f - point.y * 2.f;
-    vertex.uv[0] = 0.f;
-    vertex.uv[1] = 0.f;
     memcpy(vertex.color, color, sizeof(color));
     g_touch_overlay.push_back(vertex);
   }
@@ -1159,24 +1141,6 @@ const char* touch_region_accessibility_label(TouchRegion region) {
   }
 }
 
-// I3: hand the controls to the accessibility layer.  The rectangles are the same ones the hit-test already
-// owns, so the only thing UIKit cannot derive is the label; publishing follows the drawn surface, which is
-// also when the layout, the safe area or the device class changes.
-void publish_touch_accessibility() {
-  if (!g_metal) {
-    return;
-  }
-  std::vector<OttselAccessibilityRegion> regions;
-  regions.reserve(kTouchRegionCount);
-  for (size_t i = 0; i < kTouchRegionCount; ++i) {
-    const auto& region = g_touch_layout.regions[i];
-    regions.push_back({region.x, region.y, region.w, region.h,
-                       touch_region_accessibility_label(static_cast<TouchRegion>(i))});
-  }
-  ottssel_metal_set_accessibility_regions(g_metal, regions.data(),
-                                          static_cast<unsigned int>(regions.size()));
-}
-
 void build_touch_overlay(int pressed_mask) {
   g_touch_overlay.clear();
   constexpr float colors[static_cast<size_t>(TouchRegion::Count)][4] = {
@@ -1253,33 +1217,13 @@ void build_touch_overlay(int pressed_mask) {
 }
 
 void upload_touch_overlay() {
-  if (!g_metal) {
-    return;
-  }
-  // I3 (2026-09-22): the touch regions have always routed input, but the on-screen surface used to be
-  // uploaded only while the layout editor was open, so an iPad player driving with touch alone saw no
-  // controls at all.  The surface now follows the input that is actually in use: it is shown whenever no
-  // physical device has taken over (g_native_input_mode is set by keyboard, gamepad and mouse events), and
-  // the editor only controls whether regions can be dragged.
   // I3 setting: AUTO follows the input in use (a physical device hides the surface), ALWAYS keeps it up and
   // HIDDEN never draws it.  The overlay builder and the hit-testing are unaffected.
   const bool surface_visible = g_settings.surface_visibility == 1 ||
                                (g_settings.surface_visibility == 0 && !g_native_input_mode);
-  if (surface_visible && !g_touch_overlay.empty()) {
-    ottsel_metal_set_touch_overlay(g_metal, g_touch_overlay.data(),
-                                   static_cast<unsigned int>(g_touch_overlay.size()));
-    g_touch_overlay_uploaded = true;
-    // I3: the accessibility elements follow the surface, so they are republished whenever the surface is
-    // (re)built - the same layout, safe area and class changes that move the regions.
-    publish_touch_accessibility();
-  } else if (g_touch_overlay_uploaded) {
-    // Native input took over, the surface is set hidden, or the layout is empty.  Leaving the previous
-    // vertex buffer bound paints the touch regions over live gameplay, so clear it.
-    g_touch_overlay_uploaded = false;
-    ottsel_metal_set_touch_overlay(g_metal, nullptr, 0);
-    // The controls are not on screen, so they are not offered to VoiceOver either.
-    ottssel_metal_set_accessibility_regions(g_metal, nullptr, 0);
-  }
+  g_touch_overlay_uploaded = surface_visible && !g_touch_overlay.empty();
+  ottsel_gl_set_overlay(g_touch_overlay_uploaded ? g_touch_overlay.data() : nullptr,
+                        g_touch_overlay_uploaded ? (unsigned)g_touch_overlay.size() : 0);
 }
 
 // I3: re-upload the touch surface only when the set of held regions changes, so pressed feedback costs
@@ -1323,9 +1267,7 @@ void hide_touch_overlay_for_native_input() {
   g_native_input_mode = true;
   g_touch_overlay_uploaded = false;
   g_touch_overlay.clear();
-  if (g_metal) {
-    ottsel_metal_set_touch_overlay(g_metal, nullptr, 0);
-  }
+  ottsel_gl_set_overlay(nullptr, 0);
   lg::info("OTTSEL INPUT: native keyboard/mouse active; touch overlay hidden");
 }
 
@@ -1415,11 +1357,9 @@ void render_surface() {
   }
 
   draw_text(8 * g_font_scale, 8 * g_font_scale,
-            "ottsel S2.0 - Metal",
+            "Ottsel",
             120, 200, 255);
-  draw_text(8 * g_font_scale, 17 * g_font_scale,
-            g_metal ? "GPU path: Metal" : "GPU path: SDL software",
-            g_metal ? 120 : 255, g_metal ? 255 : 90, g_metal ? 120 : 90);
+  draw_text(8 * g_font_scale, 17 * g_font_scale, "Renderer: OpenGOAL OpenGL (ES 3.0)", 120, 255, 120);
 
   if (!ottsel_ios_has_user_data()) {
     draw_text(8 * g_font_scale, 26 * g_font_scale,
@@ -1597,21 +1537,18 @@ void apply_music_volume() {
   snd_SetMasterVolume(2, volume);
 }
 
-// VIDEO: hand the render scale to the shell that owns the CAMetalLayer.  The layer scales the smaller
-// drawable back up to the view, so this changes the resolution the game actually renders at.
+// VIDEO: the game renders at this percentage of the window's pixels and is scaled up to the window.
 void apply_render_scale() {
-  if (g_metal) {
-    ottssel_metal_set_render_scale(g_metal, (unsigned int)g_settings.render_scale);
-  }
+  ottsel_gl_set_render_scale(g_settings.render_scale);
 }
 
 void show_log_surface() {
-  if (!g_metal || g_rgba.empty()) {
+  if (g_rgba.empty()) {
     return;
   }
   read_log_tail();
   render_surface();
-  ottssel_metal_set_status_overlay(g_metal, g_rgba.data(), g_surf_w, g_surf_h);
+  ottsel_gl_set_status(g_rgba.data(), g_surf_w, g_surf_h);
 }
 
 void compose_settings_screen() {
@@ -1661,11 +1598,11 @@ void compose_settings_screen() {
 }
 
 void upload_settings_screen() {
-  if (!g_metal || g_rgba.empty()) {
+  if (g_rgba.empty()) {
     return;
   }
   compose_settings_screen();
-  ottssel_metal_set_status_overlay(g_metal, g_rgba.data(), g_surf_w, g_surf_h);
+  ottsel_gl_set_status(g_rgba.data(), g_surf_w, g_surf_h);
 }
 
 void close_settings_screen() {
@@ -1673,13 +1610,11 @@ void close_settings_screen() {
     return;
   }
   g_settings_screen = false;
-  if (g_metal) {
-    if (g_settings.log_overlay) {
-      // The diagnostics row is a real overlay: keep the shell log surface up over the game.
-      show_log_surface();
-    } else {
-      ottssel_metal_set_status_overlay(g_metal, nullptr, 0, 0);
-    }
+  if (g_settings.log_overlay) {
+    // The diagnostics row is a real overlay: keep the shell log surface up over the game.
+    show_log_surface();
+  } else {
+    ottsel_gl_set_status(nullptr, 0, 0);
   }
   lg::info("OTTSEL SETTINGS: screen closed visible={} music={} log={}",
            surface_visibility_name(g_settings.surface_visibility), g_settings.music_volume,
@@ -1881,6 +1816,25 @@ bool on_event_watch(void*, SDL_Event* ev) {
 
 }  // namespace
 
+// Device class and safe area for the touch layout (declared in ios_boot.h), from SDL's UIKit backend.
+bool ottsel_ios_shell_is_phone() {
+  return !SDL_IsTablet();
+}
+
+int ottsel_ios_shell_safe_area(float* left, float* top, float* right, float* bottom) {
+  int w = 0, h = 0;
+  SDL_Rect safe;
+  if (!g_win || !SDL_GetWindowSize(g_win, &w, &h) || w <= 0 || h <= 0 ||
+      !SDL_GetWindowSafeArea(g_win, &safe)) {
+    return 0;
+  }
+  *left = (float)safe.x / (float)w;
+  *top = (float)safe.y / (float)h;
+  *right = (float)(w - safe.x - safe.w) / (float)w;
+  *bottom = (float)(h - safe.y - safe.h) / (float)h;
+  return 1;
+}
+
 int main(int argc, char** argv) {
   (void)argc;
   (void)argv;
@@ -1892,7 +1846,6 @@ int main(int argc, char** argv) {
   SDL_AddEventWatch(on_event_watch, nullptr);
   select_mobile_gamepad();
 
-#ifdef OTTSEL_GLES
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
   SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
@@ -1901,16 +1854,10 @@ int main(int argc, char** argv) {
   SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
   g_win = SDL_CreateWindow("Ottsel Shell", 1024, 768,
                            SDL_WINDOW_OPENGL | SDL_WINDOW_HIGH_PIXEL_DENSITY);
-#else
-  g_win = SDL_CreateWindow("Ottsel Shell", 1024, 768, 0);
-#endif
   if (!g_win) {
     fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
     return 1;
   }
-#ifndef OTTSEL_GLES
-  g_surf = SDL_GetWindowSurface(g_win);
-#endif
 
   std::string bundle = SDL_GetBasePath();
   ottsel_ios_set_bundle_dir(bundle);
@@ -1932,53 +1879,13 @@ int main(int argc, char** argv) {
   // the surface renders its tail.  The iOS app bundle is read-only.
   lg::set_file("ottsel-runtime.log", false, false, writable);
   lg::info("OTTSEL RUNTIME BOOT: pid={} writable={}", (u32)getpid(), writable);
-  if (std::getenv("OTTSEL_PREPARE_DATA_BEFORE_METAL")) {
-    ottsel_ios_prepare_user_data();
-  }
 
-  // S2.0: Metal presentation path (falls back to the SDL surface if the
-  // Metal device/pipeline cannot be created on this Simulator).
-  // The Simulator's SimMetalHost can terminate a process while the drawable
-  // service is unavailable. Keep a diagnostic SDL-only mode so boot/data
-  // boundaries can be verified independently; the product default remains
-  // the Metal path.
-#ifdef OTTSEL_GLES
+  // OpenGOAL's renderer reads level files from the user-data root as soon as it exists.
   ottsel_ios_prepare_user_data();
   if (!ottsel_gl_attach(g_win)) {
     return 1;
   }
-  ottsel_metal_gfx_set_renderer(&gRendererOpenGL);
-  const bool disable_metal = true;
-#else
-  const bool disable_metal = std::getenv("OTTSEL_DISABLE_METAL") != nullptr;
-#endif
-  g_metal = disable_metal ? nullptr : ottsel_metal_create(g_win);
-  // VIDEO: the persisted render scale applies as soon as the layer exists.
   apply_render_scale();
-  if (g_metal) {
-    fprintf(stderr, "ottsel S2.0: Metal surface active (CAMetalLayer)\n");
-    int dw = 0, dh = 0;
-    if (ottsel_metal_drawable_size(g_metal, &dw, &dh) && dw > 0 && dh > 0) {
-      g_surf_w = dw;
-      g_surf_h = dh;
-      g_rgba.assign((size_t)g_surf_w * g_surf_h * 4, 0);
-      g_font_scale = std::max(3, g_surf_w / 430);
-      refresh_touch_layout_path();
-      refresh_settings_path();
-      apply_safe_area_to_default_touch_layout();
-      log_touch_layout_metrics();
-      fprintf(stderr, "ottsel S2.0: drawable %dx%d font scale %d\n", dw, dh, g_font_scale);
-    }
-  } else {
-    fprintf(stderr, "ottsel S2.0: %s; using SDL software surface\n",
-            disable_metal ? "Metal disabled by diagnostic environment" : "Metal init failed");
-  }
-
-  // S2.2: register the shell's Metal instance as the Gfx renderer backend so
-  // the game's texture uploads decode and present through the CAMetalLayer.
-#ifndef OTTSEL_GLES
-  ottsel_metal_gfx_register(g_metal);
-#endif
 
   load_touch_layout();
   // With the real IOP, OVERLORD's InitSound starts the sound system (game/overlord/jak1/ssound.cpp).
@@ -2227,19 +2134,6 @@ int main(int argc, char** argv) {
           }
         }
       }
-      // I3: the labels live in the Metal shell's UIKit container, which nothing outside the UI can read
-      // back, so this bounded trigger asks the container what it holds (the element count, then each
-      // element's label and its frame in the container's own points) and prints it.  One dump per file.
-      {
-        std::string a11y_trig = trigger_path("ottsel-trace-a11y");
-        if (access(a11y_trig.c_str(), F_OK) == 0) {
-          unlink(a11y_trig.c_str());
-          publish_touch_accessibility();
-          if (g_metal) {
-            ottssel_metal_log_accessibility(g_metal);
-          }
-        }
-      }
     }
     update_touch_overlay_feedback();
     // I3: the overlay's geometry depends on the surface size twice over - the layout is clamped to it by the
@@ -2382,89 +2276,12 @@ int main(int argc, char** argv) {
         apply_music_volume();
       }
     }
-    if (g_surf || g_metal) {
-      // F1/G2.6: with no user pack the game still has a "live scene" (it draws
-      // unresident textures while the intro waits for its streamed animation), so
-      // the status screen below never ran and the import instruction was invisible.
-      // Treat a data-less boot as one with nothing to show from the game.
-      const bool data_missing = !ottsel_ios_has_user_data();
-      // Hoisted out of the branch below: the status overlay is only uploaded inside it, but the game can become
-      // presentable afterwards (the data check changes while a pack is re-imported) and the branch is then
-      // skipped, so the clear has to be reachable from outside it too.
-      static bool status_overlay_active = false;
-      if (!g_metal || !ottsel_metal_gfx_has_live_scene() || data_missing) {
-        read_log_tail();
-        render_surface();
-        // G2.6 discriminator (trigger-gated, one variable): paint the surface the shell
-        // presents a flat unique colour, so "this present reaches the layer" can be told
-        // apart from "another encoder owns the layer".  Also record the sizes, which say
-        // whether the status text is being drawn at the scale the drawable needs.
-        if (data_missing) {
-          static int flat_probe = -1;
-          if (flat_probe < 0) {
-            const std::string flat_trigger =
-                ottsel_ios_writable_dir() + "ottsel-trace-status-flat";
-            flat_probe = access(flat_trigger.c_str(), F_OK) == 0 ? 1 : 0;
-            lg::info("OTTSEL STATUS: surface={}x{} font-scale={} flat-probe={}", g_surf_w,
-                     g_surf_h, g_font_scale, flat_probe);
-          }
-          if (flat_probe) {
-            for (size_t i = 0; i + 3 < g_rgba.size(); i += 4) {
-              g_rgba[i + 0] = 0;
-              g_rgba[i + 1] = 255;
-              g_rgba[i + 2] = 0;
-              g_rgba[i + 3] = 255;
-            }
-          }
-        }
-        // F1/G2.6: hand the status screen to the product pass - the game renderer owns
-        // the layer, so presenting the CPU surface alone never reached the screen.  The
-        // upload is throttled because the surface is a full drawable per frame.
-        static int status_upload_countdown = 0;
-        if (g_metal && data_missing) {
-          if (status_upload_countdown <= 0) {
-            status_upload_countdown = 30;
-            ottssel_metal_set_status_overlay(g_metal, g_rgba.data(),
-                                             (unsigned int)g_surf_w,
-                                             (unsigned int)g_surf_h);
-            status_overlay_active = true;
-          }
-          --status_upload_countdown;
-        } else if (g_metal && status_overlay_active) {
-          ottssel_metal_set_status_overlay(g_metal, nullptr, 0, 0);
-          status_overlay_active = false;
-        }
-      } else {
-        // Keep a neutral base behind the live TFRAG/TIE draws without
-        // drawing the shell's diagnostic text into the game frame.
-        std::fill(g_rgba.begin(), g_rgba.end(), 0);
-        for (size_t i = 0; i < g_rgba.size(); i += 4) {
-          g_rgba[i + 0] = 8;
-          g_rgba[i + 1] = 10;
-          g_rgba[i + 2] = 18;
-          g_rgba[i + 3] = 255;
-        }
-      }
-      // The overlay must not outlive its reason.  The upload above is inside a branch that is skipped once the
-      // scene is live and the data is present, so clear it here when that has happened - otherwise a status
-      // screen raised during a transient "no user data" frame would cover the game for the rest of the run.
-      if (g_metal && status_overlay_active && !data_missing &&
-          ottsel_metal_gfx_has_live_scene()) {
-        ottssel_metal_set_status_overlay(g_metal, nullptr, 0, 0);
-        status_overlay_active = false;
-      }
-  }
-#ifdef OTTSEL_GLES
-  ottsel_gl_render(g_win);  // OpenGOAL renders and presents directly to the window
-#endif
-  if (g_metal) {
-      // The CAMetalLayer's drawable size is only meaningful after the SDL
-      // window finishes layout (at creation it can report a pre-layout
-      // value like 480x320).  Re-query each frame and resize the CPU
-      // surface to match so the frame maps 1:1 to the drawable.
+    // The window's pixel size is only final after layout (and changes on rotation); the CPU status surface
+    // and the touch layout follow it.
+    {
       int dw = 0, dh = 0;
-      if (ottsel_metal_drawable_size(g_metal, &dw, &dh) && dw > 0 && dh > 0 &&
-          (dw != g_surf_w || dh != g_surf_h)) {
+      SDL_GetWindowSizeInPixels(g_win, &dw, &dh);
+      if (dw > 0 && dh > 0 && (dw != g_surf_w || dh != g_surf_h)) {
         g_surf_w = dw;
         g_surf_h = dh;
         g_rgba.assign((size_t)g_surf_w * g_surf_h * 4, 0);
@@ -2473,78 +2290,45 @@ int main(int argc, char** argv) {
         refresh_settings_path();
         apply_safe_area_to_default_touch_layout();
         log_touch_layout_metrics();
-        fprintf(stderr, "ottsel S2.0: drawable resized to %dx%d font scale %d\n",
-                dw, dh, g_font_scale);
-        dump_surface_ppm();
+        lg::info("OTTSEL SHELL: window {}x{} font scale {}", dw, dh, g_font_scale);
       }
-      // S2.2: once the game backend has decoded a frame (the game's texture
-      // uploads through the Metal Gfx module), present that instead of the
-      // shell log surface.  The texture is scaled to the drawable.
-      // Defer the first Metal resource allocation until the app has presented
-      // a few frames.  Allocating a new shared buffer from SDL's launch timer
-      // races the Simulator Metal host and aborts the app before it reaches
-      // the foreground.  The layout is static for this first T1 increment;
-      // later editor changes will reset this one-shot upload flag.
-      // P1 (2026-09-22): the window can exist before the platform can report a safe area, so the class
-      // defaults keep being offered the safe area until it answers once - well before the overlay and the
-      // triggers below start reading the regions.  The helper latches, so this is a no-op after the first
-      // answer.
-      apply_safe_area_to_default_touch_layout();
-      if (!g_touch_overlay_uploaded && !g_native_input_mode && g_frame >= 60) {
-        build_touch_overlay();
-        upload_touch_overlay();
-      }
-      const unsigned char* game_frame = nullptr;
-      int gw = 0, gh = 0;
-      // F1/G2.6: with no user data the shell names the missing families in its own
-      // status screen (the "DATA: import OttselUserData in Files" line plus the log
-      // tail, which carries the OTTSEL F1 error listing them).  That screen is only
-      // presented when the game has no frame, and a data-less boot still publishes
-      // frames - the intro cannot find its streamed animation and the game draws
-      // unresident textures - so the instruction was never seen.  Prefer the status
-      // screen until a user pack is actually in use.
-      // Same question as the status-screen gate above; this branch is a sibling scope.
-      const bool data_missing = !ottsel_ios_has_user_data();
-      // Bounded diagnostic: the status screen covers the game, so record why it is up (the flag and the scene
-      // readiness) whenever that reason changes.
-      {
-        static int logged_status_state = -1;
-        const int status_state =
-            (data_missing ? 1 : 0) | (ottsel_metal_gfx_has_live_scene() ? 2 : 0);
-        if (status_state != logged_status_state) {
-          logged_status_state = status_state;
-          lg::info("OTTSEL DATA: status state={} data-missing={} live-scene={} has-user-data={}",
-                   status_state, data_missing ? 1 : 0,
-                   ottsel_metal_gfx_has_live_scene() ? 1 : 0,
-                   ottsel_ios_has_user_data() ? 1 : 0);
-        }
-      }
-      if (!data_missing && ottsel_metal_gfx_game_frame(&game_frame, &gw, &gh)) {
-        static std::vector<unsigned char> scaled;
-        scaled.resize((size_t)g_surf_w * g_surf_h * 4);
-        for (int y = 0; y < g_surf_h; y++) {
-          for (int x = 0; x < g_surf_w; x++) {
-            int sx = gw <= 1 ? 0 : (x * gw / g_surf_w);
-            int sy = gh <= 1 ? 0 : (y * gh / g_surf_h);
-            const unsigned char* src = game_frame + ((size_t)sy * gw + sx) * 4;
-            unsigned char* dst = scaled.data() + ((size_t)y * g_surf_w + x) * 4;
-            dst[0] = src[0];
-            dst[1] = src[1];
-            dst[2] = src[2];
-            dst[3] = 255;
-          }
-        }
-        ottsel_metal_present(g_metal, scaled.data(), g_surf_w, g_surf_h);
-      } else {
-        ottsel_metal_present(g_metal, g_rgba.data(), g_surf_w, g_surf_h);
-      }
-      if ((g_frame++ % 300) == 0) {
-        dump_surface_ppm();
-      }
-    } else if (g_surf) {
-      SDL_UpdateWindowSurface(g_win);
     }
-    ottsel_metal_gfx_signal_vsync();
+    // P1: the safe area can arrive after the window exists; the helper latches after its first answer.
+    apply_safe_area_to_default_touch_layout();
+    if (!g_touch_overlay_uploaded && !g_native_input_mode && g_frame >= 60) {
+      build_touch_overlay();
+      upload_touch_overlay();
+    }
+    {
+      // F1/G2.6: with no user data the status screen names what to import and covers the game until a pack
+      // is in use; before the game has drawn anything it shows the boot log.
+      const bool data_missing = !ottsel_ios_has_user_data();
+      const bool live = ottsel_gl_has_live_scene();
+      static bool status_overlay_active = false;
+      static int logged_status_state = -1;
+      const int status_state = (data_missing ? 1 : 0) | (live ? 2 : 0);
+      if (status_state != logged_status_state) {
+        logged_status_state = status_state;
+        lg::info("OTTSEL DATA: status state={} data-missing={} live-scene={}", status_state,
+                 data_missing ? 1 : 0, live ? 1 : 0);
+      }
+      if (data_missing || !live) {
+        static int status_upload_countdown = 0;  // the surface is a full window of pixels
+        if (status_upload_countdown-- <= 0) {
+          status_upload_countdown = 30;
+          read_log_tail();
+          render_surface();
+          ottsel_gl_set_status(g_rgba.data(), g_surf_w, g_surf_h);
+          status_overlay_active = true;
+        }
+      } else if (status_overlay_active && !g_settings_screen && !g_settings.log_overlay) {
+        ottsel_gl_set_status(nullptr, 0, 0);
+        status_overlay_active = false;
+      }
+    }
+    // OpenGOAL renders the frame, the touch controls and status surface go on top, then it presents.
+    ottsel_gl_render(g_win);
+    g_frame++;
     // This used to be an unconditional SDL_Delay(16), which pinned the loop
     // (and therefore gfx_vsync's release rate) to a fixed ~23 Hz no matter how
     // long present actually took.  Pacing is already the job of gfx_vsync, so
@@ -2565,12 +2349,11 @@ int main(int argc, char** argv) {
   // ask the dispatcher loop to stop (MasterExit lives in the runtime lib)
   extern void ottsel_ios_stop_dispatch();
   ottsel_ios_stop_dispatch();
-  ottsel_metal_gfx_stop_vsync_waiters();
+  ottsel_gl_shutdown();
   boot.join();
 
   snd_StopSoundSystem();
   SDL_DestroyWindow(g_win);
-  ottsel_metal_destroy(g_metal);
   SDL_Quit();
   return 0;
 }

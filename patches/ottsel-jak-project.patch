@@ -2975,7 +2975,7 @@ index 000000000..e516e127f
 +void ottsel_gles_load_missing(void* (*get_proc)(const char*));
 +#endif
 diff --git a/game/graphics/pipelines/opengl.cpp b/game/graphics/pipelines/opengl.cpp
-index d8d15c873..077cdbc1d 100644
+index d8d15c873..fd70a716a 100644
 --- a/game/graphics/pipelines/opengl.cpp
 +++ b/game/graphics/pipelines/opengl.cpp
 @@ -27,6 +27,8 @@
@@ -3011,14 +3011,125 @@ index d8d15c873..077cdbc1d 100644
    // Before we process the current frames SDL events we for keyboard/mouse button inputs.
    //
    // This technically means that keyboard/mouse button inputs will be a frame behind but the
-@@ -868,3 +879,61 @@ const GfxRendererModule gRendererOpenGL = {
+@@ -868,3 +879,217 @@ const GfxRendererModule gRendererOpenGL = {
      GfxPipeline::OpenGL,     // pipeline
      "OpenGL 4.3"             // name
  };
 +
 +#ifdef OTTSEL_GLES
-+// Ottsel iOS: the app shell owns the window, event loop and input; it attaches an OpenGL ES 3.0
-+// context here and asks the unchanged OpenGOAL renderer for a frame.
++// Ottsel iOS glue: the pieces of GLDisplay that apply to an iOS window (see ottsel_gl_view.h).
++#include <TargetConditionals.h>
++
++#include <algorithm>
++#include <atomic>
++#include <chrono>
++
++#include "game/graphics/pipelines/ottsel_gl_view.h"
++
++void ottsel_set_gfx_renderer(const GfxRendererModule* module);  // game/ios_stubs.cpp
++
++namespace {
++std::mutex g_view_mutex;  // overlay and status are set from shell code, drawn in ottsel_gl_render
++std::vector<OttselOverlayVertex> g_overlay;
++std::vector<unsigned char> g_status;
++int g_status_w = 0, g_status_h = 0;
++bool g_status_dirty = false;
++int g_render_scale = 100;
++std::atomic<bool> g_live_scene{false};
++
++GLuint g_view_program = 0, g_view_vao = 0, g_view_vbo = 0, g_status_tex = 0;
++GLint g_view_textured = -1;
++
++GLuint compile_view_shader(GLenum type, const char* src) {
++  GLuint shader = glCreateShader(type);
++  glShaderSource(shader, 1, &src, nullptr);
++  glCompileShader(shader);
++  return shader;
++}
++
++// One program for both layers: vertex colour, optionally multiplied by the status texture.
++void init_view_program() {
++  const char* vs =
++      "#version 300 es\n"
++      "layout(location=0) in vec2 p; layout(location=1) in vec4 c; layout(location=2) in vec2 t;\n"
++      "out vec4 vc; out vec2 vt;\n"
++      "void main() { vc = c; vt = t; gl_Position = vec4(p, 0.0, 1.0); }\n";
++  const char* fs =
++      "#version 300 es\n"
++      "precision mediump float; uniform sampler2D tex; uniform int textured;\n"
++      "in vec4 vc; in vec2 vt; out vec4 o;\n"
++      "void main() { o = textured != 0 ? texture(tex, vt) * vc : vc; }\n";
++  g_view_program = glCreateProgram();
++  glAttachShader(g_view_program, compile_view_shader(GL_VERTEX_SHADER, vs));
++  glAttachShader(g_view_program, compile_view_shader(GL_FRAGMENT_SHADER, fs));
++  glLinkProgram(g_view_program);
++  g_view_textured = glGetUniformLocation(g_view_program, "textured");
++  glGenVertexArrays(1, &g_view_vao);
++  glGenBuffers(1, &g_view_vbo);
++  glGenTextures(1, &g_status_tex);
++}
++
++// x, y, r, g, b, a, u, v per vertex
++void draw_view_triangles(const std::vector<float>& verts, bool textured) {
++  glUniform1i(g_view_textured, textured ? 1 : 0);
++  glBindBuffer(GL_ARRAY_BUFFER, g_view_vbo);
++  glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(float), verts.data(), GL_STREAM_DRAW);
++  for (int i = 0; i < 3; i++) glEnableVertexAttribArray(i);
++  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
++  glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(2 * sizeof(float)));
++  glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
++  glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(verts.size() / 8));
++}
++
++// The shell's status surface (full window) and touch controls, drawn over the finished game frame.
++void draw_view_layers(int fb_w, int fb_h) {
++  std::lock_guard<std::mutex> lock(g_view_mutex);
++  if (g_overlay.empty() && g_status.empty()) return;
++  if (!g_view_program) init_view_program();
++  glBindFramebuffer(GL_FRAMEBUFFER, 0);
++  glViewport(0, 0, fb_w, fb_h);
++  glDisable(GL_DEPTH_TEST);
++  glDisable(GL_SCISSOR_TEST);
++  glDisable(GL_CULL_FACE);
++  glEnable(GL_BLEND);
++  glBlendEquation(GL_FUNC_ADD);
++  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
++  glUseProgram(g_view_program);
++  glBindVertexArray(g_view_vao);
++  glActiveTexture(GL_TEXTURE0);
++  glBindTexture(GL_TEXTURE_2D, g_status_tex);
++  if (!g_status.empty()) {
++    if (g_status_dirty) {
++      glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
++      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, g_status_w, g_status_h, 0, GL_RGBA, GL_UNSIGNED_BYTE,
++                   g_status.data());
++      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++      g_status_dirty = false;
++    }
++    // Row 0 of the surface is the top of the screen.
++    const float q[6][4] = {{-1, -1, 0, 1}, {1, -1, 1, 1}, {1, 1, 1, 0},
++                           {-1, -1, 0, 1}, {1, 1, 1, 0}, {-1, 1, 0, 0}};
++    std::vector<float> verts;
++    for (auto& v : q) verts.insert(verts.end(), {v[0], v[1], 1, 1, 1, 1, v[2], v[3]});
++    draw_view_triangles(verts, true);
++  }
++  if (!g_overlay.empty()) {
++    std::vector<float> verts;
++    verts.reserve(g_overlay.size() * 8);
++    for (auto& v : g_overlay) {
++      verts.insert(verts.end(),
++                   {v.pos[0], v.pos[1], v.color[0], v.color[1], v.color[2], v.color[3], 0, 0});
++    }
++    draw_view_triangles(verts, false);
++  }
++  glBindVertexArray(0);
++  glDisable(GL_BLEND);
++}
++}  // namespace
++
 +bool ottsel_gl_attach(SDL_Window* window) {
 +  SDL_GLContext context = SDL_GL_CreateContext(window);
 +  if (!context || !SDL_GL_MakeCurrent(window, context)) {
@@ -3030,40 +3141,85 @@ index d8d15c873..077cdbc1d 100644
 +    return false;
 +  }
 +  ottsel_gles_load_missing([](const char* name) { return (void*)SDL_GL_GetProcAddress(name); });
-+  g_ottsel_gles_window_fbo = (GLuint)SDL_GetNumberProperty(
-+      SDL_GetWindowProperties(window), SDL_PROP_WINDOW_UIKIT_OPENGL_FRAMEBUFFER_NUMBER, 0);
-+  g_ottsel_gles_window_renderbuffer = (GLuint)SDL_GetNumberProperty(
-+      SDL_GetWindowProperties(window), SDL_PROP_WINDOW_UIKIT_OPENGL_RENDERBUFFER_NUMBER, 0);
++  // Framebuffer 0 and the presented renderbuffer are SDL's UIKit view objects on iOS.
++  const SDL_PropertiesID props = SDL_GetWindowProperties(window);
++  g_ottsel_gles_window_fbo =
++      (GLuint)SDL_GetNumberProperty(props, SDL_PROP_WINDOW_UIKIT_OPENGL_FRAMEBUFFER_NUMBER, 0);
++  g_ottsel_gles_window_renderbuffer =
++      (GLuint)SDL_GetNumberProperty(props, SDL_PROP_WINDOW_UIKIT_OPENGL_RENDERBUFFER_NUMBER, 0);
 +  g_gfx_data = std::make_unique<GraphicsData>(GameVersion::Jak1);
 +  gl_inited = true;
++  ottsel_set_gfx_renderer(&gRendererOpenGL);
 +  lg::info("OTTSEL GL: {} | {} | window fbo {}", (const char*)glGetString(GL_VERSION),
 +           (const char*)glGetString(GL_RENDERER), g_ottsel_gles_window_fbo);
 +  return true;
 +}
 +
++void ottsel_gl_set_overlay(const OttselOverlayVertex* vertices, unsigned count) {
++  std::lock_guard<std::mutex> lock(g_view_mutex);
++  g_overlay.assign(vertices, vertices ? vertices + count : vertices);
++}
++
++void ottsel_gl_set_status(const unsigned char* rgba, int width, int height) {
++  std::lock_guard<std::mutex> lock(g_view_mutex);
++  if (!rgba || width <= 0 || height <= 0) {
++    g_status.clear();
++    return;
++  }
++  g_status.assign(rgba, rgba + (size_t)width * height * 4);
++  g_status_w = width;
++  g_status_h = height;
++  g_status_dirty = true;
++}
++
++void ottsel_gl_set_render_scale(int percent) {
++  g_render_scale = std::clamp(percent, 25, 100);
++}
++
++bool ottsel_gl_has_live_scene() {
++  return g_live_scene.load();
++}
++
++void ottsel_gl_shutdown() {
++  if (!g_gfx_data) return;
++  std::unique_lock<std::mutex> lock(g_gfx_data->sync_mutex);
++  g_gfx_data->sync_cv.notify_all();
++}
++
 +void ottsel_gl_render(SDL_Window* window) {
-+  // Mirrors GLDisplay::render() without the desktop window/imgui handling.
++  // Mirrors GLDisplay::render() without the desktop window and imgui handling.
 +  int fb_w = 0, fb_h = 0;
 +  SDL_GetWindowSizeInPixels(window, &fb_w, &fb_h);
 +  auto& s = Gfx::g_global_settings;
-+  // Same fallback as GLDisplay::render when the game has not chosen a resolution.
-+  const int game_w = s.game_res_w > 0 ? s.game_res_w : 640;
-+  const int game_h = s.game_res_h > 0 ? s.game_res_h : 480;
++  int game_w = std::max(320, fb_w * g_render_scale / 100);
++  int game_h = std::max(240, fb_h * g_render_scale / 100);
++#if TARGET_OS_SIMULATOR
++  // The Simulator's OpenGL ES is a CPU rasterizer; keep its game resolution small enough to iterate.
++  if (game_w > 800) {
++    game_h = game_h * 800 / game_w;
++    game_w = 800;
++  }
++#endif
 +  static int frames = 0;
 +  const auto start = std::chrono::steady_clock::now();
++  const u64 frame_before = g_gfx_data->frame_idx;
 +  // MSAA stays 1: ES 3.0 has no multisample textures (see ottsel_gles_compat.h).
 +  render_game_frame(game_w, game_h, fb_w, fb_h, fb_w, fb_h, 1, s.brightness_contrast_color,
 +                    s.brightness_contrast_alpha, false);
-+  if (++frames <= 5 || frames % 60 == 0) {
-+    const double ms = std::chrono::duration<double, std::milli>(
-+                          std::chrono::steady_clock::now() - start).count();
-+    lg::info("OTTSEL GL FRAME: {} game={}x{} window={}x{} render-ms={:.1f} gl-error=0x{:x}", frames,
-+             game_w, game_h, fb_w, fb_h, ms, glGetError());
++  if (g_gfx_data->frame_idx_of_input_data == frame_before && g_gfx_data->frame_idx == frame_before) {
++    g_live_scene = true;  // render_game_frame received and drew a chain
++  }
++  if (++frames <= 3 || frames % 600 == 0) {
++    const double ms =
++        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
++    lg::info("OTTSEL GL FRAME: {} game={}x{} window={}x{} render-ms={:.1f}", frames, game_w, game_h,
++             fb_w, fb_h, ms);
 +  }
 +  if (s.framelimiter) {
 +    g_gfx_data->frame_limiter.run(s.target_fps, s.experimental_accurate_lag,
 +                                  s.sleep_in_frame_limiter, g_gfx_data->last_engine_time);
 +  }
++  draw_view_layers(fb_w, fb_h);
 +  // UIKit presents whichever renderbuffer is bound; the renderer leaves its own depth buffers bound.
 +  glBindRenderbuffer(GL_RENDERBUFFER, g_ottsel_gles_window_renderbuffer);
 +  SDL_GL_SwapWindow(window);
@@ -3073,6 +3229,39 @@ index d8d15c873..077cdbc1d 100644
 +  g_gfx_data->sync_cv.notify_all();
 +}
 +#endif
+diff --git a/game/graphics/pipelines/ottsel_gl_view.h b/game/graphics/pipelines/ottsel_gl_view.h
+new file mode 100644
+index 000000000..5d1388d2c
+--- /dev/null
++++ b/game/graphics/pipelines/ottsel_gl_view.h
+@@ -0,0 +1,27 @@
++#pragma once
++// Ottsel iOS: what the shell (src/shell/main.cpp) needs from OpenGOAL's OpenGL pipeline, which renders the
++// game on an OpenGL ES 3.0 context (implemented in pipelines/opengl.cpp).
++
++struct SDL_Window;
++
++// One vertex of the touch-control overlay: normalized device coordinates and a straight-alpha colour.
++struct OttselOverlayVertex {
++  float pos[2];
++  float color[4];
++};
++
++// Create the GL context on the window and register the renderer with the game (call once, main thread).
++bool ottsel_gl_attach(SDL_Window* window);
++// Render one game frame, draw the status surface and touch overlay over it, present, and release the
++// game thread waiting in vsync. Main thread.
++void ottsel_gl_render(SDL_Window* window);
++// Triangle list drawn over the game; null or 0 clears it.
++void ottsel_gl_set_overlay(const OttselOverlayVertex* vertices, unsigned count);
++// Full-window RGBA surface drawn over the game (status, settings, import instructions); null clears it.
++void ottsel_gl_set_status(const unsigned char* rgba, int width, int height);
++// Percentage of the window's pixels the game renders at (50-100).
++void ottsel_gl_set_render_scale(int percent);
++// True once the game has handed the renderer a frame.
++bool ottsel_gl_has_live_scene();
++// Wake the game thread if it waits for a frame that will not come (shutdown).
++void ottsel_gl_shutdown();
 diff --git a/game/graphics/texture/TexturePool.cpp b/game/graphics/texture/TexturePool.cpp
 index 2be2c51d3..59005ab44 100644
 --- a/game/graphics/texture/TexturePool.cpp
@@ -3139,14 +3328,12 @@ index c4d320a27..7a7f9b40c 100644
    void draw_debug_window();
 diff --git a/game/ios_stubs.cpp b/game/ios_stubs.cpp
 new file mode 100644
-index 000000000..7b9ca1121
+index 000000000..6db54d581
 --- /dev/null
 +++ b/game/ios_stubs.cpp
-@@ -0,0 +1,344 @@
-+// Ottsel S1.3 — stub implementations for the iOS (OTTSEL_IOS) build of the
-+// no-emit runtime.  The iOS shell is a headless-renderer build: graphics,
-+// sound, IOP and listener subsystems are not linked, so the few symbols the
-+// kernel code references are provided here as inert stubs.
+@@ -0,0 +1,123 @@
++// Ottsel iOS: the few symbols the kernel references from desktop-only files (runtime.cpp, gfx.cpp,
++// display.cpp, sceGraphicsInterface.cpp, discord) that the iOS build does not compile.
 +
 +#ifdef OTTSEL_IOS
 +
@@ -3179,9 +3366,6 @@ index 000000000..7b9ca1121
 +// Globals normally defined in game/runtime.cpp (not built on iOS).
 +u8* g_ee_main_mem = nullptr;
 +GameVersion g_game_version = GameVersion::Jak1;
-+#ifndef OTTSEL_GLES  // The GL renderer build links game/graphics/screenshot.cpp.
-+bool g_want_screenshot = false;
-+#endif
 +
 +// Overlord globals referenced by the kernel code.
 +
@@ -3194,21 +3378,18 @@ index 000000000..7b9ca1121
 +
 +GfxGlobalSettings g_global_settings;
 +
-+// Ottsel S2.2: the shell registers its Metal GfxRendererModule here (from
-+// src/shell/metal_gfx.mm via ottsel_metal_gfx_register); the game's texture
-+// uploads then decode and present through the CAMetalLayer instead of being
-+// dropped.  Set by the shell during startup; null before that.
-+const GfxRendererModule* g_ottsel_metal_renderer = nullptr;
++// OpenGOAL's OpenGL renderer module, registered by ottsel_gl_attach (pipelines/opengl.cpp) once the
++// GL context exists; null before that.
++const GfxRendererModule* g_ottsel_renderer = nullptr;
 +
 +const GfxRendererModule* GetCurrentRenderer() {
-+  return g_ottsel_metal_renderer;
++  return g_ottsel_renderer;
 +}
 +
 +}  // namespace Gfx
 +
-+// Global-scope setter (called from the shell's metal_gfx.mm).
-+void ottsel_metal_gfx_set_renderer(const GfxRendererModule* m) {
-+  Gfx::g_ottsel_metal_renderer = m;
++void ottsel_set_gfx_renderer(const GfxRendererModule* m) {
++  Gfx::g_ottsel_renderer = m;
 +}
 +
 +// --- PS2 GS interface stubs (no graphics on iOS) ---
@@ -3244,10 +3425,6 @@ index 000000000..7b9ca1121
 +  (void)state;
 +}
 +
-+// --- Screenshot settings stub ---
-+#ifndef OTTSEL_GLES
-+void register_screen_shot_settings(ScreenShotSettings*) {}
-+#endif
 +
 +// --- IOP SIF stubs (no IOP emulation on iOS) ---
 +
@@ -3266,51 +3443,6 @@ index 000000000..7b9ca1121
 +
 +}  // namespace Gfx
 +
-+// The GL renderer build links the real DisplayManager and InputManager; they stay unreachable while
-+// Display::GetMainDisplay() returns null, exactly like these inert stubs.
-+#ifndef OTTSEL_GLES
-+// --- DisplayManager (game/system/hid/display_manager.h) ---
-+void DisplayManager::enqueue_set_display_id(int display_id) {
-+  (void)display_id;
-+}
-+void DisplayManager::enqueue_set_window_display_mode(
-+    game_settings::DisplaySettings::DisplayMode mode, int width, int height) {
-+  (void)mode;
-+  (void)width;
-+  (void)height;
-+}
-+void DisplayManager::enqueue_set_window_size(int width, int height) {
-+  (void)width;
-+  (void)height;
-+}
-+std::string DisplayManager::get_connected_display_name(int id) {
-+  (void)id;
-+  return "Display";
-+}
-+int DisplayManager::get_active_display_refresh_rate() {
-+  return 60;
-+}
-+int DisplayManager::get_screen_width() {
-+  return 1024;
-+}
-+int DisplayManager::get_screen_height() {
-+  return 768;
-+}
-+int DisplayManager::get_num_resolutions(bool for_window_size) {
-+  (void)for_window_size;
-+  return 0;
-+}
-+Resolution DisplayManager::get_resolution(int id, bool for_window_size) {
-+  (void)id;
-+  (void)for_window_size;
-+  return Resolution{1024, 768, 4.0f / 3.0f};
-+}
-+bool DisplayManager::is_supported_resolution(int width, int height) {
-+  (void)width;
-+  (void)height;
-+  return true;
-+}
-+#endif
 +
 +// --- Display (game/graphics/display.h) ---
 +namespace Display {
@@ -3321,170 +3453,6 @@ index 000000000..7b9ca1121
 +
 +// --- IOP (game/system/iop_thread.h) ---
 +
-+#ifndef OTTSEL_GLES
-+// --- InputManager (game/system/hid/input_manager.h) ---
-+std::string InputManager::get_controller_name(const int controller_id) {
-+  (void)controller_id;
-+  return "None";
-+}
-+std::string InputManager::get_current_bind(const int port,
-+                                           const InputDeviceType device_type,
-+                                           const bool buttons,
-+                                           const int input_idx,
-+                                           const bool analog_for_minimum) {
-+  (void)port;
-+  (void)device_type;
-+  (void)buttons;
-+  (void)input_idx;
-+  (void)analog_for_minimum;
-+  return "";
-+}
-+int InputManager::get_controller_index(const int port) {
-+  (void)port;
-+  return -1;
-+}
-+void InputManager::set_controller_for_port(const int controller_id, const int port) {
-+  (void)controller_id;
-+  (void)port;
-+}
-+bool InputManager::controller_has_led(const int port) {
-+  (void)port;
-+  return false;
-+}
-+bool InputManager::controller_has_rumble(const int port) {
-+  (void)port;
-+  return false;
-+}
-+bool InputManager::controller_has_pressure_sensitivity_support(const int port) {
-+  (void)port;
-+  return false;
-+}
-+bool InputManager::controller_has_trigger_effect_support(const int port) {
-+  (void)port;
-+  return false;
-+}
-+void InputManager::enable_keyboard(const bool enabled) {
-+  (void)enabled;
-+}
-+void InputManager::set_wait_for_bind(const InputDeviceType device_type,
-+                                     const bool for_analog,
-+                                     const bool for_minimum_analog,
-+                                     const int input_idx) {
-+  (void)device_type;
-+  (void)for_analog;
-+  (void)for_minimum_analog;
-+  (void)input_idx;
-+}
-+void InputManager::set_camera_sens(const float xsens, const float ysens) {
-+  (void)xsens;
-+  (void)ysens;
-+}
-+void InputManager::reset_input_bindings_to_defaults(const int port,
-+                                                    const InputDeviceType device_type) {
-+  (void)port;
-+  (void)device_type;
-+}
-+std::optional<std::shared_ptr<PadData>> InputManager::get_current_data(const int port) const {
-+  (void)port;
-+  return std::nullopt;
-+}
-+void InputManager::enqueue_ignore_background_controller_events(const bool ignore) {
-+  (void)ignore;
-+}
-+void InputManager::enqueue_update_rumble(const int port, const u8 low, const u8 high) {
-+  (void)port;
-+  (void)low;
-+  (void)high;
-+}
-+void InputManager::enqueue_set_controller_led(const int port,
-+                                              const u8 r,
-+                                              const u8 g,
-+                                              const u8 b) {
-+  (void)port;
-+  (void)r;
-+  (void)g;
-+  (void)b;
-+}
-+void InputManager::enqueue_update_mouse_options(const bool enabled,
-+                                                const bool control_camera,
-+                                                const bool control_movement) {
-+  (void)enabled;
-+  (void)control_camera;
-+  (void)control_movement;
-+}
-+void InputManager::enqueue_set_auto_hide_mouse(const bool auto_hide_mouse) {
-+  (void)auto_hide_mouse;
-+}
-+void InputManager::enqueue_controller_clear_trigger_effect(
-+    const int port, const dualsense_effects::TriggerEffectOption option) {
-+  (void)port;
-+  (void)option;
-+}
-+void InputManager::enqueue_controller_send_trigger_effect_feedback(
-+    const int port,
-+    const dualsense_effects::TriggerEffectOption option,
-+    const u8 position,
-+    const u8 strength) {
-+  (void)port;
-+  (void)option;
-+  (void)position;
-+  (void)strength;
-+}
-+void InputManager::enqueue_controller_send_trigger_effect_vibrate(
-+    const int port,
-+    const dualsense_effects::TriggerEffectOption option,
-+    const u8 position,
-+    const u8 amplitude,
-+    const u8 frequency) {
-+  (void)port;
-+  (void)option;
-+  (void)position;
-+  (void)amplitude;
-+  (void)frequency;
-+}
-+void InputManager::enqueue_controller_send_trigger_effect_weapon(
-+    const int port,
-+    const dualsense_effects::TriggerEffectOption option,
-+    const u8 start_position,
-+    const u8 end_position,
-+    const u8 strength) {
-+  (void)port;
-+  (void)option;
-+  (void)start_position;
-+  (void)end_position;
-+  (void)strength;
-+}
-+void InputManager::enqueue_controller_send_trigger_rumble(const int port,
-+                                                          const u16 left_rumble,
-+                                                          const u16 right_rumble,
-+                                                          const u32 duration_ms) {
-+  (void)port;
-+  (void)left_rumble;
-+  (void)right_rumble;
-+  (void)duration_ms;
-+}
-+void InputManager::enqueue_set_trigger_effects_enabled(const bool enabled) {
-+  (void)enabled;
-+}
-+
-+// --- InputModifiers (game/system/hid/input_bindings.h) ---
-+InputModifiers::InputModifiers(const u16 sdl_mod_state) {
-+  need_shift = sdl_mod_state & 1;  // SDL_KMOD_SHIFT bit; input never used on iOS
-+  need_alt = false;
-+  need_ctrl = false;
-+  need_meta = false;
-+}
-+void to_json(json& j, const InputModifiers& obj) {
-+  j = json{{"shift", obj.need_shift}, {"alt", obj.need_alt}, {"ctrl", obj.need_ctrl},
-+           {"meta", obj.need_meta}};
-+}
-+void from_json(const json& j, InputModifiers& obj) {
-+  obj.need_shift = j.value("shift", false);
-+  obj.need_alt = j.value("alt", false);
-+  obj.need_ctrl = j.value("ctrl", false);
-+  obj.need_meta = j.value("meta", false);
-+}
-+#endif  // OTTSEL_GLES
 +
 +#endif
 diff --git a/game/kernel/asm_funcs_arm64.s b/game/kernel/asm_funcs_arm64.s

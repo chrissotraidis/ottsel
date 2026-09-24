@@ -93,8 +93,6 @@ extern volatile u64 g_ottsel_call_trace[];
 extern volatile u64 g_ottsel_call_idx;
 }
 
-// Ottsel A1.1: real KERNEL.CGO slice proof runner (a11_slice_runner.mm).
-extern "C" int ottsel_run_a11_slice_proof();
 void ottsel_ios_start_iop();  // game/ottsel_ios_iop.cpp
 
 namespace {
@@ -2408,12 +2406,6 @@ extern "C" void ottsel_ios_load_kernel_from_bundle() {
 
 static void ottsel_ios_run_boot_impl() {
   install_gated_signal_handlers();
-
-  // Ottsel A1.1 (evidence captured): the real KERNEL.CGO slice proof runs
-  // first.  Disabled while the A1.0 call-trace probe is active (the offline
-  // slice linker does not resolve the trace symbol); re-enable for product
-  // builds.
-  // ottsel_run_a11_slice_proof();
 
   // ---- EE memory map (same as the host runtime, OTTSEL no-emit) ----
 #ifdef OTTSEL_SIGNED_GSTATE_EXPERIMENT

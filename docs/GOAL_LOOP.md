@@ -21,14 +21,14 @@ loading fatal, and the strict build plays the whole intro to Geyser Rock on Open
 with a 0-byte fault log. The `iphoneos` build compiles and links; installing it needs the user's Apple ID
 and iPad (G2).
 
-Renderer decision: OpenGOAL's **own OpenGL renderer** runs on iOS over OpenGL ES 3.0
-(`OTTSEL_RENDERER=gl`, output in `out/ios-gl`). Its 92 shaders are cross-compiled at build time by
+Renderer: OpenGOAL's **own OpenGL renderer** is the only renderer, on OpenGL ES 3.0. Its 92 shaders are
+cross-compiled at build time by
 `scripts/translate-gl-shaders.py` (glslang + SPIRV-Cross: `brew install glslang spirv-cross`), and
 `game/graphics/ottsel_gles_compat.h` maps the few desktop-only GL calls. The title screen matches the
-macOS build ([evidence](evidence/G3/upstream-gl-renderer-title-2026-09-24.md)). The custom Metal renderer
-(`src/shell/metal_gfx.mm`: broken particles, 5-10 fps) stops growing and is deleted once the GL lane
-carries the touch overlay and plays the intro. The Simulator's GL is a CPU rasterizer, so frame rate is
-measured only on the device.
+macOS build and the whole intro plays to Geyser Rock on it ([evidence](evidence/G3/upstream-gl-renderer-title-2026-09-24.md)).
+The custom Metal renderer (~25k lines, CPU VU1 emulation, broken particles) was deleted on 2026-09-24; its
+last state is commit `df31425`. The Simulator's GL is a CPU rasterizer (1-10 fps, game resolution capped
+at 800 px wide there), so frame rate is measured only on the device.
 
 ## One round
 
@@ -38,7 +38,8 @@ the upstream path fails on iOS and fix that.
 
 1. **Preflight.** `df -h / | tail -1` (stop below 40 GB), zero `.git/objects/pack/tmp_pack_*`,
    `git status` clean or explained, at most one booted Simulator, Stage 0 guards green:
-   `bash scripts/test-metal-encoder-guard.sh && bash scripts/test-link-begin-args.sh`.
+   `python3 scripts/translate-gl-shaders.py out/jak-project/game/graphics/opengl_renderer/shaders /tmp/ottsel-es`
+   `&& bash scripts/test-link-begin-args.sh`.
 2. **Pick** the lowest open gate below. Work on nothing from a later gate unless it blocks this one.
 3. **State** one question, the predicted observation and the single test that decides it.
 4. **Change** the smallest thing; add a regression only when it tests a real contract.
