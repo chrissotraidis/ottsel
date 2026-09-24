@@ -41,6 +41,23 @@ for family in "${required_families[@]}"; do
   cp -R "$source_dir/$family" "$output_dir/$family"
 done
 
+# Retail DGOs carry PS2 code, which the runtime skips ("skip non-GOAL obj").
+# Overlay the containers this machine compiled from the user's own disc, so
+# every level ships its ARM64-compiled code alongside its art. Override the
+# location with OTTSEL_BUILT_DGO_DIR.
+built_dgo_dir="${OTTSEL_BUILT_DGO_DIR:-$repo_dir/out/jak-project/out/jak1/iso}"
+built_count=0
+for built in "$built_dgo_dir"/*.DGO; do
+  [[ -f "$built" ]] || continue
+  cp "$built" "$output_dir/DGO/"
+  built_count=$((built_count + 1))
+done
+if [[ $built_count -eq 0 ]]; then
+  echo "F1: no compiled DGOs in $built_dgo_dir; build the game with goalc first" >&2
+  exit 1
+fi
+echo "F1: overlaid $built_count compiled DGOs from $built_dgo_dir"
+
 fr3_source="${3:-$source_dir/fr3}"
 if [[ ! -d "$fr3_source" || -L "$fr3_source" ]]; then
   echo "F1: derived fr3 directory is missing; pass it as the third argument" >&2

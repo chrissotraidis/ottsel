@@ -14,17 +14,19 @@ player supplies. Then the same on a physical iPhone. This is the original PRD
 
 Out of scope: Jak 2/3, App Store submission, a new engine, and polish that no playtest has asked for.
 
-## Where it stands (2026-09-23)
+## Where it stands (2026-09-24)
 
-Proven in the **Simulator only**: the strict build runs signed code for 348 of the game's 518 code modules
-(KERNEL, ENGINE, GAME, the title and Village1) and routes title -> New Game -> Training by touch on iPad
-and iPhone profiles with input, sound events and background/foreground recovery. The other 170 modules -
-every level's own code, including Training's `training-obs`/`training-part` - still go through the
-runtime linker, which writes code into memory and flips it executable (`klink.cpp`, `kscheme.cpp`). The
-Simulator allows that; a device does not, which is why `ottsel_signed_gstate.cpp` refuses `iphoneos`
-builds. `python3 scripts/signed-coverage.py` prints the current split. The iPad Simulator presents at
-~5-10 fps against 60 on macOS; the renderer (`src/shell/metal_gfx.mm`) re-implements OpenGOAL's buckets
-in Metal with CPU-side VU1 emulation and MERC skinning.
+Proven in the **Simulator only**: the strict build runs signed code for 350 of the game's 518 code modules
+(KERNEL, ENGINE, GAME, the title, Village1 and Training) and routes title -> New Game -> Training by touch
+with input, sound events and background/foreground recovery. The other 168 - the remaining levels' own
+code - go through the runtime linker, which writes code into memory and flips it executable (`klink.cpp`,
+`kscheme.cpp`). The Simulator allows that; a device does not, so `ottsel_signed_gstate.cpp` refuses
+`iphoneos` builds until coverage is complete. `python3 scripts/signed-coverage.py
+config/signed-game-strict.json` prints the split. Until 2026-09-24 user packs carried the disc's PS2
+DGOs for every level except TIT/VI1, so that level code was silently skipped; packs now carry the
+compiled containers. The iPad Simulator presents at ~5-10 fps against 60 on macOS; the renderer
+(`src/shell/metal_gfx.mm`) re-implements OpenGOAL's buckets in Metal with CPU-side VU1 emulation and
+MERC skinning.
 
 ## One round
 
@@ -45,7 +47,7 @@ in Metal with CPU-side VU1 emulation and MERC skinning.
 Build and drive the current strict lane:
 
 ```sh
-OTTSEL_SIGNED_GSTATE_EXPERIMENT=0 OTTSEL_SIGNED_MODULE_LIST=config/signed-game-cgo-tit-vi1-control.json \
+OTTSEL_SIGNED_GSTATE_EXPERIMENT=0 OTTSEL_SIGNED_MODULE_LIST=config/signed-game-strict.json \
 OTTSEL_SIGNED_EXPORT_BANKS=1 bash scripts/build-ios.sh
 python3 scripts/replay-ios-normal-route.py <udid>     # Simulator: title -> New Game -> Training
 ```
@@ -56,7 +58,8 @@ python3 scripts/replay-ios-normal-route.py <udid>     # Simulator: title -> New 
 (`scripts/snapshot-jak-project.sh verify` PASS); one authority; evidence media ignored by git.
 Keep it done: every round ends committed and `verify` passes.
 
-**G1 The whole game is signed, and runtime code loading is fatal.** Extend the signed list level by
+**G1 The whole game is signed, and runtime code loading is fatal.** Grow `config/signed-game-strict.json`
+(the one strict list) level by
 level in play order (Training/Geyser Rock first, then Sentinel Beach, Forbidden Jungle, Misty Island, ...) until
 `scripts/signed-coverage.py` reports `unsigned 0`, including load/unload/reload across level
 transitions. Add a strict switch that aborts, naming the module, at every runtime `PROT_EXEC` site, so
