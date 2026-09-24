@@ -2451,6 +2451,28 @@ index e7f4dd432..e43f2ec73 100644
    auto data = file_util::read_binary_file(m_base_path / fmt::format("{}.fr3", name));
  
    auto decomp_data = compression::decompress_zstd(data.data(), data.size());
+diff --git a/game/graphics/opengl_renderer/opengl_utils.cpp b/game/graphics/opengl_renderer/opengl_utils.cpp
+index e576bc0d5..89b9aed93 100644
+--- a/game/graphics/opengl_renderer/opengl_utils.cpp
++++ b/game/graphics/opengl_renderer/opengl_utils.cpp
+@@ -30,8 +30,15 @@ FramebufferTexturePair::FramebufferTexturePair(int w, int h, u64 texture_format,
+     glBindTexture(GL_TEXTURE_2D, m_texture);
+     // I don't know if we really need to do this. whatever uses this texture should figure it out.
+ 
+-    glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, m_texture, i);
+-    GLenum draw_buffers[1] = {GLenum(GL_COLOR_ATTACHMENT0 + i)};
++#ifdef OTTSEL_GLES
++    // ES 3.0 requires draw buffer 0 to be COLOR_ATTACHMENT0; each level has its own framebuffer, so
++    // attaching every level there is equivalent.
++    const GLenum attachment = GL_COLOR_ATTACHMENT0;
++#else
++    const GLenum attachment = GL_COLOR_ATTACHMENT0 + i;
++#endif
++    glFramebufferTexture(GL_FRAMEBUFFER, attachment, m_texture, i);
++    GLenum draw_buffers[1] = {attachment};
+     glDrawBuffers(1, draw_buffers);
+     auto status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+     if (status != GL_FRAMEBUFFER_COMPLETE) {
 diff --git a/game/graphics/opengl_renderer/sprite/Sprite3.cpp b/game/graphics/opengl_renderer/sprite/Sprite3.cpp
 index 9918d76d3..c7a3ec6d2 100644
 --- a/game/graphics/opengl_renderer/sprite/Sprite3.cpp
@@ -2771,10 +2793,10 @@ index a128a8617..c4513d54f 100644
  };
 diff --git a/game/graphics/ottsel_gles.cpp b/game/graphics/ottsel_gles.cpp
 new file mode 100644
-index 000000000..9cf970069
+index 000000000..be0105475
 --- /dev/null
 +++ b/game/graphics/ottsel_gles.cpp
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,112 @@
 +// Ottsel iOS: ES 3.0 glue for OpenGOAL's OpenGL renderer (see ottsel_gles_compat.h).
 +#ifdef OTTSEL_GLES
 +#include "game/graphics/ottsel_gles_compat.h"
@@ -2806,6 +2828,7 @@ index 000000000..9cf970069
 +}
 +
 +GLuint g_ottsel_gles_window_fbo = 0;
++
 +GLuint g_ottsel_gles_window_renderbuffer = 0;
 +
 +void ottsel_gles_bind_framebuffer(GLenum target, GLuint fbo) {
@@ -2888,10 +2911,10 @@ index 000000000..9cf970069
 +#endif
 diff --git a/game/graphics/ottsel_gles_compat.h b/game/graphics/ottsel_gles_compat.h
 new file mode 100644
-index 000000000..e516e127f
+index 000000000..0d32c5b75
 --- /dev/null
 +++ b/game/graphics/ottsel_gles_compat.h
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,83 @@
 +#pragma once
 +// Ottsel iOS: run OpenGOAL's desktop OpenGL renderer on an OpenGL ES 3.0 context.
 +// Force-included (clang -include) into the renderer sources when OTTSEL_GLES is defined; it maps the
@@ -2971,11 +2994,12 @@ index 000000000..e516e127f
 +                                  const void* data);
 +extern GLuint g_ottsel_gles_window_fbo;
 +extern GLuint g_ottsel_gles_window_renderbuffer;
++
 +// Load the ES 3.0 entry points glad skips (it only loads desktop GL <= 3.0 for an ES 3.0 context).
 +void ottsel_gles_load_missing(void* (*get_proc)(const char*));
 +#endif
 diff --git a/game/graphics/pipelines/opengl.cpp b/game/graphics/pipelines/opengl.cpp
-index d8d15c873..2f55ba90b 100644
+index d8d15c873..8b0ed9d57 100644
 --- a/game/graphics/pipelines/opengl.cpp
 +++ b/game/graphics/pipelines/opengl.cpp
 @@ -27,6 +27,8 @@
@@ -3011,7 +3035,7 @@ index d8d15c873..2f55ba90b 100644
    // Before we process the current frames SDL events we for keyboard/mouse button inputs.
    //
    // This technically means that keyboard/mouse button inputs will be a frame behind but the
-@@ -868,3 +879,217 @@ const GfxRendererModule gRendererOpenGL = {
+@@ -868,3 +879,230 @@ const GfxRendererModule gRendererOpenGL = {
      GfxPipeline::OpenGL,     // pipeline
      "OpenGL 4.3"             // name
  };
@@ -3038,6 +3062,15 @@ index d8d15c873..2f55ba90b 100644
 +std::atomic<bool> g_live_scene{false};
 +
 +GLuint g_view_program = 0, g_view_vao = 0, g_view_vbo = 0, g_status_tex = 0;
++
++// Report GL errors raised by this glue (the renderer reports its own per bucket).
++void check_view_gl(const char* where) {
++  static int reported = 0;
++  for (GLenum e = glGetError(); e != GL_NO_ERROR && reported < 20; e = glGetError()) {
++    reported++;
++    lg::error("OTTSEL GL ERROR 0x{:x} in {}", e, where);
++  }
++}
 +GLint g_view_textured = -1;
 +
 +GLuint compile_view_shader(GLenum type, const char* src) {
@@ -3148,8 +3181,10 @@ index d8d15c873..2f55ba90b 100644
 +  g_ottsel_gles_window_renderbuffer =
 +      (GLuint)SDL_GetNumberProperty(props, SDL_PROP_WINDOW_UIKIT_OPENGL_RENDERBUFFER_NUMBER, 0);
 +  g_gfx_data = std::make_unique<GraphicsData>(GameVersion::Jak1);
++  check_view_gl("renderer-init");
 +  gl_inited = true;
 +  ottsel_set_gfx_renderer(&gRendererOpenGL);
++  check_view_gl("attach");
 +  lg::info("OTTSEL GL: {} | {} | window fbo {}", (const char*)glGetString(GL_VERSION),
 +           (const char*)glGetString(GL_RENDERER), g_ottsel_gles_window_fbo);
 +  return true;
@@ -3220,9 +3255,11 @@ index d8d15c873..2f55ba90b 100644
 +                                  s.sleep_in_frame_limiter, g_gfx_data->last_engine_time);
 +  }
 +  draw_view_layers(fb_w, fb_h);
++  if (frames <= 600) check_view_gl("view-layers");
 +  // UIKit presents whichever renderbuffer is bound; the renderer leaves its own depth buffers bound.
 +  glBindRenderbuffer(GL_RENDERBUFFER, g_ottsel_gles_window_renderbuffer);
 +  SDL_GL_SwapWindow(window);
++  if (frames <= 600) check_view_gl("swap");
 +  // Toggle even/odd and wake the engine waiting in gl_vsync.
 +  std::unique_lock<std::mutex> lock(g_gfx_data->sync_mutex);
 +  g_gfx_data->frame_idx++;
