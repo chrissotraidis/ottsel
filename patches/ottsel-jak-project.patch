@@ -4132,10 +4132,10 @@ index 000000000..3b787e107
 +}
 diff --git a/game/kernel/common/ottsel_signed_gstate.cpp b/game/kernel/common/ottsel_signed_gstate.cpp
 new file mode 100644
-index 000000000..92cb5d20e
+index 000000000..e7366c959
 --- /dev/null
 +++ b/game/kernel/common/ottsel_signed_gstate.cpp
-@@ -0,0 +1,387 @@
+@@ -0,0 +1,395 @@
 +#include "ottsel_signed_gstate.h"
 +#ifdef OTTSEL_SIGNED_GSTATE_EXPERIMENT
 +#include <TargetConditionals.h>
@@ -4399,7 +4399,7 @@ index 000000000..92cb5d20e
 +  }
 +  return false;
 +}
-+bool link(const uint8_t* bytes, const char* name, int32_t size, uint32_t flags, uint32_t heap, bool jump_from_c_to_goal, uint32_t* entry) {
++bool link(const uint8_t* bytes, const char* name, int32_t size, uint32_t flags, uint32_t heap, bool jump_from_c_to_goal, uint32_t* entry, bool streamed) {
 +  if (!name) return false;
 +  size_t selected = 0;
 +  while (selected < module_count && std::strcmp(name, modules[selected]->name)) ++selected;
@@ -4409,7 +4409,15 @@ index 000000000..92cb5d20e
 +  // registry is the code body; a later same-name payload is not this module.
 +  if (loaded[selected] && (!bytes || size <= 0 || uint32_t(size) != manifest.source_size))
 +    return false;
-+ require(prepared && (selected == 0 || loaded[selected - 1]), "signed module order mismatch");
++  // Level containers pair code with a same-name art group, and some carry only
++  // the art (MIS.DGO's evilbro). Art is v2/v4 link data tagged 0xffffffff; leave
++  // it to the data linker. A GOAL code object that does not match still fails.
++  if (bytes && size >= 4) {
++    uint32_t tag;
++    std::memcpy(&tag, bytes, 4);
++    if (tag == 0xffffffffu) return false;
++  }
++  require(prepared && (selected == 0 || loaded[selected - 1] || streamed), "signed module order mismatch");
 +  // GOAL streamed loads call link/link-begin with the level heap. Signed code
 +  // is already in the arena; heap is only authenticated as a caller cookie.
 +  (void)jump_from_c_to_goal;
@@ -4525,10 +4533,10 @@ index 000000000..92cb5d20e
 +#endif
 diff --git a/game/kernel/common/ottsel_signed_gstate.h b/game/kernel/common/ottsel_signed_gstate.h
 new file mode 100644
-index 000000000..1fc0824e2
+index 000000000..7ed3051c6
 --- /dev/null
 +++ b/game/kernel/common/ottsel_signed_gstate.h
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,42 @@
 +#pragma once
 +#include <cstddef>
 +#include <cstdint>
@@ -4561,8 +4569,10 @@ index 000000000..1fc0824e2
 +uint8_t* prepare_arena();
 +uint32_t heap_end();
 +// Only selected signed module names are intercepted; mismatch never falls back.
++// streamed: a level container loaded through link-begin. Levels stream in play
++// order after the engine is resident, so they are exempt from list order.
 +bool link(const uint8_t* bytes, const char* name, int32_t size, uint32_t flags,
-+          uint32_t heap, bool jump_from_c_to_goal, uint32_t* entry);
++          uint32_t heap, bool jump_from_c_to_goal, uint32_t* entry, bool streamed = false);
 +bool valid_function(uint32_t pointer);
 +void require_rx(const void* address, size_t size);
 +#else
@@ -5041,7 +5051,7 @@ index a89d9ac0d..23fa8420c 100644
 \ No newline at end of file
 +}  // namespace jak1
 diff --git a/game/kernel/jak1/klink.cpp b/game/kernel/jak1/klink.cpp
-index fd7199959..3878cbbe0 100644
+index fd7199959..9053e40e8 100644
 --- a/game/kernel/jak1/klink.cpp
 +++ b/game/kernel/jak1/klink.cpp
 @@ -1,3 +1,4 @@
@@ -5589,7 +5599,7 @@ index fd7199959..3878cbbe0 100644
 +    const char* name = Ptr<char>(args[1]).c();
 +    if (ottsel::signed_gstate::link(Ptr<u8>(args[0]).c(), name, static_cast<int32_t>(args[2]),
 +                                    static_cast<uint32_t>(args[4]), static_cast<uint32_t>(args[3]),
-+                                    true, &signed_entry)) {
++                                    true, &signed_entry, /*streamed=*/true)) {
 +      lg::info("OTTSEL LINKBEGIN: signed took {}", name);
 +      return 1;
 +    }

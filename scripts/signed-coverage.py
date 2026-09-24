@@ -3,8 +3,9 @@
 
   python3 scripts/signed-coverage.py [config/signed-game-cgo-tit-vi1-control.json]
 
-Counts distinct code modules (container members with a compiled out/jak1/obj/<name>.o)
-across every CGO/DGO, and lists per container how many are in the signed list. Anything
+Counts distinct code modules (container members whose body equals the compiled
+out/jak1/obj/<name>.o; same-name art groups do not count) across every CGO/DGO, and
+lists per container how many are in the signed list. Anything
 unsigned is linked into writable memory and flipped executable at runtime, which a
 physical iPhone/iPad refuses. G1 needs "unsigned 0".
 """
@@ -18,11 +19,13 @@ spec.loader.exec_module(census)
 listing = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "config/signed-game-cgo-tit-vi1-control.json")
 signed = set(json.loads((repo / listing).read_text())["modules"])
 jak1 = repo / "out/jak-project/out/jak1"
-objects = {p.stem for p in (jak1 / "obj").glob("*.o")}
+objects = {p.stem: p.read_bytes() for p in (jak1 / "obj").glob("*.o")}
 
 seen, rows = set(), []
 for container in sorted([*(jak1 / "iso").glob("*.CGO"), *(jak1 / "iso").glob("*.DGO")]):
-    code = [m["name"] for m in census.read_container(container)[1] if m["name"] in objects]
+    data, members, _ = census.read_container(container)
+    code = sorted({m["name"] for m in members
+                   if data[m["off"]:m["off"] + m["size"]] == objects.get(m["name"])})
     seen.update(code)
     rows.append(f"{container.name}:{sum(n in signed for n in code)}/{len(code)}")
 
