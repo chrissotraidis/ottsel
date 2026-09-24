@@ -5,6 +5,7 @@
 // CPU-drawn status surface (log tail, settings, "import your data"), both composited over the game.
 // The runtime boots on a background thread.
 
+#include <TargetConditionals.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -1852,8 +1853,13 @@ int main(int argc, char** argv) {
   SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
   SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
   SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+#if TARGET_OS_SIMULATOR
+  // The Simulator's OpenGL ES is a CPU rasterizer: a 1x window keeps the final blit affordable.
+  g_win = SDL_CreateWindow("Ottsel Shell", 1024, 768, SDL_WINDOW_OPENGL);
+#else
   g_win = SDL_CreateWindow("Ottsel Shell", 1024, 768,
                            SDL_WINDOW_OPENGL | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+#endif
   if (!g_win) {
     fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
     return 1;

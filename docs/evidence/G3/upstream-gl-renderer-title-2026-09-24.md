@@ -48,4 +48,11 @@ renderer on iOS without being rewritten?
 
 ## Open
 
-Gameplay input on this renderer, a level transition, and every frame-rate number (device only).
+- Input on this renderer: LOAD GAME slot 1 enters Training at `training-start`; 25 s of stick-forward on
+  the virtual gamepad runs Jak from the warp gate to the beach, camera following (`/tmp/ottsel-mv1.png`).
+- Simulator speed: the CPU rasterizer is fill- and triangle-bound (TIE 35-40% of frame time); the
+  Simulator renders at 512 px wide in a 1x window and still runs 3D scenes at 2-4 fps.
+
+## Open
+
+A level transition and every frame-rate number (device only).

@@ -2975,7 +2975,7 @@ index 000000000..e516e127f
 +void ottsel_gles_load_missing(void* (*get_proc)(const char*));
 +#endif
 diff --git a/game/graphics/pipelines/opengl.cpp b/game/graphics/pipelines/opengl.cpp
-index d8d15c873..fd70a716a 100644
+index d8d15c873..2f55ba90b 100644
 --- a/game/graphics/pipelines/opengl.cpp
 +++ b/game/graphics/pipelines/opengl.cpp
 @@ -27,6 +27,8 @@
@@ -3195,9 +3195,9 @@ index d8d15c873..fd70a716a 100644
 +  int game_h = std::max(240, fb_h * g_render_scale / 100);
 +#if TARGET_OS_SIMULATOR
 +  // The Simulator's OpenGL ES is a CPU rasterizer; keep its game resolution small enough to iterate.
-+  if (game_w > 800) {
-+    game_h = game_h * 800 / game_w;
-+    game_w = 800;
++  if (game_w > 512) {
++    game_h = game_h * 512 / game_w;
++    game_w = 512;
 +  }
 +#endif
 +  static int frames = 0;
