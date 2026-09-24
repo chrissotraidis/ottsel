@@ -64,13 +64,36 @@ final class OttselTouchTests: XCTestCase {
     let up = stick.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: -0.2))
     center.press(forDuration: 0.1, thenDragTo: up, withVelocity: .slow, thenHoldForDuration: 25)
     shot("4-after-walk")
-    app.buttons["Cross"].press(forDuration: 0.6)
+    // Slide one thumb from Cross to Square without lifting (jump, then attack in the air).
+    let cross = app.buttons["Cross"]
+    let square = app.buttons["Square"]
+    cross.press(forDuration: 0.3, thenDragTo: square, withVelocity: .fast, thenHoldForDuration: 0.6)
     Thread.sleep(forTimeInterval: 3)
-    shot("5-jump")
+    shot("5-jump-attack")
     app.buttons["Menu"].tap()
     Thread.sleep(forTimeInterval: 2)
+    shot("6-menu")
     app.buttons["Controls"].tap()
+    Thread.sleep(forTimeInterval: 1)
+    app.buttons["Touch Control Settings…"].tap()
     Thread.sleep(forTimeInterval: 2)
-    shot("6-menu-controls")
+    shot("7-settings-panel")
+    app.buttons["Close touch control settings"].tap()
+    app.buttons["Menu"].tap()
+    Thread.sleep(forTimeInterval: 1)
+    app.buttons["Controls"].tap()
+    Thread.sleep(forTimeInterval: 1)
+    app.buttons["Move Touch Controls"].tap()
+    Thread.sleep(forTimeInterval: 2)
+    let camera = app.otherElements["Camera stick"]
+    camera.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+      .press(forDuration: 0.2,
+             thenDragTo: camera.coordinate(withNormalizedOffset: CGVector(dx: -0.8, dy: -0.4)),
+             withVelocity: .slow, thenHoldForDuration: 0.1)
+    Thread.sleep(forTimeInterval: 1)
+    shot("8-editing")
+    app.buttons["Finish moving touch controls"].tap()
+    Thread.sleep(forTimeInterval: 1)
+    shot("9-after-edit")
   }
 }

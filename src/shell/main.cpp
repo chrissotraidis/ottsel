@@ -70,8 +70,6 @@ void select_mobile_gamepad();
 struct ShellSettings {
   // 0 = auto (follow the input actually in use), 1 = always drawn, 2 = never drawn.
   int surface_visibility = 0;
-  // Music master volume in percent, applied through snd_SetMasterVolume's music group.
-  int music_volume = 100;
   // 1 keeps the shell log surface over the game after the settings screen closes.
   int log_overlay = 0;
   // GAMEPLAY: the touch camera region's drag gain in percent, and whether its vertical drag is inverted.
@@ -101,12 +99,11 @@ void save_settings() {
     lg::warn("OTTSEL SETTINGS: unable to save {}", g_settings_path);
     return;
   }
-  file << "1\n" << g_settings.surface_visibility << "\n" << g_settings.music_volume << "\n"
-       << g_settings.log_overlay << "\n"
+  file << "2\n" << g_settings.surface_visibility << "\n" << g_settings.log_overlay << "\n"
        << g_settings.camera_sensitivity << "\n" << g_settings.invert_camera_y << "\n"
        << g_settings.render_scale << "\n";
-  lg::info("OTTSEL SETTINGS: saved visible={} music={} log={} sens={} invert={} scale={} path={}",
-           surface_visibility_name(g_settings.surface_visibility), g_settings.music_volume,
+  lg::info("OTTSEL SETTINGS: saved visible={} log={} sens={} invert={} scale={} path={}",
+           surface_visibility_name(g_settings.surface_visibility),
            g_settings.log_overlay, g_settings.camera_sensitivity, g_settings.invert_camera_y,
            g_settings.render_scale, g_settings_path);
 }
@@ -117,7 +114,8 @@ void load_settings() {
   }
   std::ifstream file(g_settings_path);
   int version = 0;
-  if (!(file >> version) || version != 1) {
+  // Version 1 also carried a music volume, now left to the game's own Options menu.
+  if (!(file >> version) || (version != 1 && version != 2)) {
     return;
   }
   // Tolerant: a field the file does not carry keeps its current (default) value, so a file written before
@@ -130,24 +128,25 @@ void load_settings() {
     return fallback;
   };
   const int visibility = read_int(g_settings.surface_visibility);
-  const int music = read_int(g_settings.music_volume);
+  if (version == 1) {
+    read_int(100);
+  }
   const int log_overlay = read_int(g_settings.log_overlay);
   const int sensitivity = read_int(g_settings.camera_sensitivity);
   const int invert = read_int(g_settings.invert_camera_y);
   const int scale = read_int(g_settings.render_scale);
-  if (visibility < 0 || visibility > 2 || music < 0 || music > 100 ||
+  if (visibility < 0 || visibility > 2 ||
       (log_overlay != 0 && log_overlay != 1) || sensitivity < 50 || sensitivity > 200 ||
       (invert != 0 && invert != 1) || (scale != 50 && scale != 75 && scale != 100)) {
     return;
   }
   g_settings.surface_visibility = visibility;
-  g_settings.music_volume = music;
   g_settings.log_overlay = log_overlay;
   g_settings.camera_sensitivity = sensitivity;
   g_settings.invert_camera_y = invert;
   g_settings.render_scale = scale;
-  lg::info("OTTSEL SETTINGS: loaded visible={} music={} log={} sens={} invert={} scale={} path={}",
-           surface_visibility_name(g_settings.surface_visibility), g_settings.music_volume,
+  lg::info("OTTSEL SETTINGS: loaded visible={} log={} sens={} invert={} scale={} path={}",
+           surface_visibility_name(g_settings.surface_visibility),
            g_settings.log_overlay, g_settings.camera_sensitivity, g_settings.invert_camera_y,
            g_settings.render_scale, g_settings_path);
 }
@@ -155,6 +154,7 @@ void load_settings() {
 // (setting "Automatically") until a finger touches the screen again.
 bool g_native_input_mode = false;
 std::string g_writable_dir;
+double g_presented_fps = 0.0;  // frames presented over the last second (FPS counter)
 
 void update_touch_visibility() {
   ottsel_touch_set_hidden(g_native_input_mode);
@@ -622,14 +622,6 @@ void render_surface() {
 // no glyph geometry in the overlay vertex path.  The completion plan names six sections; only sections whose
 // entries have real behaviour are offered (no decorative controls), and each section screen holds its own
 // rows plus BACK.
-void apply_music_volume() {
-  // The music handler drives groups 1 and 2 (`ssound.cpp` `SetMusicVol`), so scaling those is a real music
-  // control; group 16 is the synth *master*, and driving it muted the whole mix - ambience and dialogue too.
-  const s32 volume = (s32)(0x400 * g_settings.music_volume / 100);
-  snd_SetMasterVolume(1, volume);
-  snd_SetMasterVolume(2, volume);
-}
-
 // VIDEO: the game renders at this percentage of the window's pixels and is scaled up to the window.
 void apply_render_scale() {
   ottsel_gl_set_render_scale(g_settings.render_scale);
@@ -640,7 +632,6 @@ int shell_setting(const char* key) {
   const std::string k = key;
   if (k == "controls") return g_settings.surface_visibility;
   if (k == "render_scale") return g_settings.render_scale;
-  if (k == "music_volume") return g_settings.music_volume;
   if (k == "camera_sensitivity") return g_settings.camera_sensitivity;
   if (k == "invert_camera_y") return g_settings.invert_camera_y;
   if (k == "log_overlay") return g_settings.log_overlay;
@@ -654,10 +645,6 @@ void set_shell_setting(const char* key, int value) {
     g_settings.render_scale = value == 50 || value == 75 ? value : 100;
     apply_render_scale();
   }
-  if (k == "music_volume") {
-    g_settings.music_volume = std::clamp(value, 0, 100);
-    apply_music_volume();
-  }
   if (k == "camera_sensitivity") g_settings.camera_sensitivity = std::clamp(value, 50, 200);
   if (k == "invert_camera_y") g_settings.invert_camera_y = value ? 1 : 0;
   if (k == "log_overlay") {
@@ -665,32 +652,6 @@ void set_shell_setting(const char* key, int value) {
     if (!value) ottsel_gl_set_status(nullptr, 0, 0);
   }
   save_settings();
-}
-
-// Debug aid (S2.0): dump the exact presented CPU surface as a PPM so the
-// evidence set can be verified pixel-for-pixel against the Simulator
-// screenshot.  Triggered once per surface-size change.
-void dump_surface_ppm() {
-  char* prefs = SDL_GetPrefPath("ottsel", "shell");
-  if (!prefs) {
-    return;
-  }
-  std::string path = std::string(prefs) + "surface.ppm";
-  SDL_free(prefs);
-  FILE* f = fopen(path.c_str(), "wb");
-  if (!f) {
-    return;
-  }
-  fprintf(f, "P6\n%d %d\n255\n", g_surf_w, g_surf_h);
-  for (int y = 0; y < g_surf_h; y++) {
-    for (int x = 0; x < g_surf_w; x++) {
-      size_t i = ((size_t)y * g_surf_w + (size_t)x) * 4;
-      fputc(g_rgba[i + 0], f);
-      fputc(g_rgba[i + 1], f);
-      fputc(g_rgba[i + 2], f);
-    }
-  }
-  fclose(f);
 }
 
 bool on_event_watch(void*, SDL_Event* ev) {
@@ -780,7 +741,8 @@ int main(int argc, char** argv) {
   }
   apply_render_scale();
   ottsel_touch_install(g_win, {[](const OttselTouchPad& pad) { g_input.touch_pad(pad); },
-                               shell_setting, set_shell_setting});
+                               shell_setting, set_shell_setting, [] { return g_presented_fps; },
+                               [] { return ottsel_ios_has_user_data(); }, g_writable_dir.c_str()});
   // With the real IOP, OVERLORD's InitSound starts the sound system (game/overlord/jak1/ssound.cpp).
 
   std::thread boot(ottsel_ios_run_boot);
@@ -1078,15 +1040,6 @@ int main(int argc, char** argv) {
       }
     }
 
-    // I3: the persisted music volume is applied once the sound substrate is up, so a relaunch honours it
-    // without the settings screen being opened.
-    {
-      static bool music_volume_applied = false;
-      if (!music_volume_applied && g_frame >= 5) {
-        music_volume_applied = true;
-        apply_music_volume();
-      }
-    }
     // The window's pixel size is only final after layout (and changes on rotation); the CPU status surface
     // follows it.
     {
@@ -1130,6 +1083,17 @@ int main(int argc, char** argv) {
     // OpenGOAL renders the frame and the status surface goes on top; UIKit draws the touch controls.
     ottsel_gl_render(g_win);
     g_frame++;
+    {
+      static Uint64 fps_window_start = SDL_GetTicksNS();
+      static int fps_frames = 0;
+      ++fps_frames;
+      const Uint64 now = SDL_GetTicksNS();
+      if (now - fps_window_start >= 1000000000ull) {
+        g_presented_fps = fps_frames * 1e9 / (double)(now - fps_window_start);
+        fps_frames = 0;
+        fps_window_start = now;
+      }
+    }
     // This used to be an unconditional SDL_Delay(16), which pinned the loop
     // (and therefore gfx_vsync's release rate) to a fixed ~23 Hz no matter how
     // long present actually took.  Pacing is already the job of gfx_vsync, so
