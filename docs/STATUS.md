@@ -20,7 +20,6 @@ Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
 
 ## Log (last eight lines)
 
-2026-09-23 G0: checkpoint commit, one-patch reconstruction verified, BOT/recovery docs archived to history/.
 2026-09-23 G1: device build mode added; it confirmed 170 unsigned level modules; coverage meter landed.
 2026-09-24 G1.1: Training signed (350); packs carry compiled DGOs; next MIS.DGO (22 modules now linked at runtime).
 2026-09-24 G1.2: Misty signed (372); streamed levels exempt from list order; art twins declined; route runs no unsigned code.
@@ -28,3 +27,4 @@ Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
 2026-09-24 G1 met: 518/518 signed, strict exec on, intro to Geyser Rock with 0 aborts; fake IOP and overlays deleted.
 2026-09-24 Renderer: upstream OpenGL renderer on GLES 3.0 (shaders cross-compiled); title matches macOS, 0 GL errors.
 2026-09-24 Metal renderer deleted (71 files); GL is the only path; intro plays to Geyser Rock on it, 0-byte fault log.
+2026-09-24 G2 prep: install-ios-device.sh (sign/provision/install/pack/launch); last GL ES error fixed; load -> Training, 0 GL errors.
