@@ -8,11 +8,13 @@ Daxter: The Precursor Legacy* on top of
 **2026-09-23: playable in the iOS Simulator; not yet run on a device.**
 
 - **macOS:** native arm64 `gk` plays title → New Game → Training at 60 fps.
-- **iPad/iPhone Simulator:** the strict signed-AOT build (no JIT, no runtime
-  code writes) loads all 346 game modules and plays Training by touch, with
-  sound and background/foreground recovery. The iPad Simulator runs at
-  roughly 5–10 fps.
-- **Physical devices:** not yet attempted. That is the current gate.
+- **iPad/iPhone Simulator:** plays Training by touch with sound and
+  background/foreground recovery. 348 of the game's 518 code modules run as
+  signed ahead-of-time code; the other 170 (level code) are still linked at
+  runtime, which the Simulator allows and a device does not. The iPad
+  Simulator runs at roughly 5–10 fps.
+- **Physical devices:** blocked until all code is signed (the current gate);
+  `OTTSEL_PLATFORM=device scripts/build-ios.sh` builds for `iphoneos`.
 - Users supply their own game data; the repository contains no game assets.
 
 ## Start here

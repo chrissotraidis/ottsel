@@ -16,11 +16,15 @@ Out of scope: Jak 2/3, App Store submission, a new engine, and polish that no pl
 
 ## Where it stands (2026-09-23)
 
-Proven in the **Simulator only**: the strict signed build loads 346/346 GAME and streamed modules with a
-0-byte fault log, routes title -> New Game -> Training by touch on iPad and iPhone profiles, plays with
-input, sound events and background/foreground recovery. Not proven: anything on a device. The iPad
-Simulator presents at ~5-10 fps against 60 on macOS; the renderer (`src/shell/metal_gfx.mm`) re-implements
-OpenGOAL's buckets in Metal with CPU-side VU1 emulation and MERC skinning.
+Proven in the **Simulator only**: the strict build runs signed code for 348 of the game's 518 code modules
+(KERNEL, ENGINE, GAME, the title and Village1) and routes title -> New Game -> Training by touch on iPad
+and iPhone profiles with input, sound events and background/foreground recovery. The other 170 modules -
+every level's own code, including Training's `training-obs`/`training-part` - still go through the
+runtime linker, which writes code into memory and flips it executable (`klink.cpp`, `kscheme.cpp`). The
+Simulator allows that; a device does not, which is why `ottsel_signed_gstate.cpp` refuses `iphoneos`
+builds. `python3 scripts/signed-coverage.py` prints the current split. The iPad Simulator presents at
+~5-10 fps against 60 on macOS; the renderer (`src/shell/metal_gfx.mm`) re-implements OpenGOAL's buckets
+in Metal with CPU-side VU1 emulation and MERC skinning.
 
 ## One round
 
@@ -52,31 +56,40 @@ python3 scripts/replay-ios-normal-route.py <udid>     # Simulator: title -> New 
 (`scripts/snapshot-jak-project.sh verify` PASS); one authority; evidence media ignored by git.
 Keep it done: every round ends committed and `verify` passes.
 
-**G1 Runs on a physical iPad.** Build the strict lane for `iphoneos`, sign it with an Apple Development
-identity (a free Personal Team is enough; signing in to Xcode with an Apple ID is the one user-owned
-step), install with `xcrun devicectl`, route to Training. A device enforces code signing, so any leftover
-runtime code link or RX flip crashes here: that crash becomes the top bug. *Exit:* two cold launches reach
-Training on the iPad with a 0-byte fault log.
+**G1 The whole game is signed, and runtime code loading is fatal.** Extend the signed list level by
+level in play order (Training/Geyser Rock first, then Sentinel Beach, Forbidden Jungle, Misty Island, ...) until
+`scripts/signed-coverage.py` reports `unsigned 0`, including load/unload/reload across level
+transitions. Add a strict switch that aborts, naming the module, at every runtime `PROT_EXEC` site, so
+the Simulator enforces what a device will. *Exit:* coverage exit 0; two strict Simulator runs route to
+Training and through one level transition with the switch on and a 0-byte fault log; then remove the
+`#error` device guard in `ottsel_signed_gstate.cpp`.
 
-**G2 Plays at a usable frame rate on the iPad.** Measure presented fps over five minutes of Training
-play on the device (the Simulator number is not a product measurement). *Exit:* 30 fps or better
-sustained. If it misses, profile on device and move the hot work to the GPU the way OpenGOAL's own
-renderer does (`merc2.vert`, `tfrag3`/`tie3` shaders); do not add more CPU emulation of PS2 units.
+**G2 Runs on a physical iPad.** `OTTSEL_PLATFORM=device` with the strict profile builds for `iphoneos`
+into `out/ios-device/`; set `OTTSEL_SIGN_IDENTITY` and `OTTSEL_PROVISIONING_PROFILE` (a free Personal
+Team is enough; signing in to Xcode with an Apple ID and attaching the iPad once are the user-owned
+steps) and install with `xcrun devicectl device install app`. *Exit:* two cold launches reach Training
+on the iPad with a 0-byte fault log.
 
-**G3 A real playtest on the iPad.** A person plays from New Game through Geyser Rock into Sandover and
+**G3 Plays at a usable frame rate on the iPad.** Measure presented fps over five minutes of Training on
+the device (the Simulator number is not a product measurement). *Exit:* 30 fps or better sustained. If it
+misses, profile on device and move the hot work to the GPU the way OpenGOAL's own renderer does
+(`merc2.vert`, `tfrag3`/`tie3` shaders); do not add more CPU emulation of PS2 units.
+
+**G4 A real playtest on the iPad.** A person plays from New Game through Geyser Rock into Sandover and
 one full neighbouring level: level transitions, touch and a paired controller, save then relaunch and
 continue, audible music and dialogue, backgrounding. Anything that stops the playtest (for example the
 intro cutscene spool stall) is in scope. *Exit:* a 20-minute recorded session with no crash or soft-lock.
 
-**G4 Fix what the playtest showed**, ranked by how much it hurts play. Visual fidelity work outside that
+**G5 Fix what the playtest showed**, ranked by how much it hurts play. Visual fidelity work outside that
 list waits.
 
-**G5 iPhone device parity** - G1 to G3 on one physical iPhone.
+**G6 iPhone device parity** - G2 to G4 on one physical iPhone.
 
-**G6 Reproducible delivery** - a fresh clone + pin + `patches/ottsel-jak-project.patch` + the user's own
-disc data builds and runs by following `README.md` alone, and the app bundle carries no game data.
+**G7 Reproducible delivery** - a fresh clone + pin + `patches/ottsel-jak-project.patch` + the user's own
+disc data builds and runs by following `README.md` alone, and the app bundle carries no game data. Known
+gap: `out/ios/zstd-project/CMakeLists.txt` is hand-placed and not generated by any script.
 
-## Held until G3 passes
+## Held until G4 passes
 
 VoiceOver routing, touch layout editing, per-group volume accuracy, additional phone profiles, sky/eye
 fidelity and other polish. Pick one up earlier only if it blocks the current gate.
