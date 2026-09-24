@@ -706,7 +706,7 @@ index 4d31fae4e..b303f4a5d 100644
    struct TestState {
      void from_register(GsTest reg);
 diff --git a/game/graphics/opengl_renderer/OpenGLRenderer.cpp b/game/graphics/opengl_renderer/OpenGLRenderer.cpp
-index cc19099d4..d06f76fe7 100644
+index cc19099d4..b62aa9864 100644
 --- a/game/graphics/opengl_renderer/OpenGLRenderer.cpp
 +++ b/game/graphics/opengl_renderer/OpenGLRenderer.cpp
 @@ -1,8 +1,11 @@
@@ -729,7 +729,28 @@ index cc19099d4..d06f76fe7 100644
  
  #include "third-party/imgui/imgui.h"
  #include "third-party/imgui/imgui_stdlib.h"
-@@ -982,6 +986,43 @@ void OpenGLRenderer::blit_display(ScopedProfilerNode& prof) {
+@@ -41,6 +45,20 @@
+ 
+ namespace {
+ std::string g_current_renderer;
++#ifdef OTTSEL_GLES
++// ES has no debug callback: report the first GL errors against the stage that raised them.
++// Only during the first frames: glGetError synchronizes with the GPU on hardware.
++static void ottsel_gl_check() {
++  static int reported = 0, calls = 0;
++  if (++calls > 50000) return;
++  for (GLenum e = glGetError(); e != GL_NO_ERROR; e = glGetError()) {
++    if (reported++ < 80) lg::error("OTTSEL GL ERROR 0x{:x} after {}", e, g_current_renderer);
++  }
++}
++#define OTTSEL_GL_CHECK() ottsel_gl_check()
++#else
++#define OTTSEL_GL_CHECK() ((void)0)
++#endif
+ }
+ 
+ /*!
+@@ -982,6 +1000,45 @@ void OpenGLRenderer::blit_display(ScopedProfilerNode& prof) {
   * Main render function. This is called from the gfx loop with the chain passed from the game.
   */
  void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
@@ -770,10 +791,60 @@ index cc19099d4..d06f76fe7 100644
 +               gc_actual, gc_real_actual, gc_time_ratio);
 +    }
 +  }
++  g_current_renderer = "before-frame";
++  OTTSEL_GL_CHECK();
    m_profiler.clear();
    m_render_state.reset();
    m_render_state.ee_main_memory = g_ee_main_mem;
-@@ -1291,6 +1332,25 @@ void OpenGLRenderer::setup_frame(const RenderOptions& settings) {
+@@ -994,6 +1051,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+     if (settings.gpu_sync) {
+       glFinish();
+     }
++    OTTSEL_GL_CHECK();
+   }
+ 
+   {
+@@ -1006,6 +1064,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+     } else {
+       m_render_state.loader->update(*m_render_state.texture_pool);
+     }
++    OTTSEL_GL_CHECK();
+   }
+ 
+   // render the buckets!
+@@ -1024,6 +1083,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+     g_current_renderer = "blit-display";
+     auto prof = m_profiler.root()->make_scoped_child("blit-display");
+     blit_display(prof);
++    OTTSEL_GL_CHECK();
+   }
+ 
+   // apply effects done with PCRTC registers, as well as blit the framebuffer to the window and
+@@ -1036,6 +1096,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+     if (settings.gpu_sync) {
+       glFinish();
+     }
++    OTTSEL_GL_CHECK();
+   }
+ 
+   m_last_pmode_alp = settings.pmode_alp_register;
+@@ -1111,6 +1172,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+     m_small_profiler.draw(m_render_state.load_status_debug, stats);
+   }
+ 
++#ifndef OTTSEL_GLES  // The subtitle editor is a desktop authoring tool (REPL client, locale DB).
+   if (settings.draw_subtitle_editor_window) {
+     g_current_renderer = "subtitle-editor-window";
+     if (m_subtitle_editor == nullptr) {
+@@ -1118,6 +1180,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+     }
+     m_subtitle_editor->draw_window();
+   }
++#endif
+ 
+   if (settings.draw_filters_window) {
+     g_current_renderer = "filters-window";
+@@ -1291,6 +1354,25 @@ void OpenGLRenderer::setup_frame(const RenderOptions& settings) {
  void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
                                             ScopedProfilerNode& prof,
                                             bool sync_after_buckets) {
@@ -799,7 +870,7 @@ index cc19099d4..d06f76fe7 100644
    // The first thing the DMA chain should be a call to a common default-registers chain.
    // this chain resets the state of the GS. After this is buckets
    m_category_times.fill(0);
-@@ -1326,10 +1386,16 @@ void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
+@@ -1326,10 +1408,17 @@ void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
    // loop over the buckets!
    for (size_t bucket_id = 0; bucket_id < m_bucket_renderers.size(); bucket_id++) {
      auto& renderer = m_bucket_renderers[bucket_id];
@@ -808,6 +879,7 @@ index cc19099d4..d06f76fe7 100644
      g_current_renderer = renderer->name_and_id();
      // lg::info("Render: {} start", g_current_renderer);
      renderer->render(dma, &m_render_state, bucket_prof);
++    OTTSEL_GL_CHECK();
 +    if (ottsel_trace_active) {
 +      lg::info("OTTSEL BUCKET TRACE: frame={} id={} renderer={} dma=[0x{:x},0x{:x}) bytes={}",
 +               ottsel_trace_frame, bucket_id, renderer->name_and_id(), bucket_start,
@@ -816,7 +888,7 @@ index cc19099d4..d06f76fe7 100644
      if (sync_after_buckets) {
        auto pp = scoped_prof("finish");
        glFinish();
-@@ -1349,6 +1415,11 @@ void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
+@@ -1349,6 +1438,11 @@ void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
      }
    }
  
@@ -828,6 +900,54 @@ index cc19099d4..d06f76fe7 100644
    // TODO ending data.
  }
  
+@@ -1370,6 +1464,7 @@ void OpenGLRenderer::dispatch_buckets_jak2(DmaFollower dma,
+     g_current_renderer = renderer->name_and_id();
+     // lg::info("Render: {} start", g_current_renderer);
+     renderer->render(dma, &m_render_state, bucket_prof);
++    OTTSEL_GL_CHECK();
+     if (sync_after_buckets) {
+       auto pp = scoped_prof("finish");
+       glFinish();
+@@ -1412,6 +1507,7 @@ void OpenGLRenderer::dispatch_buckets_jak3(DmaFollower dma,
+     g_current_renderer = renderer->name_and_id();
+     // lg::info("Render: {} start", g_current_renderer);
+     renderer->render(dma, &m_render_state, bucket_prof);
++    OTTSEL_GL_CHECK();
+     if (sync_after_buckets) {
+       auto pp = scoped_prof("finish");
+       glFinish();
+diff --git a/game/graphics/opengl_renderer/Shader.cpp b/game/graphics/opengl_renderer/Shader.cpp
+index bfe48e43d..24cc0effa 100644
+--- a/game/graphics/opengl_renderer/Shader.cpp
++++ b/game/graphics/opengl_renderer/Shader.cpp
+@@ -6,16 +6,27 @@
+ 
+ #include "game/graphics/pipelines/opengl.h"
+ 
++#ifdef OTTSEL_GLES
++extern std::string ottsel_ios_bundle_dir();  // shaders ship in the app bundle
++#endif
++
+ Shader::Shader(const std::string& shader_name, GameVersion version) : m_name(shader_name) {
+   const std::string height_scale = version == GameVersion::Jak1 ? "1.0" : "0.5";
+   const std::string scissor_height = version == GameVersion::Jak1 ? "448.0" : "416.0";
+   const std::string scissor_adjust = "512.0 / " + scissor_height;
+ 
+   // read the shader source
++#ifdef OTTSEL_GLES
++  // The bundle carries GLSL ES 3.00 translations made at build time (scripts/translate-gl-shaders.py).
++  const fs::path folder = fs::path(ottsel_ios_bundle_dir()) / shader_folder;
++  auto vert_src = file_util::read_text_file(folder / (shader_name + ".vert"));
++  auto frag_src = file_util::read_text_file(folder / (shader_name + ".frag"));
++#else
+   auto vert_src =
+       file_util::read_text_file(file_util::get_file_path({shader_folder, shader_name + ".vert"}));
+   auto frag_src =
+       file_util::read_text_file(file_util::get_file_path({shader_folder, shader_name + ".frag"}));
++#endif
+ 
+   vert_src = std::regex_replace(vert_src, std::regex("HEIGHT_SCALE"), height_scale);
+   vert_src = std::regex_replace(vert_src, std::regex("SCISSOR_HEIGHT"), scissor_height);
 diff --git a/game/graphics/opengl_renderer/ShadowRenderer.cpp b/game/graphics/opengl_renderer/ShadowRenderer.cpp
 index 8f3fa3f64..5f1aa6ea5 100644
 --- a/game/graphics/opengl_renderer/ShadowRenderer.cpp
@@ -2649,19 +2769,237 @@ index a128a8617..c4513d54f 100644
 +  u32 m_ottsel_trace_frame = 0;
 +  u32 m_ottsel_trace_samples = 0;
  };
+diff --git a/game/graphics/ottsel_gles.cpp b/game/graphics/ottsel_gles.cpp
+new file mode 100644
+index 000000000..9cf970069
+--- /dev/null
++++ b/game/graphics/ottsel_gles.cpp
+@@ -0,0 +1,111 @@
++// Ottsel iOS: ES 3.0 glue for OpenGOAL's OpenGL renderer (see ottsel_gles_compat.h).
++#ifdef OTTSEL_GLES
++#include "game/graphics/ottsel_gles_compat.h"
++
++#include <unordered_map>
++#include <utility>
++
++namespace {
++GLenum g_active_unit = GL_TEXTURE0;
++std::unordered_map<GLenum, GLuint> g_bound_2d;                      // texture unit -> bound 2D id
++std::unordered_map<GLuint, std::pair<GLint, GLint>> g_level0_size;  // 2D id -> level-0 size
++}  // namespace
++
++void ottsel_gles_multi_draw_elements(GLenum mode, const GLsizei* count, GLenum type,
++                                     const void* const* indices, GLsizei drawcount) {
++  for (GLsizei i = 0; i < drawcount; i++) {
++    glad_glDrawElements(mode, count[i], type, indices[i]);
++  }
++}
++
++void ottsel_gles_active_texture(GLenum unit) {
++  g_active_unit = unit;
++  glad_glActiveTexture(unit);
++}
++
++void ottsel_gles_bind_texture(GLenum target, GLuint tex) {
++  if (target == GL_TEXTURE_2D) g_bound_2d[g_active_unit] = tex;
++  glad_glBindTexture(target, tex);
++}
++
++GLuint g_ottsel_gles_window_fbo = 0;
++GLuint g_ottsel_gles_window_renderbuffer = 0;
++
++void ottsel_gles_bind_framebuffer(GLenum target, GLuint fbo) {
++  glad_glBindFramebuffer(target, fbo == 0 ? g_ottsel_gles_window_fbo : fbo);
++}
++
++void ottsel_gles_tex_image_2d(GLenum target, GLint level, GLint ifmt, GLsizei w, GLsizei h,
++                              GLint border, GLenum fmt, GLenum type, const void* data) {
++  if (target == GL_TEXTURE_2D && level == 0) g_level0_size[g_bound_2d[g_active_unit]] = {w, h};
++  // ES 3.0 pairs sized internal formats with explicit types; OpenGOAL's GL_RGBA uploads are bytes.
++  glad_glTexImage2D(target, level, ifmt, w, h, border, fmt, type, data);
++}
++
++void ottsel_gles_get_tex_level_parameteriv(GLenum target, GLint level, GLenum pname, GLint* out) {
++  auto it = g_level0_size.find(g_bound_2d[g_active_unit]);
++  GLint w = it == g_level0_size.end() ? 0 : it->second.first;
++  GLint h = it == g_level0_size.end() ? 0 : it->second.second;
++  for (GLint i = 0; i < level; i++) { w = w > 1 ? w / 2 : 1; h = h > 1 ? h / 2 : 1; }
++  (void)target;
++  *out = pname == GL_TEXTURE_WIDTH ? w : pname == GL_TEXTURE_HEIGHT ? h : 0;
++}
++
++// All 1D textures are RGBA8 palettes (see OTTSEL_GLES_1D_ROW in ottsel_gles_compat.h).
++void ottsel_gles_tex_image_1d(GLint level, GLint ifmt, GLsizei w, GLint border, GLenum fmt,
++                              GLenum type, const void* data) {
++  const GLsizei cols = w < OTTSEL_GLES_1D_ROW ? w : OTTSEL_GLES_1D_ROW;
++  const GLsizei rows = (w + OTTSEL_GLES_1D_ROW - 1) / OTTSEL_GLES_1D_ROW;
++  ottsel_gles_tex_image_2d(GL_TEXTURE_2D, level, ifmt, cols, rows, border, fmt, type, nullptr);
++  if (data) ottsel_gles_tex_sub_image_1d(level, 0, w, fmt, type, data);
++}
++
++void ottsel_gles_tex_sub_image_1d(GLint level, GLint x, GLsizei w, GLenum fmt, GLenum type,
++                                  const void* data) {
++  const auto* bytes = static_cast<const unsigned char*>(data);
++  while (w > 0) {
++    const GLint col = x % OTTSEL_GLES_1D_ROW;
++    const GLsizei n = w < OTTSEL_GLES_1D_ROW - col ? w : OTTSEL_GLES_1D_ROW - col;
++    glad_glTexSubImage2D(GL_TEXTURE_2D, level, col, x / OTTSEL_GLES_1D_ROW, n, 1, fmt, type, bytes);
++    bytes += n * 4;
++    x += n;
++    w -= n;
++  }
++}
++
++void ottsel_gles_load_missing(void* (*get_proc)(const char*)) {
++#define OTTSEL_LOAD(name, type) \
++  if (!glad_##name) glad_##name = (type)get_proc(#name)
++  OTTSEL_LOAD(glClearDepthf, PFNGLCLEARDEPTHFPROC);
++  OTTSEL_LOAD(glUniformBlockBinding, PFNGLUNIFORMBLOCKBINDINGPROC);
++  OTTSEL_LOAD(glGetUniformBlockIndex, PFNGLGETUNIFORMBLOCKINDEXPROC);
++  OTTSEL_LOAD(glDrawArraysInstanced, PFNGLDRAWARRAYSINSTANCEDPROC);
++  OTTSEL_LOAD(glDrawElementsInstanced, PFNGLDRAWELEMENTSINSTANCEDPROC);
++  OTTSEL_LOAD(glVertexAttribDivisor, PFNGLVERTEXATTRIBDIVISORPROC);
++  OTTSEL_LOAD(glCopyBufferSubData, PFNGLCOPYBUFFERSUBDATAPROC);
++  OTTSEL_LOAD(glGetActiveUniformBlockiv, PFNGLGETACTIVEUNIFORMBLOCKIVPROC);
++  OTTSEL_LOAD(glTexStorage2D, PFNGLTEXSTORAGE2DPROC);
++#undef OTTSEL_LOAD
++}
++
++// Desktop-only pieces the renderer's translation units reference. gfx.cpp (which owns the splash) is
++// replaced by the iOS stubs, message boxes have no iOS equivalent, and the jak3 stream table is only
++// read by the debug GUI.
++#include "common/log/log.h"
++#include "common/util/dialogs.h"
++#include "game/graphics/gfx.h"
++#include "game/overlord/jak3/dma.h"
++
++namespace Gfx {
++SplashScreen g_splash;
++}
++namespace dialogs {
++void create_error_message_dialog(const std::string& title, const std::string& message) {
++  lg::error("{}: {}", title, message);
++}
++}  // namespace dialogs
++namespace jak3 {
++OverlordStreamMemory::OverlordStreamMemory() = default;
++OverlordStreamMemory g_overlord_stream_memory;
++}  // namespace jak3
++#endif
+diff --git a/game/graphics/ottsel_gles_compat.h b/game/graphics/ottsel_gles_compat.h
+new file mode 100644
+index 000000000..e516e127f
+--- /dev/null
++++ b/game/graphics/ottsel_gles_compat.h
+@@ -0,0 +1,82 @@
++#pragma once
++// Ottsel iOS: run OpenGOAL's desktop OpenGL renderer on an OpenGL ES 3.0 context.
++// Force-included (clang -include) into the renderer sources when OTTSEL_GLES is defined; it maps the
++// handful of desktop-only entry points and enums the renderer uses onto their ES 3.0 equivalents.
++#if defined(OTTSEL_GLES) && defined(__cplusplus)
++#include "third-party/glad/include/glad/glad.h"
++
++#include <string>
++
++// Time-of-day palettes are 1D textures on desktop; ES 3.0 has none, so they become height-1 2D
++// textures (scripts/translate-gl-shaders.py rewrites the shaders to match).
++#undef GL_TEXTURE_1D
++#define GL_TEXTURE_1D GL_TEXTURE_2D
++// Palettes wider than OTTSEL_GLES_1D_ROW texels (the 8192-entry time-of-day tables) are folded into
++// rows, because ES 3.0 only guarantees 2048-texel textures; shaders read texel i at (i % row, i / row).
++#define OTTSEL_GLES_1D_ROW 1024
++#undef glTexImage1D
++#define glTexImage1D(target, level, ifmt, w, border, fmt, type, data) \
++  ottsel_gles_tex_image_1d(level, ifmt, w, border, fmt, type, data)
++#undef glTexSubImage1D
++#define glTexSubImage1D(target, level, x, w, fmt, type, data) \
++  ottsel_gles_tex_sub_image_1d(level, x, w, fmt, type, data)
++// Only used to allocate palettes with no data, where the byte order does not matter.
++#undef GL_UNSIGNED_INT_8_8_8_8
++#define GL_UNSIGNED_INT_8_8_8_8 GL_UNSIGNED_BYTE
++// Byte order of GL_RGBA + 8_8_8_8_REV equals GL_UNSIGNED_BYTE on little-endian hosts.
++#undef GL_UNSIGNED_INT_8_8_8_8_REV
++#define GL_UNSIGNED_INT_8_8_8_8_REV GL_UNSIGNED_BYTE
++// ES 3.0 always restarts primitives at the maximum index; OpenGOAL only ever uses UINT32_MAX.
++#undef glPrimitiveRestartIndex
++#define glPrimitiveRestartIndex(index) ((void)(index))
++#undef GL_PRIMITIVE_RESTART
++#define GL_PRIMITIVE_RESTART 0x8D69 /* GL_PRIMITIVE_RESTART_FIXED_INDEX */
++#undef glClearDepth
++#define glClearDepth(d) glad_glClearDepthf((GLfloat)(d))
++#undef glFramebufferTexture
++#define glFramebufferTexture(target, attachment, tex, level) \
++  glad_glFramebufferTexture2D(target, attachment, GL_TEXTURE_2D, tex, level)
++#undef glColorMaski
++#define glColorMaski(buf, r, g, b, a) glad_glColorMask(r, g, b, a)
++#undef glMultiDrawElements
++#define glMultiDrawElements ottsel_gles_multi_draw_elements
++#undef glGetTexLevelParameteriv
++#define glGetTexLevelParameteriv ottsel_gles_get_tex_level_parameteriv
++#undef glTexImage2D
++#define glTexImage2D ottsel_gles_tex_image_2d
++#undef glBindTexture
++#define glBindTexture ottsel_gles_bind_texture
++#undef glActiveTexture
++#define glActiveTexture ottsel_gles_active_texture
++// Framebuffer 0 means "the window" on desktop; on iOS the window is SDL's UIKit view framebuffer.
++#undef glBindFramebuffer
++#define glBindFramebuffer ottsel_gles_bind_framebuffer
++// Debug-only desktop features.
++#undef glPolygonMode
++#define glPolygonMode(face, mode) ((void)0)
++#undef glGetTexImage
++#define glGetTexImage(target, level, fmt, type, pixels) ((void)0)
++#undef glDebugMessageCallback
++#define glDebugMessageCallback(cb, param) ((void)0)
++#undef glDebugMessageControl
++#define glDebugMessageControl(a, b, c, d, e, f) ((void)0)
++#undef glTexImage2DMultisample
++#define glTexImage2DMultisample(a, b, c, d, e, f) ((void)0)
++
++void ottsel_gles_multi_draw_elements(GLenum mode, const GLsizei* count, GLenum type,
++                                     const void* const* indices, GLsizei drawcount);
++void ottsel_gles_get_tex_level_parameteriv(GLenum target, GLint level, GLenum pname, GLint* out);
++void ottsel_gles_tex_image_2d(GLenum target, GLint level, GLint ifmt, GLsizei w, GLsizei h,
++                              GLint border, GLenum fmt, GLenum type, const void* data);
++void ottsel_gles_bind_texture(GLenum target, GLuint tex);
++void ottsel_gles_active_texture(GLenum unit);
++void ottsel_gles_bind_framebuffer(GLenum target, GLuint fbo);
++void ottsel_gles_tex_image_1d(GLint level, GLint ifmt, GLsizei w, GLint border, GLenum fmt,
++                              GLenum type, const void* data);
++void ottsel_gles_tex_sub_image_1d(GLint level, GLint x, GLsizei w, GLenum fmt, GLenum type,
++                                  const void* data);
++extern GLuint g_ottsel_gles_window_fbo;
++extern GLuint g_ottsel_gles_window_renderbuffer;
++// Load the ES 3.0 entry points glad skips (it only loads desktop GL <= 3.0 for an ES 3.0 context).
++void ottsel_gles_load_missing(void* (*get_proc)(const char*));
++#endif
 diff --git a/game/graphics/pipelines/opengl.cpp b/game/graphics/pipelines/opengl.cpp
-index d8d15c873..ea7f6c2fa 100644
+index d8d15c873..077cdbc1d 100644
 --- a/game/graphics/pipelines/opengl.cpp
 +++ b/game/graphics/pipelines/opengl.cpp
-@@ -27,6 +27,7 @@
+@@ -27,6 +27,8 @@
  #include "game/graphics/texture/TexturePool.h"
  #include "game/runtime.h"
  #include "game/sce/libscf.h"
++#include "game/sce/sif_ee.h"
 +#include "game/sound/sndshim.h"
  #include "game/system/hid/input_manager.h"
  #include "game/system/hid/sdl_util.h"
  
-@@ -587,6 +588,11 @@ void GLDisplay::process_sdl_events() {
+@@ -87,7 +89,11 @@ struct GraphicsData {
+       : dma_copier(EE_MAIN_MEM_SIZE),
+         texture_pool(std::make_shared<TexturePool>(version)),
+         loader(std::make_shared<Loader>(
++#ifdef OTTSEL_GLES
++            fs::path(ee::ottsel_iso_data_dir()) / "fr3",  // the imported user pack
++#else
+             file_util::get_jak_project_dir() / "out" / game_version_names[version] / "fr3",
++#endif
+             fr3_level_count[version])),
+         ogl_renderer(texture_pool, loader, version),
+         debug_gui(),
+@@ -587,6 +593,11 @@ void GLDisplay::process_sdl_events() {
   * Main function called to render graphics frames. This is called in a loop.
   */
  void GLDisplay::render() {
@@ -2673,6 +3011,68 @@ index d8d15c873..ea7f6c2fa 100644
    // Before we process the current frames SDL events we for keyboard/mouse button inputs.
    //
    // This technically means that keyboard/mouse button inputs will be a frame behind but the
+@@ -868,3 +879,61 @@ const GfxRendererModule gRendererOpenGL = {
+     GfxPipeline::OpenGL,     // pipeline
+     "OpenGL 4.3"             // name
+ };
++
++#ifdef OTTSEL_GLES
++// Ottsel iOS: the app shell owns the window, event loop and input; it attaches an OpenGL ES 3.0
++// context here and asks the unchanged OpenGOAL renderer for a frame.
++bool ottsel_gl_attach(SDL_Window* window) {
++  SDL_GLContext context = SDL_GL_CreateContext(window);
++  if (!context || !SDL_GL_MakeCurrent(window, context)) {
++    lg::error("OTTSEL GL: context creation failed: {}", SDL_GetError());
++    return false;
++  }
++  if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) {
++    lg::error("OTTSEL GL: glad could not load the GL API");
++    return false;
++  }
++  ottsel_gles_load_missing([](const char* name) { return (void*)SDL_GL_GetProcAddress(name); });
++  g_ottsel_gles_window_fbo = (GLuint)SDL_GetNumberProperty(
++      SDL_GetWindowProperties(window), SDL_PROP_WINDOW_UIKIT_OPENGL_FRAMEBUFFER_NUMBER, 0);
++  g_ottsel_gles_window_renderbuffer = (GLuint)SDL_GetNumberProperty(
++      SDL_GetWindowProperties(window), SDL_PROP_WINDOW_UIKIT_OPENGL_RENDERBUFFER_NUMBER, 0);
++  g_gfx_data = std::make_unique<GraphicsData>(GameVersion::Jak1);
++  gl_inited = true;
++  lg::info("OTTSEL GL: {} | {} | window fbo {}", (const char*)glGetString(GL_VERSION),
++           (const char*)glGetString(GL_RENDERER), g_ottsel_gles_window_fbo);
++  return true;
++}
++
++void ottsel_gl_render(SDL_Window* window) {
++  // Mirrors GLDisplay::render() without the desktop window/imgui handling.
++  int fb_w = 0, fb_h = 0;
++  SDL_GetWindowSizeInPixels(window, &fb_w, &fb_h);
++  auto& s = Gfx::g_global_settings;
++  // Same fallback as GLDisplay::render when the game has not chosen a resolution.
++  const int game_w = s.game_res_w > 0 ? s.game_res_w : 640;
++  const int game_h = s.game_res_h > 0 ? s.game_res_h : 480;
++  static int frames = 0;
++  const auto start = std::chrono::steady_clock::now();
++  // MSAA stays 1: ES 3.0 has no multisample textures (see ottsel_gles_compat.h).
++  render_game_frame(game_w, game_h, fb_w, fb_h, fb_w, fb_h, 1, s.brightness_contrast_color,
++                    s.brightness_contrast_alpha, false);
++  if (++frames <= 5 || frames % 60 == 0) {
++    const double ms = std::chrono::duration<double, std::milli>(
++                          std::chrono::steady_clock::now() - start).count();
++    lg::info("OTTSEL GL FRAME: {} game={}x{} window={}x{} render-ms={:.1f} gl-error=0x{:x}", frames,
++             game_w, game_h, fb_w, fb_h, ms, glGetError());
++  }
++  if (s.framelimiter) {
++    g_gfx_data->frame_limiter.run(s.target_fps, s.experimental_accurate_lag,
++                                  s.sleep_in_frame_limiter, g_gfx_data->last_engine_time);
++  }
++  // UIKit presents whichever renderbuffer is bound; the renderer leaves its own depth buffers bound.
++  glBindRenderbuffer(GL_RENDERBUFFER, g_ottsel_gles_window_renderbuffer);
++  SDL_GL_SwapWindow(window);
++  // Toggle even/odd and wake the engine waiting in gl_vsync.
++  std::unique_lock<std::mutex> lock(g_gfx_data->sync_mutex);
++  g_gfx_data->frame_idx++;
++  g_gfx_data->sync_cv.notify_all();
++}
++#endif
 diff --git a/game/graphics/texture/TexturePool.cpp b/game/graphics/texture/TexturePool.cpp
 index 2be2c51d3..59005ab44 100644
 --- a/game/graphics/texture/TexturePool.cpp
@@ -2739,10 +3139,10 @@ index c4d320a27..7a7f9b40c 100644
    void draw_debug_window();
 diff --git a/game/ios_stubs.cpp b/game/ios_stubs.cpp
 new file mode 100644
-index 000000000..3cfd9d77e
+index 000000000..7b9ca1121
 --- /dev/null
 +++ b/game/ios_stubs.cpp
-@@ -0,0 +1,334 @@
+@@ -0,0 +1,344 @@
 +// Ottsel S1.3 — stub implementations for the iOS (OTTSEL_IOS) build of the
 +// no-emit runtime.  The iOS shell is a headless-renderer build: graphics,
 +// sound, IOP and listener subsystems are not linked, so the few symbols the
@@ -2779,7 +3179,9 @@ index 000000000..3cfd9d77e
 +// Globals normally defined in game/runtime.cpp (not built on iOS).
 +u8* g_ee_main_mem = nullptr;
 +GameVersion g_game_version = GameVersion::Jak1;
++#ifndef OTTSEL_GLES  // The GL renderer build links game/graphics/screenshot.cpp.
 +bool g_want_screenshot = false;
++#endif
 +
 +// Overlord globals referenced by the kernel code.
 +
@@ -2843,7 +3245,9 @@ index 000000000..3cfd9d77e
 +}
 +
 +// --- Screenshot settings stub ---
++#ifndef OTTSEL_GLES
 +void register_screen_shot_settings(ScreenShotSettings*) {}
++#endif
 +
 +// --- IOP SIF stubs (no IOP emulation on iOS) ---
 +
@@ -2862,6 +3266,9 @@ index 000000000..3cfd9d77e
 +
 +}  // namespace Gfx
 +
++// The GL renderer build links the real DisplayManager and InputManager; they stay unreachable while
++// Display::GetMainDisplay() returns null, exactly like these inert stubs.
++#ifndef OTTSEL_GLES
 +// --- DisplayManager (game/system/hid/display_manager.h) ---
 +void DisplayManager::enqueue_set_display_id(int display_id) {
 +  (void)display_id;
@@ -2903,6 +3310,7 @@ index 000000000..3cfd9d77e
 +  (void)height;
 +  return true;
 +}
++#endif
 +
 +// --- Display (game/graphics/display.h) ---
 +namespace Display {
@@ -2913,6 +3321,7 @@ index 000000000..3cfd9d77e
 +
 +// --- IOP (game/system/iop_thread.h) ---
 +
++#ifndef OTTSEL_GLES
 +// --- InputManager (game/system/hid/input_manager.h) ---
 +std::string InputManager::get_controller_name(const int controller_id) {
 +  (void)controller_id;
@@ -3075,6 +3484,7 @@ index 000000000..3cfd9d77e
 +  obj.need_ctrl = j.value("ctrl", false);
 +  obj.need_meta = j.value("meta", false);
 +}
++#endif  // OTTSEL_GLES
 +
 +#endif
 diff --git a/game/kernel/asm_funcs_arm64.s b/game/kernel/asm_funcs_arm64.s

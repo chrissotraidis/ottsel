@@ -79,7 +79,7 @@ if names:
   identity['sources'][name]=hashlib.sha256(source).hexdigest()
 if a.action=='preflight':raise SystemExit(0)
 # build-ios.sh keeps simulator and device builds in separate trees (OTTSEL_PLATFORM).
-cache=work/('out/ios-device' if os.environ.get('OTTSEL_PLATFORM')=='device' else 'out/ios')/'app/signed-module-profile.json'
+cache=(pathlib.Path(os.environ['OTTSEL_IOS_OUT']) if os.environ.get('OTTSEL_IOS_OUT') else work/('out/ios-device' if os.environ.get('OTTSEL_PLATFORM')=='device' else 'out/ios'))/'app/signed-module-profile.json'
 if a.action=='check':
  if not names and not cache.exists():raise SystemExit(0)  # Preserve unsigned legacy shell-only reuse.
  require(cache.is_file(),'Missing signed module profile')

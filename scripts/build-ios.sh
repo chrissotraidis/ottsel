@@ -42,11 +42,20 @@ REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WORKTREE="$REPO_DIR/out/jak-project"
 SDL_SRC="$WORKTREE/third-party/SDL"
 PLATFORM="${OTTSEL_PLATFORM:-simulator}"
+# OTTSEL_RENDERER=gl runs OpenGOAL's own OpenGL renderer on an OpenGL ES 3.0 context
+# (game/graphics/ottsel_gles_compat.h); the default is the Metal shell renderer.
+RENDERER="${OTTSEL_RENDERER:-metal}"
 case "$PLATFORM" in
   simulator) IOS_OUT="$WORKTREE/out/ios" ;;
   device) IOS_OUT="$WORKTREE/out/ios-device" ;;
   *) echo "OTTSEL_PLATFORM must be simulator or device" >&2; exit 2 ;;
 esac
+case "$RENDERER" in
+  metal) ;;
+  gl) IOS_OUT="$IOS_OUT-gl" ;;
+  *) echo "OTTSEL_RENDERER must be metal or gl" >&2; exit 2 ;;
+esac
+export OTTSEL_IOS_OUT="$IOS_OUT"
 SDL_BUILD="$IOS_OUT/sdl"
 ZSTD_PROJECT="$WORKTREE/out/ios/zstd-project"
 ZSTD_BUILD="$IOS_OUT/zstd-build"
@@ -128,6 +137,11 @@ if [ "$PLATFORM" = device ]; then STRICT_EXEC=1; fi
 if [ "$STRICT_EXEC" = 1 ]; then
   COMMON_FLAGS+=(-DOTTSEL_STRICT_EXEC)
 fi
+GLES_INCLUDE=()
+if [ "$RENDERER" = gl ]; then
+  COMMON_FLAGS+=(-DOTTSEL_GLES)
+  GLES_INCLUDE=(-include "$WORKTREE/game/graphics/ottsel_gles_compat.h")
+fi
 INCS=(-I"$WORKTREE" \
   -I"$WORKTREE/third-party/fmt/include" \
   -I"$WORKTREE/third-party/fmt/src" \
@@ -140,7 +154,8 @@ INCS=(-I"$WORKTREE" \
   -I"$WORKTREE/third-party/cubeb/cubeb/include" \
   -I"$WORKTREE/third-party/cubeb/include" \
   -I"$SDL_SRC/include" \
-  -I"$REPO_DIR/tools/ottsel_vu1")
+  -I"$REPO_DIR/tools/ottsel_vu1" \
+  -I"$WORKTREE/third-party/glad/include")
 FRAMEWORKS=(-framework UIKit -framework Foundation -framework CoreGraphics \
   -framework QuartzCore -framework Metal -framework AudioToolbox \
   -framework CoreHaptics -framework CoreMotion -framework AVFoundation \
@@ -152,7 +167,10 @@ FRAMEWORKS=(-framework UIKit -framework Foundation -framework CoreGraphics \
 
 compile() {
   local src="$1" out="$2"
-  xcrun --sdk "$SDK" clang++ "${COMMON_FLAGS[@]}" "${INCS[@]}" -c "$src" -o "$out"
+  local extra=()
+  # The ES compatibility header only belongs in the upstream renderer sources.
+  case "$src" in */game/graphics/*) extra=(${GLES_INCLUDE[@]+"${GLES_INCLUDE[@]}"}) ;; esac
+  xcrun --sdk "$SDK" clang++ "${COMMON_FLAGS[@]}" ${extra[@]+"${extra[@]}"} "${INCS[@]}" -c "$src" -o "$out"
 }
 
 compile_objc() {
@@ -330,12 +348,50 @@ KERNEL_SRC="$KERNEL_SRC
   third-party/libco/libco.c
 "
 
+if [ "$RENDERER" = gl ]; then
+  # OpenGOAL's renderer, minus the three files whose symbols the iOS stubs provide.
+  GFX_SRC="$(cd "$WORKTREE" && rg -o 'graphics/[A-Za-z0-9_/]+\.cpp' game/CMakeLists.txt | sort -u |
+    rg -v 'gfx_test|graphics/gfx\.cpp|graphics/display\.cpp|sceGraphicsInterface' | sed 's#^#game/#')"
+  KERNEL_SRC="$KERNEL_SRC
+  $GFX_SRC
+  game/graphics/ottsel_gles.cpp
+  common/dma/dma.cpp
+  common/dma/dma_copy.cpp
+  common/dma/gs.cpp
+  common/util/FrameLimiter.cpp
+  common/texture/texture_slots.cpp
+  game/system/hid/display_manager.cpp
+  game/system/hid/input_bindings.cpp
+  game/system/hid/input_manager.cpp
+  game/system/hid/sdl_util.cpp
+  game/system/hid/devices/dualsense_effects.cpp
+  game/system/hid/devices/game_controller.cpp
+  game/system/hid/devices/keyboard.cpp
+  game/system/hid/devices/mouse.cpp
+  game/tools/filter_menu/filter_menu.cpp
+  game/settings/settings.cpp
+  third-party/stb_image/stb_image.cpp
+  third-party/glad/src/glad.c
+  third-party/imgui/imgui.cpp
+  third-party/imgui/imgui_draw.cpp
+  third-party/imgui/imgui_tables.cpp
+  third-party/imgui/imgui_widgets.cpp
+  third-party/imgui/imgui_impl_sdl3.cpp
+  third-party/imgui/imgui_impl_opengl3.cpp
+  third-party/imgui/imgui_stdlib.cpp
+  third-party/imgui/imgui_style.cpp
+"
+fi
+
 OBJS=()
 for src in $COMMON_SRC $KERNEL_SRC; do
   name="$(echo "$src" | tr '/' '_' | sed 's/\.\(cpp\|cc\|s\|c\)$/.o/')"
   case "$src" in
     *.c) xcrun --sdk "$SDK" clang -O2 -target "$TARGET" -isysroot "$SDKROOT" \
-           -mios-version-min="$DEPLOY" -c "$WORKTREE/$src" -o "$OBJ/$name" ;;
+           -mios-version-min="$DEPLOY" -I"$WORKTREE/third-party/glad/include" \
+           -c "$WORKTREE/$src" -o "$OBJ/$name" ;;
+    third-party/imgui/*) xcrun --sdk "$SDK" clang++ "${COMMON_FLAGS[@]}" "${INCS[@]}" \
+           -c "$WORKTREE/$src" -o "$OBJ/$name" ;;
     *) compile "$WORKTREE/$src" "$OBJ/$name" ;;
   esac
   OBJS+=("$OBJ/$name")
@@ -452,6 +508,12 @@ mkdir -p "$APP"
 rm -f "$APP"/*.CGO
 cp "$APP_BUILD/OttselShell" "$APP/"
 cp "$REPO_DIR/src/shell/Info.plist" "$APP/"
+if [ "$RENDERER" = gl ]; then
+  mkdir -p "$APP/game/graphics/opengl_renderer"
+  rm -rf "$APP/game/graphics/opengl_renderer/shaders"
+  python3 "$REPO_DIR/scripts/translate-gl-shaders.py" "$WORKTREE/game/graphics/opengl_renderer/shaders" \
+    "$APP/game/graphics/opengl_renderer/shaders"
+fi
 cp "$WORKTREE/out/jak1/iso/KERNEL.CGO" "$APP/KERNEL.CGO"
 cp "$WORKTREE/out/jak1/iso/GAME.CGO" "$APP/GAME.CGO"
 # Local Simulator research bundle only: the DGO/TEXT resources copied below

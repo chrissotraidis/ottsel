@@ -361,7 +361,9 @@ void prepare_user_data_impl() {
     return;
   }
   g_prepared_iso_data_dir = select_ios_iso_data_dir();
-  lg::info("OTTSEL BOOT PHASE: user-data root prepared before Metal");
+  // The renderer's level loader reads fr3 from this root as soon as it is created.
+  ee::ottsel_set_iso_data_dir(g_prepared_iso_data_dir.c_str());
+  lg::info("OTTSEL BOOT PHASE: user-data root prepared before the renderer");
 }
 
 bool has_user_data_impl() {

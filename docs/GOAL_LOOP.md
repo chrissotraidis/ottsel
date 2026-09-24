@@ -16,14 +16,19 @@ Out of scope: Jak 2/3, App Store submission, a new engine, and polish that no pl
 
 ## Where it stands (2026-09-24)
 
-Proven in the **Simulator only**: the strict build runs OpenGOAL's real IOP/OVERLORD thread (level, cutscene
-and audio streaming, as desktop) and signed code for 372 of the game's 518 code modules. New Game plays the
-whole intro (Sandover, Misty, Samos's hut) and hands over to Geyser Rock with a 0-byte fault log. The other
-146 modules - the remaining levels' code - still go through the runtime linker, which a device refuses, so
-`ottsel_signed_gstate.cpp` refuses `iphoneos` builds until `python3 scripts/signed-coverage.py
-config/signed-game-strict.json` reports 0. Particle/sprite effects render badly, and the iPad Simulator
-presents at ~5-10 fps against 60 on macOS; the renderer (`src/shell/metal_gfx.mm`) re-implements OpenGOAL's
-buckets in Metal with CPU-side VU1 emulation and MERC skinning.
+Proven in the **Simulator only**: all 518 code modules are signed, `OTTSEL_STRICT_EXEC` makes runtime code
+loading fatal, and the strict build plays the whole intro to Geyser Rock on OpenGOAL's real IOP/OVERLORD
+with a 0-byte fault log. The `iphoneos` build compiles and links; installing it needs the user's Apple ID
+and iPad (G2).
+
+Renderer decision: OpenGOAL's **own OpenGL renderer** runs on iOS over OpenGL ES 3.0
+(`OTTSEL_RENDERER=gl`, output in `out/ios-gl`). Its 92 shaders are cross-compiled at build time by
+`scripts/translate-gl-shaders.py` (glslang + SPIRV-Cross: `brew install glslang spirv-cross`), and
+`game/graphics/ottsel_gles_compat.h` maps the few desktop-only GL calls. The title screen matches the
+macOS build ([evidence](evidence/G3/upstream-gl-renderer-title-2026-09-24.md)). The custom Metal renderer
+(`src/shell/metal_gfx.mm`: broken particles, 5-10 fps) stops growing and is deleted once the GL lane
+carries the touch overlay and plays the intro. The Simulator's GL is a CPU rasterizer, so frame rate is
+measured only on the device.
 
 ## One round
 
@@ -59,7 +64,7 @@ python3 scripts/replay-ios-normal-route.py <udid>     # Simulator: title -> New 
 (`scripts/snapshot-jak-project.sh verify` PASS); one authority; evidence media ignored by git.
 Keep it done: every round ends committed and `verify` passes.
 
-**G1 The whole game is signed, and runtime code loading is fatal.** Grow `config/signed-game-strict.json`
+**G1 The whole game is signed, and runtime code loading is fatal** - *met 2026-09-24 (Simulator).* Grow `config/signed-game-strict.json`
 (the one strict list) level by
 level in play order (Training/Geyser Rock first, then Sentinel Beach, Forbidden Jungle, Misty Island, ...) until
 `scripts/signed-coverage.py` reports `unsigned 0`, including load/unload/reload across level

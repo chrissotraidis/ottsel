@@ -30,6 +30,15 @@
 #include "ios_boot.h"
 #include "metal_shell.h"
 
+#ifdef OTTSEL_GLES
+// OpenGOAL's own OpenGL renderer on an OpenGL ES 3.0 context (game/graphics/pipelines/opengl.cpp).
+struct GfxRendererModule;
+extern const GfxRendererModule gRendererOpenGL;
+bool ottsel_gl_attach(SDL_Window* window);
+void ottsel_gl_render(SDL_Window* window);
+void ottsel_metal_gfx_set_renderer(const GfxRendererModule* m);
+#endif
+
 int ottsel_metal_gfx_has_live_scene();
 
 namespace {
@@ -1883,12 +1892,25 @@ int main(int argc, char** argv) {
   SDL_AddEventWatch(on_event_watch, nullptr);
   select_mobile_gamepad();
 
+#ifdef OTTSEL_GLES
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+  SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+  SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+  SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
+  g_win = SDL_CreateWindow("Ottsel Shell", 1024, 768,
+                           SDL_WINDOW_OPENGL | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+#else
   g_win = SDL_CreateWindow("Ottsel Shell", 1024, 768, 0);
+#endif
   if (!g_win) {
     fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
     return 1;
   }
+#ifndef OTTSEL_GLES
   g_surf = SDL_GetWindowSurface(g_win);
+#endif
 
   std::string bundle = SDL_GetBasePath();
   ottsel_ios_set_bundle_dir(bundle);
@@ -1920,7 +1942,16 @@ int main(int argc, char** argv) {
   // service is unavailable. Keep a diagnostic SDL-only mode so boot/data
   // boundaries can be verified independently; the product default remains
   // the Metal path.
+#ifdef OTTSEL_GLES
+  ottsel_ios_prepare_user_data();
+  if (!ottsel_gl_attach(g_win)) {
+    return 1;
+  }
+  ottsel_metal_gfx_set_renderer(&gRendererOpenGL);
+  const bool disable_metal = true;
+#else
   const bool disable_metal = std::getenv("OTTSEL_DISABLE_METAL") != nullptr;
+#endif
   g_metal = disable_metal ? nullptr : ottsel_metal_create(g_win);
   // VIDEO: the persisted render scale applies as soon as the layer exists.
   apply_render_scale();
@@ -1945,7 +1976,9 @@ int main(int argc, char** argv) {
 
   // S2.2: register the shell's Metal instance as the Gfx renderer backend so
   // the game's texture uploads decode and present through the CAMetalLayer.
+#ifndef OTTSEL_GLES
   ottsel_metal_gfx_register(g_metal);
+#endif
 
   load_touch_layout();
   // With the real IOP, OVERLORD's InitSound starts the sound system (game/overlord/jak1/ssound.cpp).
@@ -2421,6 +2454,9 @@ int main(int argc, char** argv) {
         status_overlay_active = false;
       }
   }
+#ifdef OTTSEL_GLES
+  ottsel_gl_render(g_win);  // OpenGOAL renders and presents directly to the window
+#endif
   if (g_metal) {
       // The CAMetalLayer's drawable size is only meaningful after the SDL
       // window finishes layout (at creation it can report a pre-layout
