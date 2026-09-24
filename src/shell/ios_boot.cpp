@@ -95,6 +95,9 @@ extern volatile u64 g_ottsel_call_idx;
 
 // Ottsel A1.1: real KERNEL.CGO slice proof runner (a11_slice_runner.mm).
 extern "C" int ottsel_run_a11_slice_proof();
+#ifndef OTTSEL_NO_IOP
+void ottsel_ios_start_iop();  // game/ottsel_ios_iop.cpp
+#endif
 
 namespace {
 
@@ -2831,6 +2834,9 @@ static void ottsel_ios_run_boot_impl() {
   // the same writable root used by the validated user-data import and avoids
   // relying on the process working directory on iOS.
   file_util::override_user_config_dir(g_writable_dir, true);
+  // Desktop resolves project-relative files (e.g. the IOP memory card's user/memcard.bin)
+  // against its data folder; on iOS that is the app's writable container.
+  file_util::setup_project_path(ghc::filesystem::path(g_writable_dir), true);
   lg::info("OTTSEL F1: save root={}", file_util::get_user_memcard_dir(GameVersion::Jak1).string());
   // Ottsel S2.1 (BOT11): the native boot (jak1/kboot.cpp goal_main) calls
   // init_crc() before InitMachine(); the iOS shell skips goal_main, so the
@@ -2846,6 +2852,11 @@ static void ottsel_ios_run_boot_impl() {
   // ---- boot the kernel (IOP/gfx/listener remain OTTSEL_IOS-stubbed) ----
   MasterDebug = 0;
   MasterUseKernel = 1;
+#ifndef OTTSEL_NO_IOP
+  // Run the real IOP/OVERLORD thread before InitMachine sends it the start command.
+  ottsel_ios_start_iop();
+  lg::info("OTTSEL BOOT PHASE: IOP thread started");
+#endif
   // Ottsel S2.1 (BOT11): serve DGO/CGO loads from the selected user pack or
   // the clean-install diagnostic bundle fallback.
   if (jak1::InitMachine() >= 0) {

@@ -2739,10 +2739,10 @@ index c4d320a27..7a7f9b40c 100644
    void draw_debug_window();
 diff --git a/game/ios_stubs.cpp b/game/ios_stubs.cpp
 new file mode 100644
-index 000000000..1e5128c74
+index 000000000..e4956c805
 --- /dev/null
 +++ b/game/ios_stubs.cpp
-@@ -0,0 +1,362 @@
+@@ -0,0 +1,376 @@
 +// Ottsel S1.3 — stub implementations for the iOS (OTTSEL_IOS) build of the
 +// no-emit runtime.  The iOS shell is a headless-renderer build: graphics,
 +// sound, IOP and listener subsystems are not linked, so the few symbols the
@@ -2750,6 +2750,7 @@ index 000000000..1e5128c74
 +
 +#ifdef OTTSEL_IOS
 +
++#include <functional>
 +#include <memory>
 +#include <optional>
 +#include <string>
@@ -2782,6 +2783,7 @@ index 000000000..1e5128c74
 +
 +// Overlord globals referenced by the kernel code.
 +
++#ifdef OTTSEL_NO_IOP
 +namespace iop {
 +int GetThreadId() {
 +  return 0;
@@ -2793,6 +2795,11 @@ index 000000000..1e5128c74
 +}  // namespace iop
 +
 +void ExitIOP() {}
++#endif  // OTTSEL_NO_IOP
++
++// The real IOP scheduler wakes on vblank (upstream registers this through
++// Gfx::register_vsync_callback, which the iOS build does not compile).
++std::function<void()> g_ottsel_ios_vblank;
 +
 +namespace Gfx {
 +
@@ -2821,6 +2828,9 @@ index 000000000..1e5128c74
 +u32 sceGsSyncV(u32 mode) {
 +  static u32 sync_count = 0;
 +  ++g_ottsel_ios_vsync_count;
++  if (g_ottsel_ios_vblank) {
++    g_ottsel_ios_vblank();
++  }
 +  if (sync_count++ < 8 || sync_count == 60) {
 +    lg::info("OTTSEL IOS VSYNC: call={} mode={} renderer-delegated={}", sync_count, mode,
 +             Gfx::GetCurrentRenderer() && Gfx::GetCurrentRenderer()->vsync != nullptr);
@@ -2849,6 +2859,7 @@ index 000000000..1e5128c74
 +void register_screen_shot_settings(ScreenShotSettings*) {}
 +
 +// --- IOP SIF stubs (no IOP emulation on iOS) ---
++#ifdef OTTSEL_NO_IOP
 +bool IOP_Kernel::sif_busy(u32 id) {
 +  (void)id;
 +  return false;
@@ -2869,6 +2880,7 @@ index 000000000..1e5128c74
 +  (void)recvBuff;
 +  (void)recvSize;
 +}
++#endif  // OTTSEL_NO_IOP
 +
 +// --- Gfx extras referenced by the kernel scheme code ---
 +namespace Gfx {
@@ -2935,11 +2947,13 @@ index 000000000..1e5128c74
 +}  // namespace Display
 +
 +// --- IOP (game/system/iop_thread.h) ---
++#ifdef OTTSEL_NO_IOP
 +void IOP::send_status(IOP_Status new_status) {
 +  (void)new_status;
 +}
 +void IOP::signal_run_iop() {}
 +void IOP::wait_for_overlord_init_finish() {}
++#endif  // OTTSEL_NO_IOP
 +
 +// --- InputManager (game/system/hid/input_manager.h) ---
 +std::string InputManager::get_controller_name(const int controller_id) {
@@ -4132,10 +4146,10 @@ index 000000000..3b787e107
 +}
 diff --git a/game/kernel/common/ottsel_signed_gstate.cpp b/game/kernel/common/ottsel_signed_gstate.cpp
 new file mode 100644
-index 000000000..e7366c959
+index 000000000..4fb8a7dce
 --- /dev/null
 +++ b/game/kernel/common/ottsel_signed_gstate.cpp
-@@ -0,0 +1,395 @@
+@@ -0,0 +1,399 @@
 +#include "ottsel_signed_gstate.h"
 +#ifdef OTTSEL_SIGNED_GSTATE_EXPERIMENT
 +#include <TargetConditionals.h>
@@ -4422,7 +4436,11 @@ index 000000000..e7366c959
 +  // is already in the arena; heap is only authenticated as a caller cookie.
 +  (void)jump_from_c_to_goal;
 +  (void)heap;
-+  require(prepared && g_ee_main_mem == manifest.arena && !loaded[selected], "arena mismatch or duplicate module load");
++  // A level that unloads and streams back in re-runs its top-level on fresh data, exactly as a
++  // desktop reload links a new copy: the data segment is reset from initial_data below.
++  require(prepared && g_ee_main_mem == manifest.arena && (!loaded[selected] || streamed),
++          "arena mismatch or duplicate module load");
++  if (loaded[selected]) lg::info("SIGNED MODULE RELOAD: name={}", name);
 +  require(bytes && size > 0 && uint32_t(size) == manifest.source_size, "source size mismatch");
 +  unsigned char digest[CC_SHA256_DIGEST_LENGTH]; char hex[65];
 +  CC_SHA256(bytes, CC_LONG(size), digest);
@@ -5686,7 +5704,7 @@ index 0731d5272..209a11baa 100644
    ListenerFunction = intern_from_c("*listener-function*");
    kernel_dispatcher = intern_from_c("kernel-dispatcher");
 diff --git a/game/kernel/jak1/kmachine.cpp b/game/kernel/jak1/kmachine.cpp
-index 459a21562..6ba7e27a7 100644
+index 459a21562..29f36c426 100644
 --- a/game/kernel/jak1/kmachine.cpp
 +++ b/game/kernel/jak1/kmachine.cpp
 @@ -1,3 +1,4 @@
@@ -5709,7 +5727,7 @@ index 459a21562..6ba7e27a7 100644
   * Removed calls to exit(0) if loading modules fails.
   */
  void InitIOP() {
-+#ifdef OTTSEL_IOS
++#ifdef OTTSEL_NO_IOP
 +  // Ottsel S1.3: no IOP emulation on iOS; the kernel DGO is loaded directly
 +  // from the app bundle (see ottsel_ios_load_kernel_from_bundle).
 +  return;
@@ -5738,7 +5756,7 @@ index 459a21562..6ba7e27a7 100644
    }
  
    init_output();    // GOAL input/output buffer setup
-+#ifndef OTTSEL_IOS
++#ifndef OTTSEL_NO_IOP
    jak1::InitIOP();  // start IOP/OVERLORD, loading our legal splash screen
  
    // sceGsResetPath(); // reset VIF1, VU1, GIF
@@ -5748,7 +5766,7 @@ index 459a21562..6ba7e27a7 100644
  
    // FlushCache(WRITEBACK_DCACHE);
    // FlushCache(INVALIDATE_ICACHE);
-@@ -344,6 +360,7 @@ int InitMachine() {
+@@ -344,17 +360,20 @@ int InitMachine() {
    //   MsgErr("dkernel: !init pad\n");
    // }
  
@@ -5756,7 +5774,13 @@ index 459a21562..6ba7e27a7 100644
    if (MasterDebug) {  // connect to GOAL compiler
      InitGoalProto();
    } else {
-@@ -355,6 +372,7 @@ int InitMachine() {
+     // shut down the deci2 stuff, we don't need it.
+     ee::sceDeci2Disable();
+   }
+-
++#endif  // iOS runs no Deci2 server (no compiler connection)
++#ifndef OTTSEL_NO_IOP
+   lg::info("InitSound");
    InitSound();  // do nothing!
    lg::info("InitRPC");
    InitRPC();       // connect to IOP
@@ -5764,7 +5788,7 @@ index 459a21562..6ba7e27a7 100644
    reset_output();  // reset output buffers
    clear_print();
  
-@@ -368,10 +386,14 @@ int InitMachine() {
+@@ -368,10 +387,14 @@ int InitMachine() {
    g_auto_splitter_block_jak1.pointer_to_symbol =
        (u64)g_ee_main_mem + intern_from_c("*autosplit-info-jak1*")->value;
  
@@ -5779,7 +5803,7 @@ index 459a21562..6ba7e27a7 100644
    Msg(6, "kernel: machine started\n");
    return 0;
  }
-@@ -380,10 +402,12 @@ int InitMachine() {
+@@ -380,10 +403,12 @@ int InitMachine() {
   * Shutdown the runtime.
   */
  int ShutdownMachine() {
@@ -5792,7 +5816,7 @@ index 459a21562..6ba7e27a7 100644
  
    Msg(6, "kernel: machine shutdown\n");
    return 0;
-@@ -420,6 +444,11 @@ void PutDisplayEnv(u32 ptr) {
+@@ -420,6 +445,11 @@ void PutDisplayEnv(u32 ptr) {
  }
  
  void update_discord_rpc(u32 discord_info) {
@@ -5804,7 +5828,7 @@ index 459a21562..6ba7e27a7 100644
    if (gDiscordRpcEnabled) {
      DiscordRichPresence rpc;
      char state[128];
-@@ -521,10 +550,24 @@ void update_discord_rpc(u32 discord_info) {
+@@ -521,10 +551,24 @@ void update_discord_rpc(u32 discord_info) {
  
  void pc_set_levels(u32 l0, u32 l1) {
    if (!Gfx::GetCurrentRenderer()) {
@@ -5829,7 +5853,7 @@ index 459a21562..6ba7e27a7 100644
  
    std::vector<std::string> levels;
    if (l0s != "none" && l0s != "#f") {
-@@ -576,6 +619,7 @@ void InitMachine_PCPort() {
+@@ -576,6 +620,7 @@ void InitMachine_PCPort() {
   * which should prepare the game engine.
   */
  void InitMachineScheme() {
@@ -5837,7 +5861,7 @@ index 459a21562..6ba7e27a7 100644
    make_function_symbol_from_c("put-display-env", (void*)PutDisplayEnv);       // used in drawable
    make_function_symbol_from_c("syncv", (void*)sceGsSyncV);                    // used in drawable
    make_function_symbol_from_c("sync-path", (void*)sceGsSyncPath);             // used
-@@ -610,8 +654,14 @@ void InitMachineScheme() {
+@@ -610,8 +655,14 @@ void InitMachineScheme() {
    InitMachine_PCPort();
    InitSoundScheme();
    intern_from_c("*stack-top*")->value = 0x07ffc000;
@@ -8105,8 +8129,110 @@ index 000000000..d54973dbf
 +  }
 +  return 0;
 +}
+diff --git a/game/ottsel_ios_iop.cpp b/game/ottsel_ios_iop.cpp
+new file mode 100644
+index 000000000..bd51a53cb
+--- /dev/null
++++ b/game/ottsel_ios_iop.cpp
+@@ -0,0 +1,96 @@
++// Ottsel: run the real IOP/OVERLORD on iOS exactly as game/runtime.cpp's
++// iop_runner does on desktop (Jak 1 only), instead of the no-IOP RPC emulation
++// in sif_ee.cpp (kept behind OTTSEL_NO_IOP for comparison).
++
++#if defined(OTTSEL_IOS) && !defined(OTTSEL_NO_IOP)
++
++#include <atomic>
++#include <functional>
++#include <thread>
++
++#include "common/log/log.h"
++#include "game/kernel/common/kmachine.h"
++#include "game/overlord/common/fake_iso.h"
++#include "game/overlord/common/iso.h"
++#include "game/overlord/common/sbank.h"
++#include "game/overlord/common/srpc.h"
++#include "game/overlord/common/ssound.h"
++#include "game/overlord/jak1/dma.h"
++#include "game/overlord/jak1/fake_iso.h"
++#include "game/overlord/jak1/iso.h"
++#include "game/overlord/jak1/iso_queue.h"
++#include "game/overlord/jak1/overlord.h"
++#include "game/overlord/jak1/ramdisk.h"
++#include "game/overlord/jak1/srpc.h"
++#include "game/overlord/jak1/stream.h"
++#include "game/sce/iop.h"
++#include "game/sce/sif_ee.h"
++#include "game/system/iop_thread.h"
++
++extern std::function<void()> g_ottsel_ios_vblank;  // game/ios_stubs.cpp sceGsSyncV
++
++namespace {
++std::atomic<bool> g_iop_ready{false};
++
++void iop_main() {
++  IOP iop;
++  iop.reset_allocator();
++  ee::LIBRARY_sceSif_register(&iop);
++  iop::LIBRARY_register(&iop);
++  g_ottsel_ios_vblank = [&iop]() {
++    iop.kernel.signal_vblank();
++    iop.signal_run_iop();
++  };
++
++  jak1::dma_init_globals();
++  iso_init_globals();
++  jak1::iso_init_globals();
++  fake_iso_init_globals();
++  jak1::fake_iso_init_globals();
++  jak1::iso_queue_init_globals();
++  jak1::ramdisk_init_globals();
++  sbank_init_globals();
++  jak1::srpc_init_globals();
++  srpc_init_globals();
++  ssound_init_globals();
++  jak1::stream_init_globals();
++
++  g_iop_ready = true;
++  g_iop_ready.notify_all();
++
++  iop.wait_for_overlord_start_cmd();
++  if (iop.status != IOP_OVERLORD_INIT) {
++    lg::error("OTTSEL IOP: shutdown before OVERLORD start");
++    return;
++  }
++  // The user pack is selected before InitMachine sends the start command.
++  fake_iso_set_root(ee::ottsel_iso_data_dir());
++  iop.reset_allocator();
++  bool complete = false;
++  jak1::start_overlord_wrapper(iop.overlord_argc, iop.overlord_argv, &complete);
++  while (!complete) {
++    iop.kernel.dispatch();
++  }
++  lg::info("OTTSEL IOP: OVERLORD running, root={}", ee::ottsel_iso_data_dir());
++  iop.signal_overlord_init_finish();
++
++  while (!iop.want_exit) {
++    auto wait_duration = iop.kernel.dispatch();
++    if (wait_duration) {
++      iop.wait_run_iop(*wait_duration);
++    }
++  }
++}
++}  // namespace
++
++// Called by the iOS boot before jak1::InitMachine(), which sends the OVERLORD
++// start command through sceSifLoadModule and waits for it to finish.
++void ottsel_ios_start_iop() {
++  kmachine_init_globals_common();  // isodrv/modsrc/reboot_iop as on desktop
++  iop::LIBRARY_INIT();
++  ee::LIBRARY_INIT_sceSif();
++  std::thread(iop_main).detach();
++  g_iop_ready.wait(false);
++}
++
++#endif
 diff --git a/game/overlord/common/fake_iso.cpp b/game/overlord/common/fake_iso.cpp
-index 45136b024..eaa30381d 100644
+index 45136b024..e86125988 100644
 --- a/game/overlord/common/fake_iso.cpp
 +++ b/game/overlord/common/fake_iso.cpp
 @@ -41,6 +41,7 @@ struct FakeIsoEntry {
@@ -8117,7 +8243,7 @@ index 45136b024..eaa30381d 100644
  u32 fake_iso_entry_count;                      //! Total count of fake iso files
  
  void fake_iso_init_globals() {
-@@ -51,12 +52,37 @@ void fake_iso_init_globals() {
+@@ -51,12 +52,48 @@ void fake_iso_init_globals() {
    fake_iso_entry_count = 0;
  }
  
@@ -8153,17 +8279,28 @@ index 45136b024..eaa30381d 100644
 +    }
 +    return -1;
 +  }
-+  for (const auto& f : fs::directory_iterator(root)) {
++  std::vector<fs::path> dirs{root};
++#ifdef OTTSEL_IOS
++  // An iOS user pack keeps the disc's family folders (CGO/, DGO/, SBK/, ...) where
++  // desktop serves one flat out/<game>/iso folder; file names stay unique across them.
++  for (const char* family : {"CGO", "DGO", "MUS", "SBK", "STR", "TEXT", "VAG", "VIS"}) {
++    if (fs::is_directory(root / family, root_error)) {
++      dirs.push_back(root / family);
++    }
++  }
++#endif
++  for (const auto& dir : dirs)
++  for (const auto& f : fs::directory_iterator(dir)) {
      if (f.is_regular_file() || f.is_symlink()) {
        ASSERT(fake_iso_entry_count < MAX_ISO_FILES);
        FakeIsoEntry* e = &fake_iso_entries[fake_iso_entry_count];
-@@ -65,8 +91,7 @@ int fake_iso_FS_Init() {
+@@ -65,8 +102,7 @@ int fake_iso_FS_Init() {
        ASSERT_MSG(f.exists(),            // should only happen if the file is a symlink, afaik
                   fmt::format("[FAKEISO] couldn't find {} -- broken symlink?", file_name));
        strcpy(e->iso_name, file_name.c_str());
 -      e->full_path = fmt::format("{}/out/{}/iso/{}", file_util::get_jak_project_dir().string(),
 -                                 game_version_names[g_game_version], file_name);
-+      e->full_path = (root / file_name).string();
++      e->full_path = (dir / file_name).string();
        fake_iso_entry_count++;
      }
    }
@@ -8339,7 +8476,7 @@ index 458170a6b..29fcf3e19 100644
 +bool sound_disabled();
  }  // namespace jak1
 diff --git a/game/overlord/jak1/srpc.cpp b/game/overlord/jak1/srpc.cpp
-index 377aab01d..d44d3a270 100644
+index 377aab01d..cc192119b 100644
 --- a/game/overlord/jak1/srpc.cpp
 +++ b/game/overlord/jak1/srpc.cpp
 @@ -20,8 +20,11 @@
@@ -8365,7 +8502,7 @@ index 377aab01d..d44d3a270 100644
 +#endif
 +
  namespace jak1 {
-+#ifdef OTTSEL_IOS
++#ifdef OTTSEL_NO_IOP
 +
 +// The synchronous mobile loader executes the existing fake-ISO operation
 +// directly; LoadSoundBank's desktop wrapper waits on an absent IOP mailbox.
@@ -8511,7 +8648,7 @@ index 377aab01d..d44d3a270 100644
 +    if (command.play.name[0] == 0 || command.play.sound_id == 0) continue;
 +    char sound_name[17] = {};
 +    memcpy(sound_name, command.play.name, sizeof(command.play.name));
-+#ifdef OTTSEL_IOS
++#ifdef OTTSEL_NO_IOP
 +    if (memcmp(command.play.name, "spool-", 6) == 0) {
 +      // A voicebox line.  The desktop handler strips the prefix, resolves the VAG and streams it; this path
 +      // had no equivalent, so the request fell through to the bank lookup and was dropped.
@@ -8637,14 +8774,14 @@ index c0ff1ab82..e8e05b9a2 100644
 \ No newline at end of file
 +}  // namespace jak1
 diff --git a/game/overlord/jak1/ssound.cpp b/game/overlord/jak1/ssound.cpp
-index b766e1890..973641f6d 100644
+index b766e1890..889d30e80 100644
 --- a/game/overlord/jak1/ssound.cpp
 +++ b/game/overlord/jak1/ssound.cpp
 @@ -21,11 +21,14 @@ s32 gMusicVol = 0x400;
  u32 gStreamSRAM = 0;
  u32 gTrapSRAM = 0;
  
-+#ifndef OTTSEL_IOS
++#ifndef OTTSEL_NO_IOP
  void CatalogSRAM() {}
  
  static void* SndMemAlloc();
@@ -8685,7 +8822,7 @@ index b766e1890..973641f6d 100644
 +
 +}
 +
-+#ifndef OTTSEL_IOS
++#ifndef OTTSEL_NO_IOP
 +// IOP bootstrap owns SPU streaming allocation and its semaphore. Mobile calls
 +// the shared math/pan initialization directly, without creating this subsystem.
 +void InitSound_Overlord() {
@@ -8734,7 +8871,7 @@ index b766e1890..973641f6d 100644
      }
    }
  
-+#ifndef OTTSEL_IOS
++#ifndef OTTSEL_NO_IOP
    SetVAGVol();
 +#else
 +  // This updates the IOP VAG streaming voice, which mobile does not own yet.
@@ -8742,7 +8879,7 @@ index b766e1890..973641f6d 100644
 +#endif
  }
  
-+#ifndef OTTSEL_IOS
++#ifndef OTTSEL_NO_IOP
 +// Music/streaming remains owned by the IOP path until native loading is wired.
  void SetMusicVol() {
    s32 volume = (gMusicVol * gMusicFade >> 0x10) * gMusicTweak >> 7;
@@ -9985,7 +10122,7 @@ index 000000000..d1aee0f56
 +
 +}  // namespace ottsel::stream_clock
 diff --git a/game/sce/sif_ee.cpp b/game/sce/sif_ee.cpp
-index d40922a9a..6a80a18cb 100644
+index d40922a9a..f84b63ea6 100644
 --- a/game/sce/sif_ee.cpp
 +++ b/game/sce/sif_ee.cpp
 @@ -6,17 +6,92 @@
@@ -10016,7 +10153,7 @@ index d40922a9a..6a80a18cb 100644
 +#include <string>
 +#include <vector>
 +
-+#ifdef OTTSEL_IOS
++#ifdef OTTSEL_NO_IOP
 +// G2.3: the iOS product shell owns the VAG dialogue player (src/shell/ios_boot.cpp); declared at file scope so
 +// it keeps external linkage, mirroring ottsel_ios_writable_dir in the sound player.
 +extern bool ottsel_ios_play_vag_dialogue(const char* line_name);
@@ -10037,7 +10174,7 @@ index d40922a9a..6a80a18cb 100644
 +// the same file-id contract in the no-IOP iOS shim: the subsequent GET_DATA
 +// RPC copies a requested slice directly into the EE response buffer.
 +std::unordered_map<u32, std::vector<u8>> g_ottsel_ramdisk_files;
-+#ifdef OTTSEL_IOS
++#ifdef OTTSEL_NO_IOP
 +u32 g_ottsel_sound_info_ee = 0;
 +u32 g_ottsel_sound_frame = 0;
 +ottsel::stream_clock::Clock g_ottsel_stream_clock;
@@ -10060,7 +10197,7 @@ index d40922a9a..6a80a18cb 100644
  }  // namespace
  
 +void ottsel_ios_refresh_sound_info() {
-+#ifdef OTTSEL_IOS
++#ifdef OTTSEL_NO_IOP
 +  ottsel_refresh_sound_info();
 +#endif
 +}
@@ -10086,7 +10223,7 @@ index d40922a9a..6a80a18cb 100644
    }
    sce_fds.clear();
 +  g_ottsel_ramdisk_files.clear();
-+#ifdef OTTSEL_IOS
++#ifdef OTTSEL_NO_IOP
 +  g_ottsel_sound_info_ee = 0;
 +  g_ottsel_sound_frame = 0;
 +  g_ottsel_stream_clock.stop();
@@ -10126,7 +10263,7 @@ index d40922a9a..6a80a18cb 100644
                    s32 rsize,
                    void* end_func,
                    void* end_para) {
-+#ifdef OTTSEL_IOS
++#ifdef OTTSEL_NO_IOP
 +  ottsel_refresh_sound_info();
 +  // The GAME host fixture has no IOP thread and links desktop overlord
 +  // RPC_Loader, which calls GetThreadId() on a null IOP. Product iOS uses
@@ -10587,7 +10724,7 @@ index d40922a9a..6a80a18cb 100644
  }
  
  s32 sceSifCheckStatRpc(sceSifRpcData* bd) {
-+#ifdef OTTSEL_IOS
++#ifdef OTTSEL_NO_IOP
 +  (void)bd;
 +  return 0;
 +#else
@@ -10597,7 +10734,7 @@ index d40922a9a..6a80a18cb 100644
  }
  
  s32 sceSifBindRpc(sceSifClientData* bd, u32 request, u32 mode) {
-+#ifdef OTTSEL_IOS
++#ifdef OTTSEL_NO_IOP
 +  // Ottsel S2.1: keep the RPC client object shape valid (bd->serve set) so
 +  // the GOAL-side call method proceeds; no IOP work happens.
 +  (void)mode;
@@ -12129,26 +12266,6 @@ index 30cbc28e6..82991053a 100644
    int m_skip_polling_for_n_frames = 0;
    bool m_auto_hide_mouse = true;
    bool m_mouse_currently_hidden = false;
-diff --git a/goal_src/jak1/dgos/mis.gd b/goal_src/jak1/dgos/mis.gd
-index 981be01bf..6483c95b2 100644
---- a/goal_src/jak1/dgos/mis.gd
-+++ b/goal_src/jak1/dgos/mis.gd
-@@ -34,6 +34,8 @@
-   "breakaway-mid-ag.go"
-   "breakaway-right-ag.go"
-   "darkecocan-ag.go"
-+  "evilbro-ag.go"
-+  "evilsis-ag.go"
-   "ef-plane-ag.go"
-   "keg-ag.go"
-   "keg-conveyor-ag.go"
-@@ -58,4 +60,4 @@
-   "wheel-ag.go"
-   "windturbine-ag.go"
-   "misty-vis.go"
-- ))
-\ No newline at end of file
-+ ))
 diff --git a/goal_src/jak1/engine/camera/cam-combiner.gc b/goal_src/jak1/engine/camera/cam-combiner.gc
 index b5f775564..46711b011 100644
 --- a/goal_src/jak1/engine/camera/cam-combiner.gc
@@ -13193,152 +13310,6 @@ index ad7440d63..ecaa7d033 100644
                        (level-get-for-use *level* (-> s3-1 info name) 'active)
                        (set! (-> s3-1 display?) (-> this want s5-2 display?)))
                       (else
-diff --git a/goal_src/jak1/engine/load/loader.gc b/goal_src/jak1/engine/load/loader.gc
-index 17b70912d..27308dbcd 100644
---- a/goal_src/jak1/engine/load/loader.gc
-+++ b/goal_src/jak1/engine/load/loader.gc
-@@ -196,7 +196,31 @@
-                          (set! (-> janim-group data a0-14) janim)
-                          (set! success #t)
-                          (goto cfg-22)))))))))
--          (if (not success) (format 0 "ERROR: ~A could not find a master slot to link for ~A.~%" (-> this name) janim))))))
-+          (if (not success)
-+            (begin
-+              ;; Bounded compatibility probe: a streamed animation can only
-+              ;; link into a vacant resident master-art-group slot.  Record
-+              ;; the concrete request and occupancy before changing that
-+              ;; lifetime contract.
-+              (format 0 "OTTSEL ART-LINK: file=~A janim=~A master=~A requested-slot=~D~%"
-+                      (-> this name)
-+                      (-> janim name)
-+                      (-> janim master-art-group-name)
-+                      (-> janim master-art-group-index))
-+              (countdown (slot 3)
-+                (let ((level (-> *level* level slot)))
-+                  (if level
-+                    (format 0 "OTTSEL ART-LINK: level-slot=~D level=~A status=~A~%"
-+                            slot (-> level name) (-> level status))
-+                    (format 0 "OTTSEL ART-LINK: level-slot=~D empty~%" slot))
-+                  (let ((janim-group (if level (art-group-get-by-name level (-> janim master-art-group-name)))))
-+                    (when janim-group
-+                      (let ((occupied 0))
-+                        (countdown (idx (-> janim-group length))
-+                          (when (-> janim-group data idx) (+! occupied 1)))
-+                        (format 0 "OTTSEL ART-LINK: level-slot=~D group=~A length=~D occupied=~D~%"
-+                                slot (-> janim-group name) (-> janim-group length) occupied))))))
-+              (format 0 "ERROR: ~A could not find a master slot to link for ~A.~%" (-> this name) janim)))))))
-   this)
- 
- (defmethod unlink-art! ((this art-group))
-@@ -638,6 +662,7 @@
-             (sv-40 0)
-             (sv-48 0)
-             (sv-56 0)
-+            (stall-frames 0)
-             (spool-sound (new-sound-id)))
-         (backup-load-state-and-set-cmds *load-state* (-> arg0 command-list))
-         (set-setting! 'spooling (process->ppointer self) 0.0 0)
-@@ -668,7 +693,63 @@
-             (while (!= (file-status *art-control* (-> arg0 name) spool-part) 'active)
-               (if (arg3 self) (goto cfg-88))
-               (spool-push *art-control* (-> arg0 name) spool-part self -20.0)
--              (format #t "WARNING: ---------------------> loader stall on art ~S ~D~%" (-> arg0 name) spool-part)
-+              ;; Ottsel B53: recover a permanently locked spool buffer.
-+              ;; While *master-mode* is not 'game (the progress screen holds it)
-+              ;; clear-rec does not wipe the rec table, so a stale
-+              ;; equal-priority rec keeps the partner buffer 'active and the
-+              ;; kick-out in external-art-control::update (keyed on "rec 0
-+              ;; buf2") never fires.  The buffer that already holds the part we
-+              ;; are waiting for then stays 'locked forever.  Do exactly what
-+              ;; that kick-out would: drop the partner's pending file so it can
-+              ;; go 'inactive, unlock us, and let us activate.
-+              (+! stall-frames 1)
-+              (when (> stall-frames 2)
-+                (dotimes (bi 2)
-+                  (let ((b (-> *art-control* buffer bi)))
-+                    (when (and (= (-> b status) 'locked)
-+                               (-> b locked?)
-+                               (= (-> b other status) 'active)
-+                               (not (and (name= (-> b other load-file) (-> arg0 name))
-+                                         (= (-> b other load-file-part) spool-part))))
-+                      (format 0 "OTTSEL SPOOL RECOVER: name=~A part=~D evict-buf=~D~%"
-+                              (-> arg0 name) spool-part (-> b other index))
-+                      (set-pending-file (-> b other) (the-as string #f) -1 (the-as handle #f) SPOOL_PRIORITY_LOWEST)
-+                      (update (-> b other)))
-+                    ;; Ottsel G2.3 (2026-09-23): the other stuck shape.  A buffer whose art has loaded sits
-+                    ;; at 'locked until external-art-control::update promotes it to 'active, and that promotion
-+                    ;; needs a *live* owner process.  When the owner dies while the buffer still holds a part
-+                    ;; that another stream is waiting for, nothing ever releases it: measured at the intro
-+                    ;; cutscene, where b1 held sage-intro-sequence-a/0 as 'locked with locked? #f and owner
-+                    ;; sequenceA-village1 while ja-play-spooled-anim waited, so the sequence aborted and the
-+                    ;; camera never took over.  Drop the file so the buffer can go 'inactive and the partner
-+                    ;; can take our part.
-+                    (when (and (= (-> b status) 'locked)
-+                               (not (-> b locked?))
-+                               (not (handle->process (-> b load-file-owner))))
-+                      (format 0 "OTTSEL SPOOL RECOVER: name=~A part=~D evict-dead-owner-buf=~D~%"
-+                              (-> arg0 name) spool-part (-> b index))
-+                      (set-pending-file b (the-as string #f) -1 (the-as handle #f) SPOOL_PRIORITY_LOWEST)
-+                      (update b)))))
-+              (format #t "STALL-ART ~S ~D fs=~A,~A" (-> arg0 name) spool-part
-+                      (file-status (-> *art-control* buffer 0) (-> arg0 name) spool-part)
-+                      (file-status (-> *art-control* buffer 1) (-> arg0 name) spool-part))
-+              (format #t " b0=~S/~D/~S/lk=~A/own=~A" (-> *art-control* buffer 0 load-file) (-> *art-control* buffer 0 load-file-part) (-> *art-control* buffer 0 status) (-> *art-control* buffer 0 locked?) (handle->name (-> *art-control* buffer 0 load-file-owner)))
-+              (format #t " b1=~S/~D/~S/lk=~A/own=~A" (-> *art-control* buffer 1 load-file) (-> *art-control* buffer 1 load-file-part) (-> *art-control* buffer 1 status) (-> *art-control* buffer 1 locked?) (handle->name (-> *art-control* buffer 1 load-file-owner)))
-+              (format #t " owner-alive=~A,~A~%" (if (handle->process (-> *art-control* buffer 0 load-file-owner)) 1 0) (if (handle->process (-> *art-control* buffer 1 load-file-owner)) 1 0))
-+              ;; Ottsel G2.3 (2026-09-23): name the stale spool owner.  `handle->process` returns a dangling
-+              ;; object here instead of #f, so either the owner is alive but its object is unreadable, or the
-+              ;; handle's own pid is 0, which makes its `(= handle-pid process-pid)` check pass against a
-+              ;; zeroed process.  Print the raw handle (pid in the high half, process pointer in the low half)
-+              ;; and the dereferenced process's pid/status/type so one run separates the two.
-+              (dotimes (bi 2)
-+                (let ((h (-> *art-control* buffer bi load-file-owner)))
-+                  (format #t " OWN~D h=#x~x pptr=#x~x hpid=~D" bi (-> h u64) (the-as int (-> h process)) (-> h pid))
-+                  (let ((p (-> h process)))
-+                    (if p
-+                      (format #t " ppid=~D pstat=~S ptype=#x~x~%" (-> p pid) (-> p status) (the-as int (-> p type)))
-+                      (format #t " ppid=none~%")))))
-+              (format #t " r0=~S/~D/~f r1=~S/~D/~f" (-> *art-control* rec 0 name) (-> *art-control* rec 0 parts) (-> *art-control* rec 0 priority) (-> *art-control* rec 1 name) (-> *art-control* rec 1 parts) (-> *art-control* rec 1 priority))
-+              (format #t " r2=~S/~D/~f act=~S~%" (-> *art-control* rec 2 name) (-> *art-control* rec 2 parts) (-> *art-control* rec 2 priority) (-> *art-control* active-stream))
-               (suspend)
-               (if arg1 (ja :num! (loop!)))))
-           (spool-push *art-control* (-> arg0 name) spool-part self -20.0)
-@@ -676,10 +757,15 @@
-             (cond
-               (s2-4
-                (ja-channel-set! 1)
--               (ja-no-eval :group! s2-4 :num! (seek!) :frame-num 0.0)
--               (when (zero? spool-part)
--                 (str-play-async (-> arg0 name) spool-sound)
--                 (set! (-> *art-control* active-stream) (-> arg0 name)))
-+              (ja-no-eval :group! s2-4 :num! (seek!) :frame-num 0.0)
-+              (when (zero? spool-part)
-+                (str-play-async (-> arg0 name) spool-sound)
-+                (set! (-> *art-control* active-stream) (-> arg0 name))
-+                (format 0 "OTTSEL SPOOL: start name=~A sound-enabled=~A stream-id=~D initial-pos=~D~%"
-+                        (-> arg0 name)
-+                        *sound-player-enable*
-+                        spool-sound
-+                        (current-str-pos spool-sound)))
-                (let* ((f30-0 (* 0.05859375 (-> s2-4 speed)))
-                       (f28-0 (+ sv-24 (/ (the float (+ (-> s2-4 data 0 length) -1)) f30-0))))
-                  (let ((sv-72 (current-str-pos spool-sound)))
-@@ -689,7 +775,14 @@
-                      (if (or (arg3 self)
-                              (and (<= sv-72 0) (time-elapsed? (the-as time-frame sv-40) (seconds 4)))
-                              (and (< 300 sv-56) (<= sv-72 0)))
--                       (goto cfg-88))
-+                       (begin
-+                         (format 0 "OTTSEL SPOOL: abort name=~A part=~D sound-enabled=~A pos=~D elapsed=~D~%"
-+                                 (-> arg0 name)
-+                                 spool-part
-+                                 *sound-player-enable*
-+                                 sv-72
-+                                 (- (current-time) sv-40))
-+                         (goto cfg-88)))
-                      (spool-push *art-control* (-> arg0 name) spool-part self -20.0)
-                      (if (< (+ spool-part 1) (-> arg0 parts))
-                        (spool-push *art-control* (-> arg0 name) (+ spool-part 1) self -10.0)
 diff --git a/goal_src/jak1/engine/target/target-death.gc b/goal_src/jak1/engine/target/target-death.gc
 index 063709461..d4ea84393 100644
 --- a/goal_src/jak1/engine/target/target-death.gc
@@ -13519,33 +13490,6 @@ index 1ff70d357..5b92f05c6 100644
          (suspend)))
    :post
      (-> progress-normal
-diff --git a/goal_src/jak1/game.gp b/goal_src/jak1/game.gp
-index 61100d919..31b0c74f4 100644
---- a/goal_src/jak1/game.gp
-+++ b/goal_src/jak1/game.gp
-@@ -806,6 +806,8 @@
-   "breakaway-mid-ag"
-   "breakaway-right-ag"
-   "darkecocan-ag"
-+  "evilbro-ag"
-+  "evilsis-ag"
-   "keg-ag"
-   "keg-conveyor-ag"
-   "keg-conveyor-paddle-ag"
-@@ -1586,8 +1588,6 @@
- (copy-textures 1455 1457 1456 1454)
- 
- (copy-gos
--  "evilbro-ag"
--  "evilsis-ag"
-   "intro-vis"
-   )
- 
-@@ -2125,4 +2125,3 @@
- (group-list "all-code"
-   `(,@(reverse *all-gc*))
-   )
--
 diff --git a/goal_src/jak1/kernel/aligner.gc b/goal_src/jak1/kernel/aligner.gc
 new file mode 100644
 index 000000000..e69de29bb
@@ -13908,48 +13852,6 @@ index 3d72e67a7..65ae86e0b 100644
        (when (and (< (mod (-> *display* real-frame-counter) 300) 270) (not *progress-process*))
          (let ((gp-0 (new 'stack 'font-context *font-default-matrix* 80 170 0.0 (font-color default) (font-flags shadow kerning))))
            (let ((v1-12 gp-0)) (set! (-> v1-12 width) (the float 352)))
-diff --git a/goal_src/jak1/levels/village1/sequence-a-village1.gc b/goal_src/jak1/levels/village1/sequence-a-village1.gc
-index 188b16ec9..11ba13468 100644
---- a/goal_src/jak1/levels/village1/sequence-a-village1.gc
-+++ b/goal_src/jak1/levels/village1/sequence-a-village1.gc
-@@ -267,6 +267,21 @@
-           (set! (-> *time-of-day-proc* 0 hour) 7)
-           (if (nonzero? (-> self part)) (kill-and-free-particles (-> self part)))
-           (return #f)))
-+      (#when PC_PORT
-+        ;; The companion sequence needs evilbro/evilsis master slots from the
-+        ;; intro level. A no-IOP target can finish sequence A before that level
-+        ;; is active; birthing sequence B then hides Jak and cannot link its
-+        ;; animation. Fall back to normal play instead of leaving an invisible
-+        ;; target in a cutscene that cannot start.
-+        (when (!= (level-status *level* 'intro) 'active)
-+          (format 0 "OTTSEL INTRO: sequence B unavailable; entering normal play~%")
-+          (close-specific-task! (game-task intro) (task-status need-resolution))
-+          (start 'play (get-continue-by-name *game-info* "game-start"))
-+          (set-blackout-frames (seconds 0.1))
-+          (set! (-> *time-of-day-proc* 0 time-ratio) 300.0)
-+          (set! (-> *time-of-day-proc* 0 hour) 7)
-+          (if (nonzero? (-> self part)) (kill-and-free-particles (-> self part)))
-+          (return #f)))
-       (let ((gp-0 (entity-by-name "sequenceB-1")))
-         (set-blackout-frames (seconds 20))
-         (send-event *camera* 'clear-entity)
-@@ -274,12 +289,9 @@
-         (send-event (if gp-0 (-> gp-0 extra process)) 'play-anim)))
-   :trans
-     (behavior ()
--      ;; og:preserve-this
--      ;; yeah they messed up a little bit here
--      (spool-push *art-control* "sage-intro-sequence-b" 0 self -1.0)
--      ;; they should have put this:
--      ;; (spool-push *art-control* "sidekick-human-intro-sequence-b" 0 self -1.0)
--      ;; but it somehow causes a crash (maybe linux only?)
-+      ;; The companion sequence is stored as SIHISB.STR (see game.gp), not
-+      ;; SAISB.STR.  Request the actual spool asset so the intro can advance.
-+      (spool-push *art-control* "sidekick-human-intro-sequence-b" 0 self -1.0)
-       ((-> (method-of-type process-taskable play-anim) trans))))
- 
- (defmethod should-display? ((this sequenceA-village1))
 diff --git a/goal_src/jak1/pc/pckernel-h.gc b/goal_src/jak1/pc/pckernel-h.gc
 index c7f7b3a10..24bf129b1 100644
 --- a/goal_src/jak1/pc/pckernel-h.gc

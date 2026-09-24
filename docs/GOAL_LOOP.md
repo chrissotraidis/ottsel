@@ -16,19 +16,20 @@ Out of scope: Jak 2/3, App Store submission, a new engine, and polish that no pl
 
 ## Where it stands (2026-09-24)
 
-Proven in the **Simulator only**: the strict build runs signed code for 350 of the game's 518 code modules
-(KERNEL, ENGINE, GAME, the title, Village1 and Training) and routes title -> New Game -> Training by touch
-with input, sound events and background/foreground recovery. The other 168 - the remaining levels' own
-code - go through the runtime linker, which writes code into memory and flips it executable (`klink.cpp`,
-`kscheme.cpp`). The Simulator allows that; a device does not, so `ottsel_signed_gstate.cpp` refuses
-`iphoneos` builds until coverage is complete. `python3 scripts/signed-coverage.py
-config/signed-game-strict.json` prints the split. Until 2026-09-24 user packs carried the disc's PS2
-DGOs for every level except TIT/VI1, so that level code was silently skipped; packs now carry the
-compiled containers. The iPad Simulator presents at ~5-10 fps against 60 on macOS; the renderer
-(`src/shell/metal_gfx.mm`) re-implements OpenGOAL's buckets in Metal with CPU-side VU1 emulation and
-MERC skinning.
+Proven in the **Simulator only**: the strict build runs OpenGOAL's real IOP/OVERLORD thread (level, cutscene
+and audio streaming, as desktop) and signed code for 372 of the game's 518 code modules. New Game plays the
+whole intro (Sandover, Misty, Samos's hut) and hands over to Geyser Rock with a 0-byte fault log. The other
+146 modules - the remaining levels' code - still go through the runtime linker, which a device refuses, so
+`ottsel_signed_gstate.cpp` refuses `iphoneos` builds until `python3 scripts/signed-coverage.py
+config/signed-game-strict.json` reports 0. Particle/sprite effects render badly, and the iPad Simulator
+presents at ~5-10 fps against 60 on macOS; the renderer (`src/shell/metal_gfx.mm`) re-implements OpenGOAL's
+buckets in Metal with CPU-side VU1 emulation and MERC skinning.
 
 ## One round
+
+Rule that follows from how this project drifted: run OpenGOAL's own subsystems (IOP/OVERLORD, loaders,
+game code) exactly as desktop does. Do not emulate a subsystem or patch GOAL around a symptom; find why
+the upstream path fails on iOS and fix that.
 
 1. **Preflight.** `df -h / | tail -1` (stop below 40 GB), zero `.git/objects/pack/tmp_pack_*`,
    `git status` clean or explained, at most one booted Simulator, Stage 0 guards green:

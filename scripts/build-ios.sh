@@ -21,6 +21,10 @@
 # Development: ..." identity from `security find-identity -v -p codesigning`)
 # and OTTSEL_PROVISIONING_PROFILE (a .mobileprovision file) to produce an
 # installable bundle; without them the device build is ad-hoc signed.
+#
+# The app runs OpenGOAL's real IOP/OVERLORD thread (level, cutscene and audio
+# streaming) as desktop does. OTTSEL_NO_IOP=1 builds the older no-IOP RPC
+# emulation in sif_ee.cpp instead, for comparison only.
 
 set -euo pipefail
 
@@ -117,6 +121,10 @@ if $SIGNED_ENABLED; then
 fi
 if [ "$SIGNED_EXPORT_BANKS" = 1 ]; then
   COMMON_FLAGS+=(-DOTTSEL_SIGNED_EXPORT_BANKS)
+fi
+NO_IOP="${OTTSEL_NO_IOP:-0}"
+if [ "$NO_IOP" = 1 ]; then
+  COMMON_FLAGS+=(-DOTTSEL_NO_IOP)
 fi
 INCS=(-I"$WORKTREE" \
   -I"$WORKTREE/third-party/fmt/include" \
@@ -299,11 +307,37 @@ KERNEL_SRC="
   third-party/lzokay/lzokay.cpp
   game/kernel/asm_funcs_arm64.s
 "
+# The real IOP kernel, OVERLORD and its coroutine library (see game/ottsel_ios_iop.cpp).
+if [ "$NO_IOP" != 1 ]; then
+  KERNEL_SRC="$KERNEL_SRC
+  game/ottsel_ios_iop.cpp
+  game/sce/iop.cpp
+  game/system/IOP_Kernel.cpp
+  game/system/iop_thread.cpp
+  game/overlord/common/dma.cpp
+  game/overlord/common/iso.cpp
+  game/overlord/common/iso_api.cpp
+  game/overlord/common/overlord.cpp
+  game/overlord/jak1/dma.cpp
+  game/overlord/jak1/iso.cpp
+  game/overlord/jak1/iso_api.cpp
+  game/overlord/jak1/iso_queue.cpp
+  game/overlord/jak1/isocommon.cpp
+  game/overlord/jak1/overlord.cpp
+  game/overlord/jak1/ramdisk.cpp
+  game/overlord/jak1/stream.cpp
+  third-party/libco/libco.c
+"
+fi
 
 OBJS=()
 for src in $COMMON_SRC $KERNEL_SRC; do
-  name="$(echo "$src" | tr '/' '_' | sed 's/\.\(cpp\|cc\|s\)$/.o/')"
-  compile "$WORKTREE/$src" "$OBJ/$name"
+  name="$(echo "$src" | tr '/' '_' | sed 's/\.\(cpp\|cc\|s\|c\)$/.o/')"
+  case "$src" in
+    *.c) xcrun --sdk "$SDK" clang -O2 -target "$TARGET" -isysroot "$SDKROOT" \
+           -mios-version-min="$DEPLOY" -c "$WORKTREE/$src" -o "$OBJ/$name" ;;
+    *) compile "$WORKTREE/$src" "$OBJ/$name" ;;
+  esac
   OBJS+=("$OBJ/$name")
 done
 

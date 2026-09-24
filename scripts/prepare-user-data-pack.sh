@@ -47,16 +47,16 @@ done
 # location with OTTSEL_BUILT_DGO_DIR.
 built_dgo_dir="${OTTSEL_BUILT_DGO_DIR:-$repo_dir/out/jak-project/out/jak1/iso}"
 built_count=0
-for built in "$built_dgo_dir"/*.DGO; do
+for built in "$built_dgo_dir"/*.DGO "$built_dgo_dir"/*.CGO; do
   [[ -f "$built" ]] || continue
-  cp "$built" "$output_dir/DGO/"
+  cp "$built" "$output_dir/${built##*.}/"
   built_count=$((built_count + 1))
 done
 if [[ $built_count -eq 0 ]]; then
   echo "F1: no compiled DGOs in $built_dgo_dir; build the game with goalc first" >&2
   exit 1
 fi
-echo "F1: overlaid $built_count compiled DGOs from $built_dgo_dir"
+echo "F1: overlaid $built_count compiled DGO/CGO containers from $built_dgo_dir"
 
 fr3_source="${3:-$source_dir/fr3}"
 if [[ ! -d "$fr3_source" || -L "$fr3_source" ]]; then
