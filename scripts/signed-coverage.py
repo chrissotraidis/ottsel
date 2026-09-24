@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """How much of Jak 1's compiled code a signed module list covers.
 
-  python3 scripts/signed-coverage.py [config/signed-game-cgo-tit-vi1-control.json]
+  python3 scripts/signed-coverage.py [config/signed-game-strict.json]
 
 Counts distinct code modules (container members whose body equals the compiled
 out/jak1/obj/<name>.o; same-name art groups do not count) across every CGO/DGO, and
@@ -16,7 +16,7 @@ spec = importlib.util.spec_from_file_location("census", repo / "scripts/a11-corp
 census = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(census)
 
-listing = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "config/signed-game-cgo-tit-vi1-control.json")
+listing = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "config/signed-game-strict.json")
 signed = set(json.loads((repo / listing).read_text())["modules"])
 jak1 = repo / "out/jak-project/out/jak1"
 objects = {p.stem: p.read_bytes() for p in (jak1 / "obj").glob("*.o")}

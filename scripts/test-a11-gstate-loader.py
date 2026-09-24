@@ -172,10 +172,6 @@ with (output / "build.log").open("w") as log:
         run(["xcrun", "--sdk", "macosx", "clang++", *flags, "-DOTTSEL_IOS", "-c",
              source / "game/sce/sif_ee.cpp", "-o", sif], log)
         objects.insert(0, sif)
-        loader_rpc = output / "sif_loader_rpc.o"
-        run(["xcrun", "--sdk", "macosx", "clang++", *flags, "-c",
-             repo / "test/a11_gstate_loader_sif_ios.cpp", "-o", loader_rpc], log)
-        objects.insert(0, loader_rpc)
     asm = source / "game/kernel/asm_funcs_arm64.s"
     run(["xcrun", "--sdk", "macosx", "clang", "-arch", "arm64", "-c", asm, "-o", output / "helpers.o"], log)
     objects.append(output / "helpers.o")

@@ -23,8 +23,7 @@
 # installable bundle; without them the device build is ad-hoc signed.
 #
 # The app runs OpenGOAL's real IOP/OVERLORD thread (level, cutscene and audio
-# streaming) as desktop does. OTTSEL_NO_IOP=1 builds the older no-IOP RPC
-# emulation in sif_ee.cpp instead, for comparison only.
+# streaming) exactly as desktop does (game/ottsel_ios_iop.cpp).
 
 set -euo pipefail
 
@@ -122,9 +121,12 @@ fi
 if [ "$SIGNED_EXPORT_BANKS" = 1 ]; then
   COMMON_FLAGS+=(-DOTTSEL_SIGNED_EXPORT_BANKS)
 fi
-NO_IOP="${OTTSEL_NO_IOP:-0}"
-if [ "$NO_IOP" = 1 ]; then
-  COMMON_FLAGS+=(-DOTTSEL_NO_IOP)
+# Strict exec: any code object that is not signed aborts instead of being made executable at
+# runtime. Always on for devices (iOS refuses runtime executable pages); opt-in on the Simulator.
+STRICT_EXEC="${OTTSEL_STRICT_EXEC:-0}"
+if [ "$PLATFORM" = device ]; then STRICT_EXEC=1; fi
+if [ "$STRICT_EXEC" = 1 ]; then
+  COMMON_FLAGS+=(-DOTTSEL_STRICT_EXEC)
 fi
 INCS=(-I"$WORKTREE" \
   -I"$WORKTREE/third-party/fmt/include" \
@@ -308,8 +310,7 @@ KERNEL_SRC="
   game/kernel/asm_funcs_arm64.s
 "
 # The real IOP kernel, OVERLORD and its coroutine library (see game/ottsel_ios_iop.cpp).
-if [ "$NO_IOP" != 1 ]; then
-  KERNEL_SRC="$KERNEL_SRC
+KERNEL_SRC="$KERNEL_SRC
   game/ottsel_ios_iop.cpp
   game/sce/iop.cpp
   game/system/IOP_Kernel.cpp
@@ -328,7 +329,6 @@ if [ "$NO_IOP" != 1 ]; then
   game/overlord/jak1/stream.cpp
   third-party/libco/libco.c
 "
-fi
 
 OBJS=()
 for src in $COMMON_SRC $KERNEL_SRC; do

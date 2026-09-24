@@ -1948,12 +1948,6 @@ int main(int argc, char** argv) {
   ottsel_metal_gfx_register(g_metal);
 
   load_touch_layout();
-#ifdef OTTSEL_NO_IOP
-  // AU1: start the maintained playback-only 989snd/SDL output substrate.
-  // Game-bank requests remain a separate IOP/OVERLORD integration gate.
-  lg::info("OTTSEL AUDIO: starting playback substrate");
-  snd_StartSoundSystem();
-#endif
   // With the real IOP, OVERLORD's InitSound starts the sound system (game/overlord/jak1/ssound.cpp).
 
   std::thread boot(ottsel_ios_run_boot);

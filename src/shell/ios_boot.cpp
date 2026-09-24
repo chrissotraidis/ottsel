@@ -95,9 +95,7 @@ extern volatile u64 g_ottsel_call_idx;
 
 // Ottsel A1.1: real KERNEL.CGO slice proof runner (a11_slice_runner.mm).
 extern "C" int ottsel_run_a11_slice_proof();
-#ifndef OTTSEL_NO_IOP
 void ottsel_ios_start_iop();  // game/ottsel_ios_iop.cpp
-#endif
 
 namespace {
 
@@ -366,219 +364,6 @@ void prepare_user_data_impl() {
   lg::info("OTTSEL BOOT PHASE: user-data root prepared before Metal");
 }
 
-void maybe_probe_user_sound_bank(const std::string& iso_data_dir) {
-  const char* bank_enabled = std::getenv("OTTSEL_AUDIO_BANK_PROBE");
-  const char* music_enabled = std::getenv("OTTSEL_AUDIO_MUSIC_PROBE");
-  const char* vag_enabled = std::getenv("OTTSEL_AUDIO_VAG_PROBE");
-  const bool bank_requested = bank_enabled && bank_enabled[0] == '1';
-  const bool music_requested = music_enabled && music_enabled[0] == '1';
-  const bool vag_requested = vag_enabled && vag_enabled[0] == '1';
-  if (!bank_requested && !music_requested && !vag_requested) {
-    return;
-  }
-
-  if (bank_requested) {
-    constexpr u64 kSoundNameTableOffset = 10 * 2048;
-    const fs::path bank_path = fs::path(iso_data_dir) / "SBK" / "COMMON.SBK";
-    std::error_code error;
-    const u64 size = fs::file_size(bank_path, error);
-    if (error || size <= kSoundNameTableOffset) {
-      lg::warn("OTTSEL AUDIO: bank probe unavailable path={} size={} error={}",
-               bank_path.string(), size, error.message());
-      return;
-    }
-
-    const std::string bank_root = bank_path.parent_path().string();
-    fake_iso_set_root(bank_root);
-    fake_iso_init_globals();
-    jak1::fake_iso_init_globals();
-    if (fake_iso_FS_Init() < 0) {
-      lg::error("OTTSEL AUDIO: fake-ISO bank probe failed to initialize {}", bank_root);
-      return;
-    }
-    SoundBank sound_bank{};
-    char bank_name[] = "COMMON";
-    if (jak1::FS_LoadSoundBank(bank_name, &sound_bank) != 0 || !sound_bank.bank_handle) {
-      lg::error("OTTSEL AUDIO: fake-ISO bank probe failed to load {}", bank_path.string());
-      return;
-    }
-    snd_ResolveBankXREFS();
-    lg::info("OTTSEL AUDIO: fake-ISO bank probe loaded {} offset={} bytes={}", bank_path.string(),
-             kSoundNameTableOffset, size);
-    const s32 sound = snd_PlaySoundVolPanPMPB(sound_bank.bank_handle, 0, 0x400, 0, 0, 0);
-    lg::info("OTTSEL AUDIO: bank probe requested bank-sound=0 handle={}", sound);
-  }
-
-  if (music_requested) {
-    const fs::path music_path = fs::path(iso_data_dir) / "MUS" / "VILLAGE1.MUS";
-    std::error_code error;
-    const u64 music_size = fs::file_size(music_path, error);
-    const std::string music_root = music_path.parent_path().string();
-    fake_iso_set_root(music_root);
-    fake_iso_init_globals();
-    jak1::fake_iso_init_globals();
-    if (fake_iso_FS_Init() < 0 || error || music_size == 0) {
-      lg::error("OTTSEL AUDIO: fake-ISO music probe unavailable path={} size={} error={}",
-                music_path.string(), music_size, error.message());
-      return;
-    }
-    snd::BankHandle music_bank = nullptr;
-    char music_name[] = "VILLAGE1";
-    if (jak1::FS_LoadMusic(music_name, &music_bank) != 0 || !music_bank) {
-      lg::error("OTTSEL AUDIO: fake-ISO music probe failed to load {}", music_path.string());
-      return;
-    }
-    const s32 music_sound = snd_PlaySoundVolPanPMPB(music_bank, 0, 0x400, 0, 0, 0);
-    lg::info("OTTSEL AUDIO: fake-ISO music probe loaded {} bytes={} handle={}",
-             music_path.string(), music_size, music_sound);
-  }
-
-  if (vag_requested) {
-    const fs::path vag_root = fs::path(iso_data_dir) / "VAG";
-    const fs::path dir_path = vag_root / "VAGDIR.AYB";
-    const fs::path wad_path = vag_root / "VAGWAD.ENG";
-    const auto dir_data = file_util::read_binary_file(dir_path.string());
-    constexpr size_t kVagDirHeaderAndEntry = sizeof(u32) + sizeof(char[8]) + sizeof(u32);
-    if (dir_data.size() < kVagDirHeaderAndEntry) {
-      lg::error("OTTSEL AUDIO: VAG probe directory unavailable {} bytes={}",
-                dir_path.string(), dir_data.size());
-      return;
-    }
-    u32 vag_count = 0;
-    memcpy(&vag_count, dir_data.data(), sizeof(vag_count));
-    constexpr u32 kMaxVagEntries = 868;
-    const size_t entry_bytes = sizeof(char[8]) + sizeof(u32);
-    if (vag_count == 0 || vag_count > kMaxVagEntries ||
-        dir_data.size() < sizeof(u32) + (size_t)vag_count * entry_bytes) {
-      lg::error("OTTSEL AUDIO: VAG probe invalid directory count={} bytes={}", vag_count,
-                dir_data.size());
-      return;
-    }
-    // Short directory records are marker clips. Use the maintained long-form
-    // stream so the first diagnostic chunk can exercise decode over time.
-    const u32 entry_index = vag_count > 106 ? 106 : (vag_count > 1 ? 1 : 0);
-    std::array<char, 8> entry_name{};
-    u32 entry_offset = 0;
-    const u8* entry_data = dir_data.data() + sizeof(u32) + entry_index * entry_bytes;
-    memcpy(entry_name.data(), entry_data, entry_name.size());
-    memcpy(&entry_offset, entry_data + entry_name.size(), sizeof(entry_offset));
-    fake_iso_set_root(vag_root.string());
-    fake_iso_init_globals();
-    jak1::fake_iso_init_globals();
-    if (fake_iso_FS_Init() < 0) {
-      lg::error("OTTSEL AUDIO: VAG probe fake-ISO init failed {}", vag_root.string());
-      return;
-    }
-    FileRecord* wad = FS_Find("VAGWAD.ENG");
-    if (!wad || !fs::exists(wad_path)) {
-      lg::error("OTTSEL AUDIO: VAG probe WAD unavailable {}", wad_path.string());
-      return;
-    }
-    jak1::LoadStackEntry* stream = jak1::FS_OpenWad(wad, entry_offset);
-    constexpr size_t kVagChunkBytes = 0x6000;
-    constexpr u32 kMaxDiagnosticVagBytes = 16 * 1024 * 1024;
-    std::vector<u8> stream_data(kVagChunkBytes);
-    u32 read_status = 0;
-    size_t chunks_read = 0;
-    if (stream) {
-      read_status = jak1::FS_BeginRead(stream, stream_data.data(), (s32)kVagChunkBytes);
-      chunks_read = 1;
-    }
-    bool vag_header = stream_data.size() >= 4 &&
-                      (memcmp(stream_data.data(), "VAGp", 4) == 0 ||
-                       memcmp(stream_data.data(), "pGAV", 4) == 0);
-    u32 data_bytes = 0;
-    if (vag_header && stream_data.size() >= 0x10) {
-      data_bytes = ((u32)stream_data[0x0c] << 24) | ((u32)stream_data[0x0d] << 16) |
-                   ((u32)stream_data[0x0e] << 8) | (u32)stream_data[0x0f];
-      const u32 padded_data_bytes = (data_bytes + 15) & ~15u;
-      const size_t total_bytes = 48ull + padded_data_bytes;
-      const size_t chunk_count = (total_bytes + kVagChunkBytes - 1) / kVagChunkBytes;
-      if (data_bytes == 0 || data_bytes > kMaxDiagnosticVagBytes || chunk_count == 0) {
-        lg::error("OTTSEL AUDIO: VAG probe invalid data-bytes={}", data_bytes);
-        if (stream) {
-          jak1::FS_Close(stream);
-        }
-        return;
-      }
-      const char* refill_enabled = std::getenv("OTTSEL_AUDIO_VAG_REFILL_PROBE");
-      if (refill_enabled && refill_enabled[0] == '1' && stream) {
-        constexpr size_t kInitialVagChunks = 8;
-        const size_t initial_chunks = std::min(kInitialVagChunks, chunk_count);
-        stream_data.resize(initial_chunks * kVagChunkBytes);
-        for (size_t i = 1; i < initial_chunks; i++) {
-          read_status = jak1::FS_BeginRead(stream, stream_data.data() + i * kVagChunkBytes,
-                                           (s32)kVagChunkBytes);
-          chunks_read++;
-        }
-        const u32 sample_rate = ((u32)stream_data[0x10] << 24) |
-                                ((u32)stream_data[0x11] << 16) |
-                                ((u32)stream_data[0x12] << 8) | (u32)stream_data[0x13];
-        auto sample = std::make_shared<std::vector<u16>>(padded_data_bytes / sizeof(u16));
-        const size_t initial_payload = std::min<size_t>(padded_data_bytes,
-                                                        stream_data.size() - 48);
-        memcpy(sample->data(), stream_data.data() + 48, initial_payload);
-        const bool voice_started =
-            snd_StartVAGProbeShared(sample, (u32)sample->size(), sample_rate);
-        std::thread([stream, sample, initial_chunks, chunk_count, padded_data_bytes,
-                     entry_name]() mutable {
-          constexpr size_t kChunkBytes = 0x6000;
-          std::vector<u8> chunk(kChunkBytes);
-          size_t produced = initial_chunks;
-          for (size_t i = initial_chunks; i < chunk_count; i++) {
-            const u32 status = jak1::FS_BeginRead(stream, chunk.data(), (s32)kChunkBytes);
-            const size_t dst = initial_chunks * kChunkBytes - 48 +
-                               (i - initial_chunks) * kChunkBytes;
-            if (dst < padded_data_bytes) {
-              const size_t copy_bytes = std::min(kChunkBytes, (size_t)padded_data_bytes - dst);
-              memcpy(reinterpret_cast<u8*>(sample->data()) + dst, chunk.data(), copy_bytes);
-            }
-            produced++;
-            if (status != CMD_STATUS_IN_PROGRESS) {
-              lg::warn("OTTSEL AUDIO: VAG refill read status={} chunk={}", status, i);
-            }
-          }
-          if (sample->size() >= 8) {
-            sample->at(sample->size() - 8) |= 0x0100;
-          }
-          jak1::FS_Close(stream);
-          lg::info("OTTSEL AUDIO: VAG refill producer finished entry={} chunks={} bytes={}",
-                   std::string(entry_name.data(), strnlen(entry_name.data(), entry_name.size())),
-                   produced, padded_data_bytes);
-        }).detach();
-        lg::info("OTTSEL AUDIO: VAG refill producer started entry={} initial-chunks={} total-chunks={} bytes={} voice={}",
-                 std::string(entry_name.data(), strnlen(entry_name.data(), entry_name.size())),
-                 initial_chunks, chunk_count, padded_data_bytes, voice_started ? "started" : "failed");
-        return;
-      }
-      stream_data.resize(chunk_count * kVagChunkBytes);
-      if (stream) {
-        for (size_t i = 1; i < chunk_count; i++) {
-          read_status = jak1::FS_BeginRead(stream, stream_data.data() + i * kVagChunkBytes,
-                                           (s32)kVagChunkBytes);
-          chunks_read++;
-        }
-      }
-      stream_data.resize(total_bytes);
-    }
-    if (stream) {
-      jak1::FS_Close(stream);
-    }
-    u32 sample_rate = ((u32)stream_data[0x10] << 24) | ((u32)stream_data[0x11] << 16) |
-                      ((u32)stream_data[0x12] << 8) | (u32)stream_data[0x13];
-    bool voice_started = false;
-    if (vag_header && stream_data.size() > 48) {
-      voice_started = snd_StartVAGProbe(stream_data.data() + 48,
-                                         (u32)stream_data.size() - 48, sample_rate);
-    }
-    lg::info("OTTSEL AUDIO: VAG probe entry={} offset={} wad-bytes={} data-bytes={} chunks={} bytes={} read-status={} header={}",
-             std::string(entry_name.data(), strnlen(entry_name.data(), entry_name.size())),
-             entry_offset, fs::file_size(wad_path), data_bytes, chunks_read, stream_data.size(),
-             read_status,
-             vag_header ? (voice_started ? "valid-voice-started" : "valid-voice-failed") : "invalid");
-  }
-}
-
 bool has_user_data_impl() {
   return g_has_user_data;
 }
@@ -589,59 +374,6 @@ bool has_user_data_impl() {
 // "VAGp" header for every entry).  The sound engine already knows how to play a VAG sample, so this reads the
 // line and hands it over.  Called from the iOS sound RPC (game/overlord/jak1/srpc.cpp) for "spool-" names.
 namespace {
-struct VagDialogue {
-  bool loaded = false;
-  std::string wad_path;
-  std::map<std::string, u32> entries;  // 8-character name -> sector offset
-  // The engine's voice holds a raw pointer to the sample, so every buffer handed to it stays alive; a line
-  // played again reuses its buffer instead of allocating a second copy.  A small ring is not enough - a long
-  // cutscene line can outlive several later plays, and freeing its buffer under the decoder faulted.
-  std::map<std::string, std::shared_ptr<std::vector<u16>>> keep_alive;
-  // Token of the line the engine is currently playing, so a stop for a different stream cannot cut it short.
-  std::string playing;
-};
-VagDialogue g_vag_dialogue;
-
-bool load_vag_dialogue_directory() {
-  if (g_vag_dialogue.loaded) {
-    return !g_vag_dialogue.entries.empty();
-  }
-  g_vag_dialogue.loaded = true;
-  const std::string dir =
-      g_prepared_iso_data_dir.empty() ? select_ios_iso_data_dir() : g_prepared_iso_data_dir;
-  if (dir.empty()) {
-    lg::warn("OTTSEL AUDIO: VAG dialogue has no data root");
-    return false;
-  }
-  const fs::path root = fs::path(dir) / "VAG";
-  const fs::path dir_path = root / "VAGDIR.AYB";
-  std::error_code error;
-  if (!fs::exists(dir_path, error)) {
-    lg::warn("OTTSEL AUDIO: VAG dialogue directory unavailable {}", dir_path.string());
-    return false;
-  }
-  const auto data = file_util::read_binary_file(dir_path.string());
-  if (data.size() < 4) {
-    lg::warn("OTTSEL AUDIO: VAG dialogue directory too small {} bytes", data.size());
-    return false;
-  }
-  u32 count = 0;
-  memcpy(&count, data.data(), sizeof(count));
-  const size_t capacity = (data.size() - 4) / 12;
-  if (count > capacity) {
-    count = (u32)capacity;
-  }
-  for (u32 i = 0; i < count; i++) {
-    const char* entry = reinterpret_cast<const char*>(data.data() + 4 + (size_t)i * 12);
-    u32 offset = 0;
-    memcpy(&offset, entry + 8, sizeof(offset));
-    g_vag_dialogue.entries.emplace(std::string(entry, 8), offset);
-  }
-  g_vag_dialogue.wad_path = (root / "VAGWAD.ENG").string();
-  lg::info("OTTSEL AUDIO: VAG dialogue directory entries={} wad={}", g_vag_dialogue.entries.size(),
-           g_vag_dialogue.wad_path);
-  return !g_vag_dialogue.entries.empty();
-}
 }  // namespace
 
 
@@ -2587,93 +2319,6 @@ std::string ottsel_ios_writable_dir() {
   return g_writable_dir;
 }
 
-bool ottsel_ios_play_vag_dialogue(const char* line_name) {
-  if (!line_name || !line_name[0] || !load_vag_dialogue_directory()) {
-    return false;
-  }
-  // Bounded diagnostic, off by default: `ottsel-trace-vag-off` suppresses the dialogue player so an A/B can
-  // show what the lines contribute to the output rather than only that the engine accepted the voice.
-  static int vag_off = -1;
-  if (vag_off < 0) {
-    vag_off = access((ottsel_ios_writable_dir() + "ottsel-trace-vag-off").c_str(), F_OK) == 0 ? 1 : 0;
-  }
-  if (vag_off) {
-    return false;
-  }
-  // The game sends the line as "spool-<name>"; uppercase and pad to the directory's 8 characters.
-  std::string key(line_name, strnlen(line_name, 8));
-  for (char& c : key) {
-    if (c >= 'a' && c <= 'z') {
-      c -= 0x20;
-    }
-  }
-  key.resize(8, ' ');
-  const auto found = g_vag_dialogue.entries.find(key);
-  if (found == g_vag_dialogue.entries.end()) {
-    lg::warn("OTTSEL AUDIO: VAG dialogue line missing name='{}'", key);
-    return false;
-  }
-  std::ifstream wad(g_vag_dialogue.wad_path, std::ios::binary);
-  if (!wad) {
-    lg::warn("OTTSEL AUDIO: VAG dialogue wad unavailable {}", g_vag_dialogue.wad_path);
-    return false;
-  }
-  wad.seekg((std::streamoff)found->second * 2048);
-  std::array<u8, 48> header{};
-  wad.read(reinterpret_cast<char*>(header.data()), (std::streamsize)header.size());
-  if (wad.gcount() != (std::streamsize)header.size() || memcmp(header.data(), "VAGp", 4) != 0) {
-    lg::warn("OTTSEL AUDIO: VAG dialogue header invalid name='{}' sector={}", key, found->second);
-    return false;
-  }
-  const u32 data_bytes = ((u32)header[0x0c] << 24) | ((u32)header[0x0d] << 16) |
-                         ((u32)header[0x0e] << 8) | (u32)header[0x0f];
-  const u32 sample_rate = ((u32)header[0x10] << 24) | ((u32)header[0x11] << 16) |
-                          ((u32)header[0x12] << 8) | (u32)header[0x13];
-  constexpr u32 kMaxDialogueBytes = 8 * 1024 * 1024;
-  if (data_bytes == 0 || data_bytes > kMaxDialogueBytes) {
-    lg::warn("OTTSEL AUDIO: VAG dialogue invalid size name='{}' bytes={}", key, data_bytes);
-    return false;
-  }
-  const u32 padded_bytes = (data_bytes + 15) & ~15u;
-  auto sample = std::make_shared<std::vector<u16>>(padded_bytes / sizeof(u16), 0);
-  wad.read(reinterpret_cast<char*>(sample->data()), (std::streamsize)padded_bytes);
-  if (wad.gcount() != (std::streamsize)padded_bytes) {
-    lg::warn("OTTSEL AUDIO: VAG dialogue short read name='{}' bytes={}", key, padded_bytes);
-    return false;
-  }
-  // The last ADPCM block carries the end-of-sample flag, exactly as the VAG probe sets it.
-  if (sample->size() >= 8) {
-    sample->at(sample->size() - 8) |= 0x0100;
-  }
-  g_vag_dialogue.keep_alive[key] = sample;
-  const bool started = snd_StartVAGProbeShared(sample, (u32)sample->size(), sample_rate);
-  if (started) {
-    g_vag_dialogue.playing = key;
-  }
-  lg::info("OTTSEL AUDIO: VAG dialogue name='{}' sector={} bytes={} rate={} started={}", key,
-           found->second, data_bytes, sample_rate, started ? 1 : 0);
-  return started;
-}
-
-// G2.3: a stop names one stream.  Stopping whatever is playing would cut a different line short - the lane
-// showed a play and a stop in the same second - so only the line the engine is playing is stopped.
-void ottsel_ios_stop_vag_dialogue(const char* token8) {
-  std::string key(token8 ? token8 : "", strnlen(token8 ? token8 : "", 8));
-  for (char& c : key) {
-    if (c >= 'a' && c <= 'z') {
-      c -= 0x20;
-    }
-  }
-  key.resize(8, ' ');
-  if (g_vag_dialogue.playing != key) {
-    lg::info("OTTSEL AUDIO: VAG dialogue stop ignored name='{}' playing='{}'", key,
-             g_vag_dialogue.playing);
-    return;
-  }
-  g_vag_dialogue.playing.clear();
-  snd_StopVAGProbeShared();
-  lg::info("OTTSEL AUDIO: VAG dialogue stopped name='{}'", key);
-}
 void ottsel_ios_stop_dispatch() {
   MasterExit = RuntimeExitStatus::EXIT;
 }
@@ -2795,9 +2440,6 @@ static void ottsel_ios_run_boot_impl() {
                                        : g_prepared_iso_data_dir;
   lg::info("OTTSEL BOOT PHASE: selected iOS data root");
   ee::ottsel_set_iso_data_dir(iso_data_dir.c_str());
-  lg::info("OTTSEL BOOT PHASE: probing optional sound data");
-  maybe_probe_user_sound_bank(iso_data_dir);
-  lg::info("OTTSEL BOOT PHASE: optional sound probe complete");
   // Ottsel S2.2 (BOT12): keep the low-EE region readable-zero instead of
   // PROT_NONE.  The PS2 has no MMU: game code legitimately reads low memory
   // through default-initialized/null pointers (e.g. vector<-cspace! reads
@@ -2852,11 +2494,9 @@ static void ottsel_ios_run_boot_impl() {
   // ---- boot the kernel (IOP/gfx/listener remain OTTSEL_IOS-stubbed) ----
   MasterDebug = 0;
   MasterUseKernel = 1;
-#ifndef OTTSEL_NO_IOP
   // Run the real IOP/OVERLORD thread before InitMachine sends it the start command.
   ottsel_ios_start_iop();
   lg::info("OTTSEL BOOT PHASE: IOP thread started");
-#endif
   // Ottsel S2.1 (BOT11): serve DGO/CGO loads from the selected user pack or
   // the clean-install diagnostic bundle fallback.
   if (jak1::InitMachine() >= 0) {

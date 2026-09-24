@@ -2739,10 +2739,10 @@ index c4d320a27..7a7f9b40c 100644
    void draw_debug_window();
 diff --git a/game/ios_stubs.cpp b/game/ios_stubs.cpp
 new file mode 100644
-index 000000000..e4956c805
+index 000000000..3cfd9d77e
 --- /dev/null
 +++ b/game/ios_stubs.cpp
-@@ -0,0 +1,376 @@
+@@ -0,0 +1,334 @@
 +// Ottsel S1.3 — stub implementations for the iOS (OTTSEL_IOS) build of the
 +// no-emit runtime.  The iOS shell is a headless-renderer build: graphics,
 +// sound, IOP and listener subsystems are not linked, so the few symbols the
@@ -2783,19 +2783,6 @@ index 000000000..e4956c805
 +
 +// Overlord globals referenced by the kernel code.
 +
-+#ifdef OTTSEL_NO_IOP
-+namespace iop {
-+int GetThreadId() {
-+  return 0;
-+}
-+void SleepThread() {}
-+s32 iWakeupThread(s32) {
-+  return 0;
-+}
-+}  // namespace iop
-+
-+void ExitIOP() {}
-+#endif  // OTTSEL_NO_IOP
 +
 +// The real IOP scheduler wakes on vblank (upstream registers this through
 +// Gfx::register_vsync_callback, which the iOS build does not compile).
@@ -2859,28 +2846,6 @@ index 000000000..e4956c805
 +void register_screen_shot_settings(ScreenShotSettings*) {}
 +
 +// --- IOP SIF stubs (no IOP emulation on iOS) ---
-+#ifdef OTTSEL_NO_IOP
-+bool IOP_Kernel::sif_busy(u32 id) {
-+  (void)id;
-+  return false;
-+}
-+
-+void IOP_Kernel::sif_rpc(s32 rpcChannel,
-+                         u32 fno,
-+                         bool async,
-+                         void* sendBuff,
-+                         s32 sendSize,
-+                         void* recvBuff,
-+                         s32 recvSize) {
-+  (void)rpcChannel;
-+  (void)fno;
-+  (void)async;
-+  (void)sendBuff;
-+  (void)sendSize;
-+  (void)recvBuff;
-+  (void)recvSize;
-+}
-+#endif  // OTTSEL_NO_IOP
 +
 +// --- Gfx extras referenced by the kernel scheme code ---
 +namespace Gfx {
@@ -2947,13 +2912,6 @@ index 000000000..e4956c805
 +}  // namespace Display
 +
 +// --- IOP (game/system/iop_thread.h) ---
-+#ifdef OTTSEL_NO_IOP
-+void IOP::send_status(IOP_Status new_status) {
-+  (void)new_status;
-+}
-+void IOP::signal_run_iop() {}
-+void IOP::wait_for_overlord_init_finish() {}
-+#endif  // OTTSEL_NO_IOP
 +
 +// --- InputManager (game/system/hid/input_manager.h) ---
 +std::string InputManager::get_controller_name(const int controller_id) {
@@ -3646,109 +3604,6 @@ index 9244ee84a..209d34107 100644
 +  ldp x19, x20, [sp], #16
 +  ldp x29, x30, [sp], #16
    ret
-diff --git a/game/kernel/common/kdgo.cpp b/game/kernel/common/kdgo.cpp
-index a7cca902c..be49a4f44 100644
---- a/game/kernel/common/kdgo.cpp
-+++ b/game/kernel/common/kdgo.cpp
-@@ -19,6 +19,19 @@ u32 sShowStallMsg;           //! setting to show a "stalled on iop" message
- u16 x[8];                    //! stupid temporary for storing a message
- u32 sMsgNum;                 //! Toggle for double buffered message sending.
- 
-+// Ottsel S2.1: the iOS runtime has no IOP, so sceSifBindRpc does not write
-+// cd[].rpcd.id.  Record the STR and DGO channel client-data addresses so the
-+// SIF emulation can recognize loader calls (which the GOAL side routes by
-+// channel) without relying on the id.  InitRPC()/RpcBind() are compiled out
-+// under OTTSEL_IOS, so initialize the pointers directly here instead of in
-+// RpcBind.
-+ee::sceSifClientData* g_ottsel_ramdisk_rpc_bd = &cd[RAMDISK_RPC_CHANNEL];
-+ee::sceSifClientData* g_ottsel_str_rpc_bd = &cd[STR_RPC_CHANNEL];
-+ee::sceSifClientData* g_ottsel_play_rpc_bd = &cd[PLAY_RPC_CHANNEL];
-+ee::sceSifClientData* g_ottsel_player_rpc_bd = &cd[PLAYER_RPC_CHANNEL];
-+ee::sceSifClientData* g_ottsel_loader_rpc_bd = &cd[LOADER_RPC_CHANNEL];
-+ee::sceSifClientData* g_ottsel_dgo_rpc_bd = &cd[DGO_RPC_CHANNEL];
-+
- void kdgo_init_globals() {
-   memset(x, 0, sizeof(x));
-   memset(cd, 0, sizeof(cd));
-@@ -64,6 +77,36 @@ u64 RpcCall_wrapper(void* _args) {
-   auto send_size = args->get_as<s32>(4);
-   auto recv_buff = args->get_as<u64>(5);
-   auto recv_size = args->get_as<s32>(6);
-+#ifdef OTTSEL_IOS
-+  // The no-IOP SIF shim recognizes loader requests by the client-data
-+  // address.  The GOAL wrapper is the authoritative channel boundary; refresh
-+  // these pointers here so a runtime reinitialization cannot leave STR/DGO
-+  // calls routed to an inert client object.
-+  if (rpcChannel == RAMDISK_RPC_CHANNEL) {
-+    g_ottsel_ramdisk_rpc_bd = &cd[rpcChannel];
-+  } else if (rpcChannel == STR_RPC_CHANNEL) {
-+    g_ottsel_str_rpc_bd = &cd[rpcChannel];
-+  } else if (rpcChannel == PLAY_RPC_CHANNEL) {
-+    g_ottsel_play_rpc_bd = &cd[rpcChannel];
-+  } else if (rpcChannel == PLAYER_RPC_CHANNEL) {
-+    g_ottsel_player_rpc_bd = &cd[rpcChannel];
-+  } else if (rpcChannel == LOADER_RPC_CHANNEL) {
-+    g_ottsel_loader_rpc_bd = &cd[rpcChannel];
-+  } else if (rpcChannel == DGO_RPC_CHANNEL) {
-+    g_ottsel_dgo_rpc_bd = &cd[rpcChannel];
-+  }
-+  // This call is hot enough to distort Simulator frame pacing when every RPC
-+  // is mirrored into the product log.  A bounded startup sample still proves
-+  // channel routing without turning diagnostics into workload.
-+  static u32 ottsel_rpc_log_count = 0;
-+  if (ottsel_rpc_log_count < 32) {
-+    ++ottsel_rpc_log_count;
-+    lg::info("OTTSEL RpcCall channel={} fno={} async={} send={} ssize={} recv={} rsize={} "
-+             "cd.id={:#x}",
-+             rpcChannel, fno, async, send_buff, send_size, recv_buff, recv_size,
-+             cd[rpcChannel].rpcd.id);
-+  }
-+#endif
-   return sceSifCallRpc(&cd[rpcChannel], fno, async, Ptr<u8>(send_buff).c(), send_size,
-                        Ptr<u8>(recv_buff).c(), recv_size, nullptr, nullptr);
- }
-@@ -98,6 +141,13 @@ void RpcSync(s32 channel) {
-  * Setup an RPC.
-  */
- u32 RpcBind(s32 channel, s32 id) {
-+  if (channel == RAMDISK_RPC_CHANNEL) {
-+    g_ottsel_ramdisk_rpc_bd = &cd[channel];
-+  } else if (channel == STR_RPC_CHANNEL) {
-+    g_ottsel_str_rpc_bd = &cd[channel];
-+  } else if (channel == PLAY_RPC_CHANNEL) {
-+    g_ottsel_play_rpc_bd = &cd[channel];
-+  }
-   while (true) {
-     if (sceSifBindRpc(&cd[channel], id, 1) < 0) {
-       MsgErr("Error: RpcBind failed on port #%d [%4.4X]\n", channel, id);
-diff --git a/game/kernel/common/kdgo.h b/game/kernel/common/kdgo.h
-index b8f8899a9..1a8d7c024 100644
---- a/game/kernel/common/kdgo.h
-+++ b/game/kernel/common/kdgo.h
-@@ -5,6 +5,10 @@
- #include "game/common/dgo_rpc_types.h"
- #include "game/kernel/common/Ptr.h"
- 
-+namespace ee {
-+struct sceSifClientData;
-+}
-+
- extern u32 sMsgNum;
- s32 RpcCall(s32 rpcChannel,
-             u32 fno,
-@@ -22,3 +26,12 @@ u32 InitRPC();
- void StopIOP();
- 
- extern u32 sShowStallMsg;
-+
-+// Ottsel S2.1: client-data pointers for the RAMDISK, STR, PLAY, and DGO loader channels (the
-+// iOS SIF emulation uses them to recognize loader calls; see sceSifCallRpc).
-+extern ee::sceSifClientData* g_ottsel_ramdisk_rpc_bd;
-+extern ee::sceSifClientData* g_ottsel_str_rpc_bd;
-+extern ee::sceSifClientData* g_ottsel_play_rpc_bd;
-+extern ee::sceSifClientData* g_ottsel_player_rpc_bd;
-+extern ee::sceSifClientData* g_ottsel_loader_rpc_bd;
-+extern ee::sceSifClientData* g_ottsel_dgo_rpc_bd;
 diff --git a/game/kernel/common/klink.cpp b/game/kernel/common/klink.cpp
 index b8a96e57b..127b45327 100644
 --- a/game/kernel/common/klink.cpp
@@ -3803,7 +3658,7 @@ index c7ee549da..a92020035 100644
  
  /*!
 diff --git a/game/kernel/common/kmachine.cpp b/game/kernel/common/kmachine.cpp
-index bc2c52d86..2b140f1c3 100644
+index bc2c52d86..5ff55e2c4 100644
 --- a/game/kernel/common/kmachine.cpp
 +++ b/game/kernel/common/kmachine.cpp
 @@ -1,6 +1,7 @@
@@ -3837,15 +3692,11 @@ index bc2c52d86..2b140f1c3 100644
    if (!SplashScreen) {
      lg::info("InitVideo: skipping splash!\n");
      return;
-@@ -486,12 +496,71 @@ void pc_memmove(u32 dst, u32 src, u32 size) {
+@@ -486,12 +496,67 @@ void pc_memmove(u32 dst, u32 src, u32 size) {
  }
  
  void send_gfx_dma_chain(u32 /*bank*/, u32 chain) {
 +#ifdef OTTSEL_IOS
-+  // The GOAL kernel dispatcher enters the game loop and does not return once
-+  // play begins. A submitted graphics chain is the reliable per-frame host
-+  // boundary for mirroring the PS2 IOP's VBlank sound-info DMA.
-+  ee::ottsel_ios_refresh_sound_info();
 +  // R1 producer handoff discriminator. This records only the chain ordinal
 +  // and raw bucket-table tags before the renderer consumes the same memory;
 +  // it is trigger-gated and does not alter the DMA walk or bucket ownership.
@@ -3909,7 +3760,7 @@ index bc2c52d86..2b140f1c3 100644
    if (Gfx::GetCurrentRenderer()) {
      Gfx::GetCurrentRenderer()->texture_upload_now(Ptr<u8>(page).c(), mode, s7.offset);
    }
-@@ -796,6 +865,12 @@ void pc_set_mouse_camera_sens(u32 xsens, u32 ysens) {
+@@ -796,6 +861,12 @@ void pc_set_mouse_camera_sens(u32 xsens, u32 ysens) {
    memcpy(&xsens_val, &xsens, 4);
    float ysens_val;
    memcpy(&ysens_val, &ysens, 4);
@@ -4146,15 +3997,15 @@ index 000000000..3b787e107
 +}
 diff --git a/game/kernel/common/ottsel_signed_gstate.cpp b/game/kernel/common/ottsel_signed_gstate.cpp
 new file mode 100644
-index 000000000..4fb8a7dce
+index 000000000..a7cc6de15
 --- /dev/null
 +++ b/game/kernel/common/ottsel_signed_gstate.cpp
 @@ -0,0 +1,399 @@
 +#include "ottsel_signed_gstate.h"
 +#ifdef OTTSEL_SIGNED_GSTATE_EXPERIMENT
 +#include <TargetConditionals.h>
-+#if TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
-+#error Signed Gstate experiment still needs mixed-runtime prerequisites; physical iOS is unsupported
++#if TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR && !defined(OTTSEL_STRICT_EXEC)
++#error Device builds must be strict: all code signed, no runtime executable pages (OTTSEL_STRICT_EXEC)
 +#endif
 +#include <CommonCrypto/CommonDigest.h>
 +#include <mach/mach.h>
@@ -5069,7 +4920,7 @@ index a89d9ac0d..23fa8420c 100644
 \ No newline at end of file
 +}  // namespace jak1
 diff --git a/game/kernel/jak1/klink.cpp b/game/kernel/jak1/klink.cpp
-index fd7199959..9053e40e8 100644
+index fd7199959..4d8d089b5 100644
 --- a/game/kernel/jak1/klink.cpp
 +++ b/game/kernel/jak1/klink.cpp
 @@ -1,3 +1,4 @@
@@ -5318,7 +5169,7 @@ index fd7199959..9053e40e8 100644
    CacheFlush(m_code_start.c(), m_code_size);
    auto old_debug_segment = DebugSegment;
    if (m_keep_debug) {
-@@ -527,6 +703,27 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
+@@ -527,7 +703,38 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
  
    ObjectFileHeader* ofh = m_link_block_ptr.cast<ObjectFileHeader>().c();
    lg::debug("link finish: {}", m_object_name);
@@ -5344,9 +5195,20 @@ index fd7199959..9053e40e8 100644
 +#ifdef OTTSEL_NO_EMIT
 +#endif
    if (ofh->object_file_version == 3) {
++#ifdef OTTSEL_STRICT_EXEC
++    // Strict (device) build: every code module is signed ahead of time. A code object reaching
++    // the runtime linker would need its pages made executable at runtime, which iOS refuses.
++    if (ofh->code_size[MAIN_SEGMENT] || ofh->code_size[TOP_LEVEL_SEGMENT]) {
++      lg::error("OTTSEL STRICT EXEC: unsigned code object '{}' reached the runtime linker",
++                m_object_name);
++      fprintf(stderr, "OTTSEL STRICT EXEC: unsigned code object '%s'\n", m_object_name);
++      std::abort();
++    }
++#endif
      // todo check function type of entry
  
-@@ -538,14 +735,169 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
+     // setup mips2c functions
+@@ -538,14 +745,169 @@ void link_control::jak1_finish(bool jump_from_c_to_goal) {
        }
      }
  
@@ -5517,7 +5379,7 @@ index fd7199959..9053e40e8 100644
      }
  
      // inform compiler that we loaded.
-@@ -581,6 +933,21 @@ Ptr<uint8_t> link_and_exec(Ptr<uint8_t> data,
+@@ -581,6 +943,21 @@ Ptr<uint8_t> link_and_exec(Ptr<uint8_t> data,
                             Ptr<kheapinfo> heap,
                             uint32_t flags,
                             bool jump_from_c_to_goal) {
@@ -5539,7 +5401,7 @@ index fd7199959..9053e40e8 100644
    link_control lc;
    lc.jak1_jak2_begin(data, name, size, heap, flags);
    uint32_t done;
-@@ -588,6 +955,31 @@ Ptr<uint8_t> link_and_exec(Ptr<uint8_t> data,
+@@ -588,6 +965,31 @@ Ptr<uint8_t> link_and_exec(Ptr<uint8_t> data,
      done = lc.jak1_work();
    } while (!done);
    lc.jak1_finish(jump_from_c_to_goal);
@@ -5571,7 +5433,7 @@ index fd7199959..9053e40e8 100644
    return lc.m_entry;
  }
  
-@@ -596,9 +988,16 @@ Ptr<uint8_t> link_and_exec(Ptr<uint8_t> data,
+@@ -596,9 +998,16 @@ Ptr<uint8_t> link_and_exec(Ptr<uint8_t> data,
   */
  u64 link_and_exec_wrapper(u64* args) {
    // data, name, size, heap, flags
@@ -5591,7 +5453,7 @@ index fd7199959..9053e40e8 100644
  }
  
  /*!
-@@ -608,16 +1007,51 @@ u64 link_and_exec_wrapper(u64* args) {
+@@ -608,16 +1017,51 @@ u64 link_and_exec_wrapper(u64* args) {
   */
  uint64_t link_begin(u64* args) {
    // object data, name size, heap flags
@@ -5704,7 +5566,7 @@ index 0731d5272..209a11baa 100644
    ListenerFunction = intern_from_c("*listener-function*");
    kernel_dispatcher = intern_from_c("kernel-dispatcher");
 diff --git a/game/kernel/jak1/kmachine.cpp b/game/kernel/jak1/kmachine.cpp
-index 459a21562..29f36c426 100644
+index 459a21562..c66c9198e 100644
 --- a/game/kernel/jak1/kmachine.cpp
 +++ b/game/kernel/jak1/kmachine.cpp
 @@ -1,3 +1,4 @@
@@ -5723,19 +5585,7 @@ index 459a21562..29f36c426 100644
  namespace jak1 {
  
  /*!
-@@ -170,6 +175,11 @@ void InitParms(int argc, const char* const* argv) {
-  * Removed calls to exit(0) if loading modules fails.
-  */
- void InitIOP() {
-+#ifdef OTTSEL_NO_IOP
-+  // Ottsel S1.3: no IOP emulation on iOS; the kernel DGO is loaded directly
-+  // from the app bundle (see ottsel_ios_load_kernel_from_bundle).
-+  return;
-+#endif
-   // before doing anything with the I/O Processor, we need to set up SIF RPC
-   sceSifInitRpc(0);
- 
-@@ -310,10 +320,14 @@ int InitMachine() {
+@@ -310,10 +315,14 @@ int InitMachine() {
    u32 debug_heap_end = (0xffffffff - DEBUG_HEAP_SPACE_FOR_STACK + 1) & 0x7ffffff;
  
    // initialize the global heap
@@ -5752,21 +5602,7 @@ index 459a21562..29f36c426 100644
    kinitheap(kglobalheap, Ptr<u8>(HEAP_START), global_heap_size);
  
    // initialize the debug heap, if appropriate
-@@ -330,11 +344,13 @@ int InitMachine() {
-   }
- 
-   init_output();    // GOAL input/output buffer setup
-+#ifndef OTTSEL_NO_IOP
-   jak1::InitIOP();  // start IOP/OVERLORD, loading our legal splash screen
- 
-   // sceGsResetPath(); // reset VIF1, VU1, GIF
- 
-   InitVideo();  // display legal splash screen
-+#endif
- 
-   // FlushCache(WRITEBACK_DCACHE);
-   // FlushCache(INVALIDATE_ICACHE);
-@@ -344,17 +360,20 @@ int InitMachine() {
+@@ -344,13 +353,14 @@ int InitMachine() {
    //   MsgErr("dkernel: !init pad\n");
    // }
  
@@ -5779,16 +5615,10 @@ index 459a21562..29f36c426 100644
    }
 -
 +#endif  // iOS runs no Deci2 server (no compiler connection)
-+#ifndef OTTSEL_NO_IOP
    lg::info("InitSound");
    InitSound();  // do nothing!
    lg::info("InitRPC");
-   InitRPC();       // connect to IOP
-+#endif
-   reset_output();  // reset output buffers
-   clear_print();
- 
-@@ -368,10 +387,14 @@ int InitMachine() {
+@@ -368,10 +378,14 @@ int InitMachine() {
    g_auto_splitter_block_jak1.pointer_to_symbol =
        (u64)g_ee_main_mem + intern_from_c("*autosplit-info-jak1*")->value;
  
@@ -5803,7 +5633,7 @@ index 459a21562..29f36c426 100644
    Msg(6, "kernel: machine started\n");
    return 0;
  }
-@@ -380,10 +403,12 @@ int InitMachine() {
+@@ -380,10 +394,12 @@ int InitMachine() {
   * Shutdown the runtime.
   */
  int ShutdownMachine() {
@@ -5816,7 +5646,7 @@ index 459a21562..29f36c426 100644
  
    Msg(6, "kernel: machine shutdown\n");
    return 0;
-@@ -420,6 +445,11 @@ void PutDisplayEnv(u32 ptr) {
+@@ -420,6 +436,11 @@ void PutDisplayEnv(u32 ptr) {
  }
  
  void update_discord_rpc(u32 discord_info) {
@@ -5828,7 +5658,7 @@ index 459a21562..29f36c426 100644
    if (gDiscordRpcEnabled) {
      DiscordRichPresence rpc;
      char state[128];
-@@ -521,10 +551,24 @@ void update_discord_rpc(u32 discord_info) {
+@@ -521,10 +542,24 @@ void update_discord_rpc(u32 discord_info) {
  
  void pc_set_levels(u32 l0, u32 l1) {
    if (!Gfx::GetCurrentRenderer()) {
@@ -5853,7 +5683,7 @@ index 459a21562..29f36c426 100644
  
    std::vector<std::string> levels;
    if (l0s != "none" && l0s != "#f") {
-@@ -576,6 +620,7 @@ void InitMachine_PCPort() {
+@@ -576,6 +611,7 @@ void InitMachine_PCPort() {
   * which should prepare the game engine.
   */
  void InitMachineScheme() {
@@ -5861,7 +5691,7 @@ index 459a21562..29f36c426 100644
    make_function_symbol_from_c("put-display-env", (void*)PutDisplayEnv);       // used in drawable
    make_function_symbol_from_c("syncv", (void*)sceGsSyncV);                    // used in drawable
    make_function_symbol_from_c("sync-path", (void*)sceGsSyncPath);             // used
-@@ -610,8 +655,14 @@ void InitMachineScheme() {
+@@ -610,8 +646,14 @@ void InitMachineScheme() {
    InitMachine_PCPort();
    InitSoundScheme();
    intern_from_c("*stack-top*")->value = 0x07ffc000;
@@ -8131,15 +7961,15 @@ index 000000000..d54973dbf
 +}
 diff --git a/game/ottsel_ios_iop.cpp b/game/ottsel_ios_iop.cpp
 new file mode 100644
-index 000000000..bd51a53cb
+index 000000000..b15f538c8
 --- /dev/null
 +++ b/game/ottsel_ios_iop.cpp
 @@ -0,0 +1,96 @@
 +// Ottsel: run the real IOP/OVERLORD on iOS exactly as game/runtime.cpp's
 +// iop_runner does on desktop (Jak 1 only), instead of the no-IOP RPC emulation
-+// in sif_ee.cpp (kept behind OTTSEL_NO_IOP for comparison).
++// that this file replaced.
 +
-+#if defined(OTTSEL_IOS) && !defined(OTTSEL_NO_IOP)
++#ifdef OTTSEL_IOS
 +
 +#include <atomic>
 +#include <functional>
@@ -8476,7 +8306,7 @@ index 458170a6b..29fcf3e19 100644
 +bool sound_disabled();
  }  // namespace jak1
 diff --git a/game/overlord/jak1/srpc.cpp b/game/overlord/jak1/srpc.cpp
-index 377aab01d..cc192119b 100644
+index 377aab01d..0447e342b 100644
 --- a/game/overlord/jak1/srpc.cpp
 +++ b/game/overlord/jak1/srpc.cpp
 @@ -20,8 +20,11 @@
@@ -8491,214 +8321,15 @@ index 377aab01d..cc192119b 100644
  #include "game/sound/sndshim.h"
  
  #include "fmt/format.h"
-@@ -29,7 +32,206 @@
+@@ -29,6 +32,7 @@
  
  using namespace iop;
  
-+#ifdef OTTSEL_IOS
-+// G2.3: the iOS product shell owns the VAG dialogue player (src/shell/ios_boot.cpp); declared at file scope so
-+// it keeps external linkage, mirroring ottsel_ios_writable_dir in the sound player.
-+extern bool ottsel_ios_play_vag_dialogue(const char* line_name);
-+#endif
 +
  namespace jak1 {
-+#ifdef OTTSEL_NO_IOP
-+
-+// The synchronous mobile loader executes the existing fake-ISO operation
-+// directly; LoadSoundBank's desktop wrapper waits on an absent IOP mailbox.
-+static bool mobile_sound_banks_ready() {
-+  static bool initialized = false;
-+  if (initialized) return true;
-+  const char* data_dir = ee::ottsel_iso_data_dir();
-+  if (!data_dir || !*data_dir) return false;
-+  fake_iso_set_root((fs::path(data_dir) / "SBK").string());
-+  fake_iso_init_globals();
-+  jak1::fake_iso_init_globals();
-+  if (fake_iso_FS_Init() < 0) return false;
-+  InitBanks();
-+  InitSoundFalloff();
-+  InitSoundPan();
-+  initialized = true;
-+  return true;
-+}
-+
-+void* RPC_Loader(unsigned int /*fno*/, void* data, int size) {
-+  if (!data || size < (int)sizeof(SoundRpcCommand) || !mobile_sound_banks_ready())
-+    return nullptr;
-+  const auto* commands = reinterpret_cast<const SoundRpcCommand*>(data);
-+  for (int i = 0; i < size / (int)sizeof(SoundRpcCommand); ++i) {
-+    const auto& command = commands[i];
-+    if (command.j1command != Jak1SoundCommand::LOAD_BANK &&
-+        command.j1command != Jak1SoundCommand::UNLOAD_BANK) continue;
-+    char name[17] = {};
-+    memcpy(name, command.load_bank.bank_name, 16);
-+    // The existing fake-ISO implementation has a 16-byte filename buffer.
-+    if (!name[0] || strnlen(name, 16) >= 16) {
-+      lg::warn("OTTSEL AUDIO: invalid bank name length");
-+      continue;
-+    }
-+    SoundBank* bank = LookupBank(command.load_bank.bank_name);
-+    if (command.j1command == Jak1SoundCommand::LOAD_BANK) {
-+      if (bank && bank->bank_handle) continue;
-+      bank = AllocateBank();
-+      if (!bank) {
-+        lg::warn("OTTSEL AUDIO: bank registry full requested={}", name);
-+        continue;
-+      }
-+      const auto result = FS_LoadSoundBank(name, bank);
-+      lg::info("OTTSEL AUDIO: bank request={} result={} handle={} sounds={} actual={}",
-+               name, result, static_cast<void*>(bank->bank_handle), bank->sound_count,
-+               std::string(bank->name.data(), strnlen(bank->name.data(), 16)));
-+    } else if (bank && bank->bank_handle) {
-+      const auto handle = bank->bank_handle;
-+      bank->bank_handle = nullptr;
-+      snd_UnloadBank(handle);  // Existing Player stops its bank's active handlers.
-+      // Retire registry references before a reused bank slot replaces its names.
-+      for (auto& sound : gSounds) {
-+        for (const auto& record : bank->sound) {
-+          if (sound.bank_entry == &record) {
-+            sound.id = 0;
-+            sound.sound_handle = 0;
-+            sound.bank_entry = nullptr;
-+            break;
-+          }
-+        }
-+      }
-+      snd_ResolveBankXREFS();
-+    }
-+  }
-+  return nullptr;
-+}
-+
-+void* RPC_Player(unsigned int /*fno*/, void* data, int size) {
-+  if (!data || size < (int)sizeof(SoundRpcCommand) || !mobile_sound_banks_ready()) {
-+    return nullptr;
-+  }
-+  const int count = size / (int)sizeof(SoundRpcCommand);
-+  const auto* commands = reinterpret_cast<const SoundRpcCommand*>(data);
-+  for (int i = 0; i < count; ++i) {
-+    const auto& command = commands[i];
-+    // Reuse engine sound ownership; never interpret every PLAY update as a
-+    // request for a new native voice. Streamed-dialog commands remain separate.
-+    if (command.j1command != Jak1SoundCommand::PLAY) {
-+      Sound* sound = nullptr;
-+      switch (command.j1command) {
-+        case Jak1SoundCommand::SET_EAR_TRANS: {
-+          auto ear = command.ear_trans.ear_trans;
-+          auto camera = command.ear_trans.cam_trans;
-+          SetEarTrans(&ear, &ear, &camera, command.ear_trans.cam_angle);
-+          break;
-+        }
-+        case Jak1SoundCommand::SET_FALLOFF_CURVE:
-+          SetCurve(command.fallof_curve.curve, command.fallof_curve.falloff,
-+                   command.fallof_curve.ease);
-+          break;
-+        case Jak1SoundCommand::PAUSE_SOUND:
-+          if ((sound = LookupSound(command.sound_id.sound_id)))
-+            snd_PauseSound(sound->sound_handle);
-+          break;
-+        case Jak1SoundCommand::STOP_SOUND:
-+          if ((sound = LookupSound(command.sound_id.sound_id)))
-+            snd_StopSound(sound->sound_handle);
-+          break;
-+        case Jak1SoundCommand::CONTINUE_SOUND:
-+          if ((sound = LookupSound(command.sound_id.sound_id)))
-+            snd_ContinueSound(sound->sound_handle);
-+          break;
-+        case Jak1SoundCommand::SET_PARAM: {
-+          sound = LookupSound(command.sound_id.sound_id);
-+          if (!sound) break;
-+          const u32 mask = command.param.parms.mask;
-+          if (mask & 1) {
-+            if (mask & 0x10) {
-+              sound->auto_time = command.param.auto_time;
-+              sound->new_volume = command.param.parms.volume;
-+            } else {
-+              sound->params.volume = command.param.parms.volume;
-+            }
-+          }
-+          if (mask & 0x20) sound->params.trans = command.param.parms.trans;
-+          if (mask & 0x21) UpdateVolume(sound);
-+          if (mask & 2) {
-+            sound->params.pitch_mod = command.param.parms.pitch_mod;
-+            if (mask & 0x10) {
-+              // Keep independent volume/position mask handling above. The
-+              // existing native automated-pitch shim reports its limitation.
-+              snd_AutoPitch(sound->sound_handle, sound->params.pitch_mod,
-+                            command.param.auto_time, command.param.auto_from);
-+            } else {
-+              snd_SetSoundPitchModifier(sound->sound_handle, command.param.parms.pitch_mod);
-+            }
-+          }
-+          if (mask & 4) {
-+            sound->params.bend = command.param.parms.bend;
-+            if (mask & 0x10) {
-+              snd_AutoPitchBend(sound->sound_handle, sound->params.bend,
-+                                command.param.auto_time, command.param.auto_from);
-+            } else {
-+              snd_SetSoundPitchBend(sound->sound_handle, command.param.parms.bend);
-+            }
-+          }
-+          break;
-+        }
-+        default: break;
-+      }
-+      continue;
-+    }
-+    if (command.play.name[0] == 0 || command.play.sound_id == 0) continue;
-+    char sound_name[17] = {};
-+    memcpy(sound_name, command.play.name, sizeof(command.play.name));
-+#ifdef OTTSEL_NO_IOP
-+    if (memcmp(command.play.name, "spool-", 6) == 0) {
-+      // A voicebox line.  The desktop handler strips the prefix, resolves the VAG and streams it; this path
-+      // had no equivalent, so the request fell through to the bank lookup and was dropped.
-+      ottsel_ios_play_vag_dialogue(&command.play.name[6]);
-+      continue;
-+    }
-+#endif
-+    SoundBank* owner = nullptr;
-+    const s32 index = LookupSoundIndex(command.play.name, &owner);
-+    if (!owner) {
-+      lg::warn("OTTSEL AUDIO: PLAYER RPC sound missing name={} id={}", sound_name,
-+               command.play.sound_id);
-+      continue;
-+    }
-+    Sound* sound = LookupSound(command.play.sound_id);
-+    const bool updating = sound != nullptr;
-+    if (!sound) sound = AllocateSound(false);
-+    if (!sound) continue;  // Same bounded 64-sound registry as the engine.
-+    memcpy(&sound->params, &command.play.parms, sizeof(sound->params));
-+    sound->bank_entry = &owner->sound[index];
-+    sound->is_music = 0;
-+    if ((sound->params.mask & 0x40) == 0)
-+      sound->params.fo_min = sound->bank_entry->fallof_params & 0x3fff;
-+    if ((sound->params.mask & 0x80) == 0)
-+      sound->params.fo_max = (sound->bank_entry->fallof_params >> 14) & 0x3fff;
-+    if ((sound->params.mask & 0x100) == 0)
-+      sound->params.fo_curve = sound->bank_entry->fallof_params >> 28;
-+    if (updating) {
-+      UpdateVolume(sound);
-+      snd_SetSoundPitchModifier(sound->sound_handle, command.play.parms.pitch_mod);
-+      snd_SetSoundPitchBend(sound->sound_handle, command.play.parms.bend);
-+      continue;
-+    }
-+    sound->auto_time = 0;
-+    sound->sound_handle = snd_PlaySoundVolPanPMPB(
-+        owner->bank_handle, index, GetVolume(sound), GetPan(sound),
-+        command.play.parms.pitch_mod, command.play.parms.bend);
-+    if (sound->sound_handle) sound->id = command.play.sound_id;
-+    lg::info("OTTSEL AUDIO: PLAYER RPC play id={} index={} name={} handle={}",
-+             command.play.sound_id, index, sound_name, sound->sound_handle);
-+
-+  }
-+  return nullptr;
-+}
-+
-+#else
  constexpr int SRPC_MESSAGE_SIZE = 0x50;
  constexpr int SRPC_MESSAGE_COUNT = 128;
- static uint8_t gLoaderBuf[SRPC_MESSAGE_SIZE];
-@@ -444,8 +646,17 @@ void* RPC_Loader(unsigned int /*fno*/, void* data, int size) {
+@@ -444,8 +448,17 @@ void* RPC_Loader(unsigned int /*fno*/, void* data, int size) {
  static s32 dmaid = 0;
  
  s32 VBlank_Handler(void*) {
@@ -8717,7 +8348,7 @@ index 377aab01d..cc192119b 100644
  
    if (gMusicFadeDir > 0) {
      gMusicFade += (0x10000 / 64);
-@@ -461,8 +672,14 @@ s32 VBlank_Handler(void*) {
+@@ -461,8 +474,14 @@ s32 VBlank_Handler(void*) {
      }
    }
  
@@ -8733,7 +8364,7 @@ index 377aab01d..cc192119b 100644
  
    gFrameNum++;
  
-@@ -481,6 +698,17 @@ s32 VBlank_Handler(void*) {
+@@ -481,6 +500,17 @@ s32 VBlank_Handler(void*) {
    info.frame = gFrameNum;
    info.strpos = GetVAGStreamPos();
    info.std_id = gVAG_Id;
@@ -8751,12 +8382,6 @@ index 377aab01d..cc192119b 100644
    info.freemem = gFreeMem;
    info.freemem2 = gMemFreeAtStart;
    // info.nocd = gNoCD;
-@@ -509,4 +737,5 @@ s32 VBlank_Handler(void*) {
- 
-   return 1;
- }
-+#endif
- }  // namespace jak1
 diff --git a/game/overlord/jak1/srpc.h b/game/overlord/jak1/srpc.h
 index c0ff1ab82..e8e05b9a2 100644
 --- a/game/overlord/jak1/srpc.h
@@ -8774,26 +8399,20 @@ index c0ff1ab82..e8e05b9a2 100644
 \ No newline at end of file
 +}  // namespace jak1
 diff --git a/game/overlord/jak1/ssound.cpp b/game/overlord/jak1/ssound.cpp
-index b766e1890..889d30e80 100644
+index b766e1890..647f42a9e 100644
 --- a/game/overlord/jak1/ssound.cpp
 +++ b/game/overlord/jak1/ssound.cpp
-@@ -21,11 +21,14 @@ s32 gMusicVol = 0x400;
- u32 gStreamSRAM = 0;
- u32 gTrapSRAM = 0;
- 
-+#ifndef OTTSEL_NO_IOP
- void CatalogSRAM() {}
+@@ -25,7 +25,8 @@ void CatalogSRAM() {}
  
  static void* SndMemAlloc();
  static void SndMemFree(void* ptr);
 -void InitSound_Overlord() {
-+#endif
 +// Shared mathematical settings; no IOP thread, semaphore, or SPU allocation.
 +void InitSoundFalloff() {
    for (auto& s : gSounds) {
      s.id = 0;
    }
-@@ -51,6 +54,37 @@ void InitSound_Overlord() {
+@@ -51,6 +52,36 @@ void InitSound_Overlord() {
      SetCurve(8, -2048, 0);
    }
  
@@ -8822,7 +8441,6 @@ index b766e1890..889d30e80 100644
 +
 +}
 +
-+#ifndef OTTSEL_NO_IOP
 +// IOP bootstrap owns SPU streaming allocation and its semaphore. Mobile calls
 +// the shared math/pan initialization directly, without creating this subsystem.
 +void InitSound_Overlord() {
@@ -8831,7 +8449,7 @@ index b766e1890..889d30e80 100644
    snd_StartSoundSystem();
    snd_RegisterIOPMemAllocator(SndMemAlloc, SndMemFree);
    snd_LockVoiceAllocator(1);
-@@ -82,25 +116,7 @@ void InitSound_Overlord() {
+@@ -82,25 +113,7 @@ void InitSound_Overlord() {
  
    CatalogSRAM();
  
@@ -8858,38 +8476,22 @@ index b766e1890..889d30e80 100644
  
    SemaParam sema;
    sema.attr = SA_THPRI;
-@@ -115,6 +131,8 @@ void InitSound_Overlord() {
+@@ -115,6 +128,7 @@ void InitSound_Overlord() {
    }
  }
  
-+#endif
 +
  void UpdateLocation(Sound* sound) {
    if (sound->id == 0) {
      return;
-@@ -158,9 +176,16 @@ void SetEarTrans(Vec3w* ear_trans0, Vec3w* ear_trans1, Vec3w* cam_trans, s32 cam
-     }
-   }
- 
-+#ifndef OTTSEL_NO_IOP
+@@ -161,6 +175,7 @@ void SetEarTrans(Vec3w* ear_trans0, Vec3w* ear_trans1, Vec3w* cam_trans, s32 cam
    SetVAGVol();
-+#else
-+  // This updates the IOP VAG streaming voice, which mobile does not own yet.
-+  // Native bank sounds above use the real shared spatial calculations.
-+#endif
  }
  
-+#ifndef OTTSEL_NO_IOP
 +// Music/streaming remains owned by the IOP path until native loading is wired.
  void SetMusicVol() {
    s32 volume = (gMusicVol * gMusicFade >> 0x10) * gMusicTweak >> 7;
    snd_SetMasterVolume(1, volume);
-@@ -174,4 +199,5 @@ static void* SndMemAlloc() {
-   return nullptr;
- }
- static void SndMemFree(void* /*ptr*/) {}
-+#endif
- }  // namespace jak1
 diff --git a/game/overlord/jak1/ssound.h b/game/overlord/jak1/ssound.h
 index 7ee2394d4..dd5d276b6 100644
 --- a/game/overlord/jak1/ssound.h
@@ -10066,149 +9668,28 @@ index 000000000..943a984a7
 +void set_button(PadState* state, Button button, bool pressed);
 +
 +}  // namespace ottsel::platform_input
-diff --git a/game/sce/ottsel_stream_clock.h b/game/sce/ottsel_stream_clock.h
-new file mode 100644
-index 000000000..d1aee0f56
---- /dev/null
-+++ b/game/sce/ottsel_stream_clock.h
-@@ -0,0 +1,49 @@
-+#pragma once
-+
-+#include <algorithm>
-+#include <chrono>
-+#include <limits>
-+
-+#include "common/common_types.h"
-+
-+namespace ottsel::stream_clock {
-+
-+struct Snapshot {
-+  u32 id = 0;
-+  s32 position = -1;
-+  bool playing = false;
-+};
-+
-+class Clock {
-+ public:
-+  using TimePoint = std::chrono::steady_clock::time_point;
-+
-+  void play(u32 id, TimePoint now = std::chrono::steady_clock::now()) {
-+    m_id = id;
-+    m_started = now;
-+    m_playing = true;
-+  }
-+
-+  void stop() {
-+    m_id = 0;
-+    m_playing = false;
-+  }
-+
-+  Snapshot snapshot(TimePoint now = std::chrono::steady_clock::now()) const {
-+    if (!m_playing) {
-+      return {};
-+    }
-+    const auto micros =
-+        std::max<s64>(0, std::chrono::duration_cast<std::chrono::microseconds>(now - m_started).count());
-+    const auto position = std::min<s64>((micros * 1024) / 1000000,
-+                                        std::numeric_limits<s32>::max());
-+    return {m_id, static_cast<s32>(position), true};
-+  }
-+
-+ private:
-+  u32 m_id = 0;
-+  TimePoint m_started{};
-+  bool m_playing = false;
-+};
-+
-+}  // namespace ottsel::stream_clock
 diff --git a/game/sce/sif_ee.cpp b/game/sce/sif_ee.cpp
-index d40922a9a..f84b63ea6 100644
+index d40922a9a..166df9fca 100644
 --- a/game/sce/sif_ee.cpp
 +++ b/game/sce/sif_ee.cpp
-@@ -6,17 +6,92 @@
+@@ -2,6 +2,7 @@
+ 
+ #include <cstdio>
+ #include <cstring>
++#include <string>
+ #include <unordered_map>
  
  #include "common/util/Assert.h"
- #include "common/util/FileUtil.h"
-+#include "common/log/log.h"
- 
- #include "game/runtime.h"
- #include "game/system/iop_thread.h"
-+#include "game/common/str_rpc_types.h"
-+#include "game/common/play_rpc_types.h"
-+#include "game/common/player_rpc_types.h"
-+#include "game/common/dgo_rpc_types.h"
-+#include "game/common/ramdisk_rpc_types.h"
-+#include "game/kernel/common/kdgo.h"
-+#include "game/kernel/common/Ptr.h"
-+#include "common/util/DgoReader.h"
-+#include "common/util/FileUtil.h"
-+#include "common/link_types.h"
-+#include "common/goal_constants.h"
-+#include "common/dma/ottsel_dgo_alias.h"
-+#include "game/overlord/jak1/srpc.h"
-+#include "game/sce/ottsel_stream_clock.h"
-+
-+#include <algorithm>
-+#include <cstdlib>
-+#include <string>
-+#include <vector>
-+
-+#ifdef OTTSEL_NO_IOP
-+// G2.3: the iOS product shell owns the VAG dialogue player (src/shell/ios_boot.cpp); declared at file scope so
-+// it keeps external linkage, mirroring ottsel_ios_writable_dir in the sound player.
-+extern bool ottsel_ios_play_vag_dialogue(const char* line_name);
-+extern void ottsel_ios_stop_vag_dialogue(const char* token8);
-+#endif
- 
- namespace ee {
- 
+@@ -15,8 +16,18 @@ namespace ee {
  namespace {
  ::IOP* iop;
  std::unordered_map<s32, FILE*> sce_fds;
-+// Ottsel S2.1 (BOT11): directory that holds the real Jak 1 DGO/CGO files the
-+// iOS DGO-loader emulation serves.  Set by the shell (host iso_data path is
-+// not inside the Simulator sandbox, so the shell copies/binds what it needs).
++// Ottsel iOS: the imported user-pack root that fake_iso serves (set by the shell).
 +std::string g_ottsel_iso_data_dir;
-+
-+// The real IOP RAMDISK holds VIS files after a channel-2 fill request.  Keep
-+// the same file-id contract in the no-IOP iOS shim: the subsequent GET_DATA
-+// RPC copies a requested slice directly into the EE response buffer.
-+std::unordered_map<u32, std::vector<u8>> g_ottsel_ramdisk_files;
-+#ifdef OTTSEL_NO_IOP
-+u32 g_ottsel_sound_info_ee = 0;
-+u32 g_ottsel_sound_frame = 0;
-+ottsel::stream_clock::Clock g_ottsel_stream_clock;
-+
-+void ottsel_refresh_sound_info() {
-+  if (!g_ottsel_sound_info_ee || g_ottsel_sound_info_ee > EE_MAIN_MEM_SIZE ||
-+      sizeof(jak1::SoundIopInfo) > EE_MAIN_MEM_SIZE - g_ottsel_sound_info_ee) {
-+    return;
-+  }
-+  jak1::SoundIopInfo info{};
-+  const auto stream = g_ottsel_stream_clock.snapshot();
-+  info.frame = ++g_ottsel_sound_frame;
-+  info.strpos = stream.position;
-+  info.std_id = stream.playing ? stream.id : 1;
-+  info.nocd = 0;
-+  info.dirtycd = 0;
-+  memcpy(g_ee_main_mem + g_ottsel_sound_info_ee, &info, sizeof(info));
-+}
-+#endif
  }  // namespace
  
-+void ottsel_ios_refresh_sound_info() {
-+#ifdef OTTSEL_NO_IOP
-+  ottsel_refresh_sound_info();
-+#endif
-+}
-+
-+// Ottsel S2.1 (BOT11): shell hook for the DGO data directory.
 +void ottsel_set_iso_data_dir(const char* dir) {
-+  if (dir) {
-+    g_ottsel_iso_data_dir = dir;
-+  } else {
-+    g_ottsel_iso_data_dir.clear();
-+  }
++  g_ottsel_iso_data_dir = dir ? dir : "";
 +}
 +
 +const char* ottsel_iso_data_dir() {
@@ -10218,556 +9699,50 @@ index d40922a9a..f84b63ea6 100644
  void LIBRARY_sceSif_register(::IOP* i) {
    iop = i;
  }
-@@ -27,6 +102,40 @@ void LIBRARY_INIT_sceSif() {
-     fclose(kv.second);
-   }
-   sce_fds.clear();
-+  g_ottsel_ramdisk_files.clear();
-+#ifdef OTTSEL_NO_IOP
-+  g_ottsel_sound_info_ee = 0;
-+  g_ottsel_sound_frame = 0;
-+  g_ottsel_stream_clock.stop();
-+#endif
-+}
-+
-+// Ottsel S2.1 (BOT11): resolve a requested DGO/CGO/VIS file name against a
-+// served data directory.  The GOAL side requests lowercase names ("tit.DGO"),
-+// while the extracted iso_data tree keeps uppercase names ("TIT.DGO").  The
-+// Simulator sandbox resolves the case-mismatched path to ENOENT even though
-+// the host APFS volume is case-insensitive, so scan the actual directory and
-+// return the canonical on-disk path (exact case) when a case-insensitive
-+// match exists.
-+static fs::path ottsel_resolve_data_file(const fs::path& root,
-+                                         const fs::path& subdir,
-+                                         const std::string& requested) {
-+  fs::path dir = root / subdir;
-+  fs::path direct = dir / requested;
-+  if (fs::exists(direct)) {
-+    return direct;
-+  }
-+  std::error_code ec;
-+  for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
-+    std::string entry = it->path().filename().string();
-+    if (entry.size() == requested.size() &&
-+        std::equal(entry.begin(), entry.end(), requested.begin(),
-+                   [](char a, char b) { return std::tolower((unsigned char)a) ==
-+                                               std::tolower((unsigned char)b); })) {
-+      return it->path();
-+    }
-+  }
-+  return {};
- }
- void sceSifInitRpc(unsigned int mode) {
-   (void)mode;
-@@ -80,24 +189,490 @@ s32 sceSifCallRpc(sceSifClientData* bd,
-                   s32 rsize,
-                   void* end_func,
-                   void* end_para) {
-+#ifdef OTTSEL_NO_IOP
-+  ottsel_refresh_sound_info();
-+  // The GAME host fixture has no IOP thread and links desktop overlord
-+  // RPC_Loader, which calls GetThreadId() on a null IOP. Product iOS uses
-+  // the mobile loader in srpc.cpp instead. Keep the IRX handshake below.
-+#ifndef OTTSEL_SIGNED_GAMEDATA_TEST
-+  if (bd == g_ottsel_player_rpc_bd && send && ssize > 0) {
-+    jak1::RPC_Player(fno, send, ssize);
-+  }
-+  if (bd == g_ottsel_loader_rpc_bd && send && ssize > 0) {
-+    jak1::RPC_Loader(fno, send, ssize);
-+  }
-+#endif
-+  // Ottsel S2.1: no IOP thread on iOS; the OVERLORD/sound RPC protocol is
-+  // inert (IOP_Kernel::sif_rpc is a no-op stub).  GOAL calls the sound
-+  // loader with mode 0 (sync), so the upstream `mode == 1` assert cannot
-+  // hold here.
-+  // Emulate just enough of the OVERLORD sound loader for the boot path:
-+  // respond to get-irx-version (sound-command 12, sent in the buffer header
-+  // at +2) with version 2.0 so check-irx-version passes instead of crash!-ing.
-+  if (send && ssize >= 12) {
-+    u16 cmd = 0;
-+    (void)fno;
-+    memcpy(&cmd, (const u8*)send + 2, 2);
-+    if (cmd == 12) {
-+      if (ssize >= 16) {
-+        memcpy(&g_ottsel_sound_info_ee, (const u8*)send + 12, 4);
-+      }
-+      const u32 major = 2;
-+      const u32 minor = 0;
-+      memcpy((u8*)send + 4, &major, 4);
-+      memcpy((u8*)send + 8, &minor, 4);
-+      ottsel_refresh_sound_info();
-+    }
-+  }
-+  // The iOS product has no OVERLORD thread, but GOAL's animation sequencer
-+  // uses the streamed-dialog clock as its authoritative timeline. Mirror the
-+  // PLAY channel's 1024-units-per-second clock into sound-iop-info so a valid
-+  // cutscene cannot abort after four seconds merely because the IOP is absent.
-+  // G2.3: the PLAY-STR command names a stream either as a VAG name ("$name") or as an animation name;
-+  // the desktop handler maps both to an 8-character disc token, and the play and stop branches both need it.
-+  auto ottsel_play_token = [](char* out, size_t out_size, const char* name) {
-+    char copy[49] = {};
-+    memcpy(copy, name, 48);
-+    if (out_size < 9) { out[0] = 0; return; }
-+    if (copy[0] == '$') {
-+      const char* part = &copy[1];
-+      const size_t len = strnlen(part, 15);
-+      if (len < 9) { memset(out, ' ', 8); memcpy(out, part, len); } else { memcpy(out, part, 8); }
-+      for (int k = 0; k < 8; ++k) { if (out[k] >= 0x61 && out[k] < 0x7b) out[k] -= 0x20; }
-+    } else {
-+      file_util::ISONameFromAnimationName(out, copy);
-+    }
-+    out[8] = 0;
-+  };
-+  if (bd == g_ottsel_play_rpc_bd && send && ssize >= (s32)sizeof(RPC_Play_Cmd_Jak1)) {
-+    const auto* commands = reinterpret_cast<const RPC_Play_Cmd_Jak1*>(send);
-+    const int count = ssize / (s32)sizeof(RPC_Play_Cmd_Jak1);
-+    static u32 ottsel_stream_logs = 0;
-+    for (int i = 0; i < count; ++i) {
-+      const auto& command = commands[i];
-+      if (command.result == 0 && command.address) {
-+        g_ottsel_stream_clock.play(command.address);
-+        // G2.3: the desktop PLAY-STR handler resolves the command's name to an 8-character disc token
-+        // and streams the VAG; this branch only mirrored the clock, so cutscene narration was silent.
-+        char vag_name[16] = {};
-+        ottsel_play_token(vag_name, sizeof(vag_name), command.name);
-+        ottsel_ios_play_vag_dialogue(vag_name);
-+        if (ottsel_stream_logs < 16) {
-+          ++ottsel_stream_logs;
-+          lg::info("OTTSEL STREAM CLOCK: play id={} name={}", command.address,
-+                   std::string(command.name, strnlen(command.name, sizeof(command.name))));
-+        }
-+      } else if (command.result == 1) {
-+        g_ottsel_stream_clock.stop();
-+        // G2.3: a stop names one stream; pass its token so a different line is not cut short.
-+        char stop_name[16] = {};
-+        ottsel_play_token(stop_name, sizeof(stop_name), command.name);
-+        ottsel_ios_stop_vag_dialogue(stop_name);
-+        if (ottsel_stream_logs < 16) {
-+          ++ottsel_stream_logs;
-+          lg::info("OTTSEL STREAM CLOCK: stop name={}",
-+                   std::string(command.name, strnlen(command.name, sizeof(command.name))));
-+        }
-+      }
-+    }
-+    ottsel_refresh_sound_info();
-+  }
-+  // Emulate the Jak 1 RAMDISK VIS path (channel 2).  `vis-load` first sends
-+  // fno 1 with a 16-byte ISO token such as "VI1     VIS"; `ramdisk-load`
-+  // then sends fno 0 with the file ID, byte offset, and requested response
-+  // size.  Returning success without copying this data leaves stale EE bytes
-+  // that the decompressor interprets as illegal visibility bits.
-+  if (bd == g_ottsel_ramdisk_rpc_bd && send &&
-+      ssize >= (s32)sizeof(RPC_Ramdisk_LoadCmd)) {
-+    const auto* cmd = reinterpret_cast<const RPC_Ramdisk_LoadCmd*>(send);
-+    if (fno == RAMDISK_RESET_AND_LOAD_FNO) {
-+      std::string raw(cmd->name, strnlen(cmd->name, sizeof(cmd->name)));
-+      std::string base = raw.substr(0, std::min<size_t>(8, raw.size()));
-+      while (!base.empty() && base.back() == ' ') {
-+        base.pop_back();
-+      }
-+      std::string extension;
-+      if (raw.size() > 8) {
-+        extension = raw.substr(8, std::min<size_t>(3, raw.size() - 8));
-+        while (!extension.empty() && extension.back() == ' ') {
-+          extension.pop_back();
-+        }
-+      }
-+      const std::string file_name = extension.empty() ? base : base + "." + extension;
-+      fs::path path;
-+      if (const char* data_dir = ottsel_iso_data_dir(); data_dir && *data_dir) {
-+        path = ottsel_resolve_data_file(fs::path(data_dir), "VIS", file_name);
-+      }
-+      try {
-+        if (path.empty()) {
-+          throw std::runtime_error("VIS file not found");
-+        }
-+        auto bytes = file_util::read_binary_file(path);
-+        g_ottsel_ramdisk_files[cmd->file_id_or_ee_addr] = std::move(bytes);
-+        lg::info("OTTSEL RAMDISK: loaded {} id={} bytes={}", path.filename().string(),
-+                 cmd->file_id_or_ee_addr, g_ottsel_ramdisk_files[cmd->file_id_or_ee_addr].size());
-+      } catch (const std::exception& e) {
-+        g_ottsel_ramdisk_files.erase(cmd->file_id_or_ee_addr);
-+        lg::error("OTTSEL RAMDISK: cannot load {} (id={}): {}", file_name,
-+                  cmd->file_id_or_ee_addr, e.what());
-+      }
-+    } else if (fno == RAMDISK_GET_DATA_FNO && recv && rsize > 0) {
-+      const auto it = g_ottsel_ramdisk_files.find(cmd->file_id_or_ee_addr);
-+      const size_t offset = cmd->offset_into_file;
-+      const size_t size = cmd->size;
-+      if (it == g_ottsel_ramdisk_files.end() || size > (size_t)rsize ||
-+          offset > it->second.size() || size > it->second.size() - offset) {
-+        lg::error("OTTSEL RAMDISK: invalid read id={} offset={} size={} reply={}",
-+                  cmd->file_id_or_ee_addr, offset, size, rsize);
-+        memset(recv, 0, rsize);
-+      } else {
-+        memcpy(recv, it->second.data() + offset, size);
-+      }
-+    }
-+  }
-+  // Emulate the OVERLORD STR loader (RPC id 0xfab4, channel 4).  The iOS
-+  // runtime has no IOP thread, so stream data must be copied from the local,
-+  // user-provided iso_data bundle.  A successful zero-length response is not
-+  // safe here: external-art-buffer treats it as a linked art group and then
-+  // dereferences a raw null pointer.
-+  // The no-IOP runtime can recreate the lightweight client-data array after
-+  // the GOAL wrapper has cached a pointer.  The Jak 1 STR wire format is
-+  // unambiguous here (64-byte command, 32-byte reply), unlike the DGO and
-+  // sound channels, so use that contract rather than pointer identity.
-+  if ((bd == g_ottsel_str_rpc_bd ||
-+       (ssize == (s32)sizeof(RPC_Str_Cmd_Jak1) && rsize == 32)) &&
-+      send && recv) {
-+    if (!send || ssize < 16 || !recv || rsize < 16) {
-+      return 0;
-+    }
-+
-+    auto* cmd = reinterpret_cast<RPC_Str_Cmd_Jak1*>(send);
-+    auto* reply = reinterpret_cast<RPC_Str_Cmd_Jak1*>(recv);
-+    const std::string name(cmd->name, strnlen(cmd->name, sizeof(cmd->name)));
-+    const char* data_dir = ottsel_iso_data_dir();
-+    fs::path path;
-+    std::vector<u8> bytes;
-+    size_t source_offset = 0;
-+    size_t source_length = 0;
-+    std::string failure;
-+
-+    if (!data_dir || !*data_dir) {
-+      failure = "iso_data directory is unset";
-+    } else if (cmd->chunk_id < 0) {
-+      const fs::path root(data_dir);
-+      path = ottsel_resolve_data_file(root, "TEXT", name);
-+      // The GOAL text loader requests the language-independent aliases;
-+      // Jak 1's extracted files are language-prefixed (0COMMON/0SUBTIT for
-+      // the default English boot).
-+      if (path.empty() && (name == "common.TXT" || name == "subtit.TXT")) {
-+        path = ottsel_resolve_data_file(root, "TEXT", "0" + name);
-+      }
-+      if (path.empty()) {
-+        path = ottsel_resolve_data_file(root, "STR", name);
-+      }
-+      if (path.empty()) {
-+        path = ottsel_resolve_data_file(root, "", name);
-+      }
-+      if (path.empty()) {
-+        failure = "whole-file request not found";
-+      }
-+    } else if (cmd->chunk_id >= SECTOR_TABLE_SIZE) {
-+      failure = "chunk index out of range";
-+    } else {
-+      char iso_name[128] = {};
-+      file_util::ISONameFromAnimationName(iso_name, name.c_str());
-+      // ISONameFromAnimationName returns an 8.3 disc token such as
-+      // "NDINTRO STR" (space-padded base, no dot).  The local extraction uses
-+      // normal filesystem spelling: NDINTRO.STR.
-+      std::string base(iso_name, 8);
-+      while (!base.empty() && base.back() == ' ') {
-+        base.pop_back();
-+      }
-+      path = ottsel_resolve_data_file(fs::path(data_dir), "STR", base + ".STR");
-+      if (path.empty()) {
-+        failure = "chunked animation not found";
-+      }
-+    }
-+
-+    if (failure.empty()) {
-+      try {
-+        bytes = file_util::read_binary_file(path);
-+        if (cmd->chunk_id < 0) {
-+          source_length = bytes.size();
-+        } else if (bytes.size() < sizeof(StrFileHeaderJ1)) {
-+          failure = "short STR header";
-+        } else {
-+          const auto* header = reinterpret_cast<const StrFileHeaderJ1*>(bytes.data());
-+          source_offset = size_t(header->sectors[cmd->chunk_id]) * SECTOR_SIZE;
-+          source_length = header->sizes[cmd->chunk_id];
-+          if (source_length == 0 || source_offset > bytes.size() ||
-+              source_length > bytes.size() - source_offset) {
-+            failure = "invalid STR chunk bounds";
-+          }
-+        }
-+      } catch (const std::exception& e) {
-+        failure = e.what();
-+      }
-+    }
-+
-+    // The ARM64 GOAL call packet currently loses the requested max length on
-+    // this path.  The external-art-buffer source uses 0x3fc00, so retain that
-+    // established bound when the packet carries zero; never copy past it.
-+    const size_t max_length = cmd->length ? cmd->length : 0x3fc00;
-+    if (failure.empty() && (source_length > max_length || cmd->ee_addr < EE_MAIN_MEM_LOW_PROTECT ||
-+                            cmd->ee_addr > EE_MAIN_MEM_SIZE ||
-+                            source_length > EE_MAIN_MEM_SIZE - cmd->ee_addr)) {
-+      failure = "destination or requested length is invalid";
-+    }
-+
-+    if (failure.empty()) {
-+      memcpy(g_ee_main_mem + cmd->ee_addr, bytes.data() + source_offset, source_length);
-+      reply->result = STR_RPC_RESULT_DONE;
-+      reply->length = (u32)source_length;
-+      lg::info("OTTSEL STR: loaded {} chunk={} bytes={} -> 0x{:x}", path.filename().string(),
-+               cmd->chunk_id, source_length, cmd->ee_addr);
-+    } else {
-+      reply->result = STR_RPC_RESULT_ERROR;
-+      reply->length = 0;
-+      lg::warn("OTTSEL STR: {} name={} chunk={} dest=0x{:x} max={}", failure, name,
-+               cmd->chunk_id, cmd->ee_addr, max_length);
-+    }
-+  }
-+  // Emulate the OVERLORD DGO loader (RPC id 0xfab3, channel 3): the GOAL
-+  // side's load-package / level load calls `(load-package "art" global)` ->
-+  // load_and_link_dgo_from_c -> BeginLoadingDGO (fno 0) then GetNextDGO /
-+  // ContinueLoadingDGO (fno 1).  On iOS there is no IOP, so without a
-+  // response GetNextDGO returns nothing forever and (play)'s
-+  // `(while ... (load-continue ...))` spins at 100% CPU.  Serve REAL DGO/CGO
-+  // data from the local iso_data tree (mirroring overlord): parse the file,
-+  // copy each object (ObjectHeader + aligned bytes) into the EE buffer the
-+  // overlord would use, and set result MORE/DONE exactly like LoadDGO/
-+  // LoadNextDGO.  The recv buffer is the same RPC_Dgo_Cmd as send (the EE
-+  // reads the response back from it).
-+  if (bd == g_ottsel_dgo_rpc_bd) {
-+    lg::info("OTTSEL DGO RPC emulated: fno={} send={} size={} recv={} rsize={}", fno, send, ssize,
-+             recv, rsize);
-+    // Two request shapes share the DGO channel:
-+    //  - C++ load_and_link_dgo_from_c: RPC_Dgo_Cmd (64 bytes, name at +16)
-+    //  - GOAL dgo-load-begin / level loads: load-dgo-msg (32 bytes:
-+    //    rsvd u16, result u16, b1 u32, b2 u32, bt u32, name[16])
-+    // Both use the same response protocol (result at +2, object location at
-+    // +4, heap top at +12).
-+    if (send && ssize >= 32 && recv && rsize >= 32) {
-+      u8* cmd = (u8*)send;
-+      u8* reply = (u8*)recv;
-+      // Preserve the request fields in the reply.
-+      memcpy(reply, cmd, std::min<size_t>(ssize, rsize));
-+      u32 cmd_b1 = 0, cmd_b2 = 0, cmd_bt = 0;
-+      memcpy(&cmd_b1, cmd + 4, 4);
-+      memcpy(&cmd_b2, cmd + 8, 4);
-+      memcpy(&cmd_bt, cmd + 12, 4);
-+      char cmd_name[17] = {0};
-+      if (ssize >= (s32)sizeof(RPC_Dgo_Cmd)) {
-+        // C++ path: name at +16.
-+        memcpy(cmd_name, cmd + 16, 16);
-+      } else {
-+        // GOAL path: name at +16 (load-dgo-msg name is 16 bytes).
-+        memcpy(cmd_name, cmd + 16, 16);
-+      }
-+      // The overlord keeps ONE DGO load in flight: LOAD (fno 0) starts it,
-+      // LOAD_NEXT (fno 1) continues the same file.  ContinueLoadingDGO does
-+      // not resend the name, so persist the parsed file between calls.
-+      struct DgoSession {
-+        std::vector<DgoDataEntry> entries;
-+        size_t next_obj = 0;
-+        u32 buf1 = 0;   // EE buffer for the first object (from LOAD cmd)
-+        u32 buf2 = 0;   // EE buffer for the second object (from LOAD cmd)
-+        u32 heap_top = 0;
-+        bool use_buf2 = false;  // which buffer the NEXT object goes into
-+      };
-+      static DgoSession s_dgo;
-+      if (fno == DGO_RPC_LOAD_FNO) {
-+        // The file name is uppercased by the caller (e.g. "ART.CGO").
-+        std::string name(cmd_name, strnlen(cmd_name, 16));
-+        lg::info("OTTSEL DGO RPC: loading {}", name);
-+        // Resolve against the served iso_data directory (set by the shell).
-+        const char* dgo_dir = ottsel_iso_data_dir();
-+        fs::path path;
-+        if (dgo_dir && *dgo_dir) {
-+          fs::path root(dgo_dir);
-+          // The iso_data tree keeps CGOs and DGOs in subdirectories; the
-+          // loader requests the bare file name (e.g. "ART.CGO", "tit.DGO").
-+          // The sandbox is case-sensitive for lookups, so resolve the real
-+          // on-disk name (the tree uses uppercase) case-insensitively.
-+          path = ottsel_resolve_data_file(root, "CGO", name);
-+          if (path.empty()) {
-+            path = ottsel_resolve_data_file(root, "DGO", name);
-+          }
-+          if (path.empty()) {
-+            const auto alias = ottsel::jak1_dgo_retail_alias(name);
-+            if (!alias.empty()) {
-+              path = ottsel_resolve_data_file(root, "DGO", std::string(alias));
-+              if (!path.empty()) {
-+                lg::info("OTTSEL DGO RPC: symbolic {} -> retail {}", name, alias);
-+              }
-+            }
-+          }
-+          if (path.empty()) {
-+            path = ottsel_resolve_data_file(root, "", name);
-+          }
-+        }
-+        if (path.empty() || !fs::exists(path)) {
-+          lg::error("OTTSEL DGO RPC: file {} not found (resolved from {} -> {})", name,
-+                    dgo_dir ? dgo_dir : "(unset)", path.empty() ? "(none)" : path.string());
-+          s_dgo.entries.clear();
-+          s_dgo.next_obj = 0;
-+          u16 err = (u16)DGO_RPC_RESULT_ERROR;
-+          memcpy(reply + 2, &err, 2);
-+        } else {
-+          lg::info("OTTSEL DGO RPC: resolved {} -> {}", name, path.string());
-+          // BOT11: read_binary_file throws std::runtime_error for paths that
-+          // are not regular files/symlinks (e.g. a directory resolved through
-+          // the case-insensitive scan).  An uncaught exception on the boot
-+          // thread terminates the app (see the 2026-08-11 11:13 SIGABRT in
-+          // file_util::read_binary_file from sceSifCallRpc).  Catch it here
-+          // and reply ERROR like any other load failure.
-+          try {
-+            auto data = file_util::read_binary_file(path);
-+            DgoReader reader(name, data);
-+            s_dgo.entries = reader.entries();
-+            s_dgo.next_obj = 0;
-+            // The LOAD command carries the two double-buffer addresses and the
-+            // heap-top.  The first object goes into buffer1; the overlord toggles
-+            // buffer1/buffer2 for the rest, and the LAST object is loaded
-+            // directly at the heap top.
-+            s_dgo.buf1 = cmd_b1;
-+            s_dgo.buf2 = cmd_b2;
-+            s_dgo.heap_top = cmd_bt;
-+            s_dgo.use_buf2 = false;
-+            lg::info("OTTSEL DGO RPC: {} has {} objects", name, s_dgo.entries.size());
-+          } catch (const std::exception& e) {
-+            lg::error("OTTSEL DGO RPC: cannot read {} ({}): {}", name, path.string(), e.what());
-+            s_dgo.entries.clear();
-+            s_dgo.next_obj = 0;
-+            u16 err = (u16)DGO_RPC_RESULT_ERROR;
-+            memcpy(reply + 2, &err, 2);
-+          }
-+        }
-+      }
-+      if (fno == DGO_RPC_LOAD_NEXT_FNO) {
-+        lg::info("OTTSEL DGO RPC: continue (obj {}/{})", s_dgo.next_obj,
-+                 s_dgo.entries.size());
-+        // ContinueLoadingDGO only sends buffer_heap_top; the double-buffer
-+        // addresses persist from the LOAD command.
-+        s_dgo.heap_top = cmd_bt;
-+      }
-+      // Skip objects that are not GOAL link blocks (raw texture/data records
-+      // in the shipped ART.CGO, e.g. "texture-upload").  The real game's
-+      // loader links every DGO object, but those records are data, not
-+      // linkable GOAL objects; serving them to link_and_exec asserts
-+      // VERSION ERROR.  The compiled GAME.CGO already contains the matching
-+      // logic, so skipping the data record is the correct ROM-safe behavior.
-+      while (s_dgo.next_obj < s_dgo.entries.size()) {
-+        const auto& e = s_dgo.entries[s_dgo.next_obj];
-+        u32 tag = e.data.size() >= 4 ? *(const u32*)e.data.data() : 0;
-+        // S2.1: a GOAL link block starts with either the v2/v4 type tag -1
-+        // (raw records like title-vis, tpage pages) or the no-emit v3 "GOAL"
-+        // magic (recompiled objects like title-obs/static-screen, whose
-+        // top-levels define the title state symbols).  Both are linkable;
-+        // anything else (e.g. the ISO's "texture-upload" data record) is
-+        // raw data and must be skipped.
-+        if (tag == 0xffffffffu || tag == 0x4c414f47u) {
-+          break;
-+        }
-+        lg::info("OTTSEL DGO RPC: skip non-GOAL obj {} ({}, {} bytes, tag=0x{:x})",
-+                 s_dgo.next_obj, e.internal_name, e.data.size(), tag);
-+        s_dgo.next_obj++;
-+      }
-+      if (s_dgo.entries.empty() || s_dgo.next_obj >= s_dgo.entries.size()) {
-+        u16 err = (u16)DGO_RPC_RESULT_ERROR;
-+        memcpy(reply + 2, &err, 2);
-+        s_dgo.entries.clear();
-+        s_dgo.next_obj = 0;
-+      } else {
-+        const auto& entry = s_dgo.entries[s_dgo.next_obj];
-+        bool is_last = (s_dgo.next_obj + 1 == s_dgo.entries.size());
-+        u32 obj_size = (u32)entry.data.size();
-+        // Destination: the overlord loads the last object to the heap top,
-+        // earlier ones into buffer1/buffer2 (toggling).  The EE reads
-+        // reply->buffer1 as the object location, so report where we wrote.
-+        u32 dest_off;
-+        if (is_last) {
-+          dest_off = s_dgo.heap_top;
-+        } else if (!s_dgo.use_buf2) {
-+          dest_off = s_dgo.buf1;
-+        } else {
-+          dest_off = s_dgo.buf2;
-+        }
-+        u8* dest = (u8*)g_ee_main_mem + dest_off;
-+        if (dest_off >= 0x08000000 || dest_off < EE_MAIN_MEM_LOW_PROTECT) {
-+          lg::error("OTTSEL DGO RPC: bad dest 0x{:x} for obj {}", dest_off, s_dgo.next_obj);
-+          u16 err = (u16)DGO_RPC_RESULT_ERROR;
-+          memcpy(reply + 2, &err, 2);
-+          s_dgo.entries.clear();
-+          s_dgo.next_obj = 0;
-+          (void)dest;
-+        } else {
-+        // ObjectHeader{size,name} then aligned data.
-+        memcpy(dest, &obj_size, 4);
-+        memset(dest + 4, 0, 60);
-+        strncpy((char*)dest + 4, entry.internal_name.c_str(), 59);
-+        memcpy(dest + sizeof(ObjectHeader), entry.data.data(), obj_size);
-+        // The reply's buffer1 tells the EE where the object is.
-+        memcpy(reply + 4, &dest_off, 4);
-+        u16 res = (u16)(is_last ? DGO_RPC_RESULT_DONE : DGO_RPC_RESULT_MORE);
-+        memcpy(reply + 2, &res, 2);
-+        lg::info("OTTSEL DGO RPC: served obj {} ({}, {} bytes) result={} dest=0x{:x}",
-+                 s_dgo.next_obj, entry.internal_name, obj_size, res, dest_off);
-+        s_dgo.next_obj++;
-+        s_dgo.use_buf2 = !s_dgo.use_buf2;
-+        }
-+      }
-+    }
-+  }
-+  (void)bd;
-+  (void)fno;
-+  (void)mode;
-+  (void)ssize;
-+  (void)recv;
-+  (void)rsize;
-+  (void)end_func;
-+  (void)end_para;
-+  return 0;
-+#else
+@@ -83,12 +94,29 @@ s32 sceSifCallRpc(sceSifClientData* bd,
    ASSERT(!end_func);
    ASSERT(!end_para);
    ASSERT(mode == 1);  // async
++  if (!iop) {
++    // Host activation fixtures run GOAL top-levels without an IOP thread. Answer the one handshake
++    // GAME's gsound makes while loading (get-irx-version, sound command 12) so it does not crash!.
++    if (send && ssize >= 12) {
++      u16 cmd = 0;
++      memcpy(&cmd, (const u8*)send + 2, 2);
++      if (cmd == 12) {
++        const u32 major = 2, minor = 0;
++        memcpy((u8*)send + 4, &major, 4);
++        memcpy((u8*)send + 8, &minor, 4);
++      }
++    }
++    return 0;
++  }
    iop->kernel.sif_rpc(bd->rpcd.id, fno, mode, send, ssize, recv, rsize);
    iop->signal_run_iop();
    return 0;
-+#endif
  }
  
  s32 sceSifCheckStatRpc(sceSifRpcData* bd) {
-+#ifdef OTTSEL_NO_IOP
-+  (void)bd;
-+  return 0;
-+#else
++  if (!iop) {
++    return 0;  // host fixtures without an IOP: nothing is ever busy
++  }
    iop->signal_run_iop();
    return iop->kernel.sif_busy(bd->id);
-+#endif
  }
- 
- s32 sceSifBindRpc(sceSifClientData* bd, u32 request, u32 mode) {
-+#ifdef OTTSEL_NO_IOP
-+  // Ottsel S2.1: keep the RPC client object shape valid (bd->serve set) so
-+  // the GOAL-side call method proceeds; no IOP work happens.
-+  (void)mode;
-+  bd->rpcd.id = request;
-+  bd->serve = (sceSifServeData*)1;
-+  return 0;
-+#else
-   ASSERT(mode == 1);  // async
-   bd->rpcd.id = request;
-   bd->serve = (sceSifServeData*)1;
-   return 0;
-+#endif
- }
- 
- s32 sceOpen(const char* filename, s32 flag) {
 diff --git a/game/sce/sif_ee.h b/game/sce/sif_ee.h
-index 09aecec15..a0e1e0158 100644
+index 09aecec15..621405d49 100644
 --- a/game/sce/sif_ee.h
 +++ b/game/sce/sif_ee.h
-@@ -49,6 +49,13 @@ struct sceSifClientData {
+@@ -48,6 +48,9 @@ struct sceSifClientData {
+ 
  void LIBRARY_sceSif_register(::IOP* i);
  void LIBRARY_INIT_sceSif();
- 
-+// Ottsel S2.1 (BOT11): the iOS DGO-loader emulation serves real DGO/CGO data
-+// from a directory set by the shell (the host iso_data tree is not reachable
-+// from the Simulator sandbox, so the shell supplies a copy).
++// Ottsel iOS: user-pack root served by fake_iso.
 +void ottsel_set_iso_data_dir(const char* dir);
 +const char* ottsel_iso_data_dir();
-+void ottsel_ios_refresh_sound_info();
-+
+ 
  void sceSifInitRpc(unsigned int mode);
  int sceSifRebootIop(const char* imgfile);
- int sceSifSyncIop();
 diff --git a/game/settings/settings.h b/game/settings/settings.h
 index 4355cb922..c1034ba72 100644
 --- a/game/settings/settings.h
@@ -11496,7 +10471,7 @@ index 205d8e1dd..312cc32dd 100644
    u32 mNAX{0};
    u32 mLSA{0};
 diff --git a/game/sound/sndshim.cpp b/game/sound/sndshim.cpp
-index bf8d68d40..84984e8d1 100644
+index bf8d68d40..2ab243a86 100644
 --- a/game/sound/sndshim.cpp
 +++ b/game/sound/sndshim.cpp
 @@ -1,6 +1,8 @@
@@ -11508,7 +10483,7 @@ index bf8d68d40..84984e8d1 100644
  
  #include "sdshim.h"
  
-@@ -10,21 +12,135 @@
+@@ -10,21 +12,75 @@
  #include "989snd/player.h"
  
  std::unique_ptr<snd::Player> player;
@@ -11517,9 +10492,6 @@ index bf8d68d40..84984e8d1 100644
 +bool audio_callback_logged = false;
 +u32 audio_peak_log_count = 0;
 +bool audio_output_paused = false;
-+std::vector<u16> vag_probe_sample;
-+std::shared_ptr<std::vector<u16>> vag_probe_shared_sample;
-+std::shared_ptr<snd::Voice> vag_probe_voice;
 +}  // namespace
  
  void snd_StartSoundSystem() {
@@ -11585,68 +10557,11 @@ index bf8d68d40..84984e8d1 100644
 +    player->ResumeOutput();
 +    audio_output_paused = false;
 +  }
-+}
-+
-+bool snd_StartVAGProbe(const u8* adpcm_data, u32 byte_length, u32 sample_rate) {
-+  std::scoped_lock lock(player_lifecycle_mutex);
-+  if (!player || !adpcm_data || byte_length < 16 || (byte_length & 1) != 0 || sample_rate == 0) {
-+    return false;
-+  }
-+  vag_probe_sample.resize(byte_length / sizeof(u16));
-+  memcpy(vag_probe_sample.data(), adpcm_data, byte_length);
-+  // The diagnostic buffer is finite. Mark its final ADPCM block as a
-+  // non-looping end block so Voice never walks beyond retained chunks.
-+  if (vag_probe_sample.size() >= 8) {
-+    vag_probe_sample[vag_probe_sample.size() - 8] |= 0x0100;
-+  }
-+  vag_probe_voice = std::make_shared<snd::Voice>(snd::Voice::AllocationType::Permanent);
-+  vag_probe_voice->SetSample(vag_probe_sample.data());
-+  vag_probe_voice->SetSampleLength((u32)vag_probe_sample.size());
-+  vag_probe_voice->SetPitch(0x1000);
-+  vag_probe_voice->SetAsdr1(0x000f);
-+  vag_probe_voice->SetAsdr2(0x1fc0);
-+  vag_probe_voice->SetVolume(0x3fff, 0x3fff);
-+  vag_probe_voice->KeyOn();
-+  player->SubmitVoice(vag_probe_voice);
-+  lg::info("OTTSEL AUDIO: VAG diagnostic voice started bytes={} sample-rate={}", byte_length,
-+           sample_rate);
-+  return true;
-+}
-+
-+bool snd_StartVAGProbeShared(const std::shared_ptr<std::vector<u16>>& sample,
-+                             u32 sample_words,
-+                             u32 sample_rate) {
-+  std::scoped_lock lock(player_lifecycle_mutex);
-+  if (!player || !sample || sample->empty() || sample_words != sample->size() || sample_rate == 0) {
-+    return false;
-+  }
-+  vag_probe_shared_sample = sample;
-+  vag_probe_voice = std::make_shared<snd::Voice>(snd::Voice::AllocationType::Permanent);
-+  vag_probe_voice->SetSample(sample->data());
-+  vag_probe_voice->SetSampleLength(sample_words);
-+  vag_probe_voice->SetPitch(0x1000);
-+  vag_probe_voice->SetAsdr1(0x000f);
-+  vag_probe_voice->SetAsdr2(0x1fc0);
-+  vag_probe_voice->SetVolume(0x3fff, 0x3fff);
-+  vag_probe_voice->KeyOn();
-+  player->SubmitVoice(vag_probe_voice);
-+  return true;
-+}
-+
-+void snd_StopVAGProbeShared() {
-+  std::scoped_lock lock(player_lifecycle_mutex);
-+  if (vag_probe_voice) {
-+    // Hard stop: a stopped stream must not keep playing over what comes next (a skipped cutscene).  The
-+    // sample buffer is not freed here - the caller owns it and keeps it alive for the voice.
-+    vag_probe_voice->Stop();
-+    vag_probe_voice.reset();
-+  }
-+  vag_probe_shared_sample.reset();
  }
  
  // dma is always instant, allocation not required
 diff --git a/game/sound/sndshim.h b/game/sound/sndshim.h
-index 49c285e72..c6cc70a14 100644
+index 49c285e72..1d4327af5 100644
 --- a/game/sound/sndshim.h
 +++ b/game/sound/sndshim.h
 @@ -1,5 +1,8 @@
@@ -11658,18 +10573,13 @@ index 49c285e72..c6cc70a14 100644
  #include "common/common_types.h"
  
  #include "game/sound/989snd/plugin.h"
-@@ -22,6 +25,14 @@ using BankHandle = SoundBank*;
+@@ -22,6 +25,9 @@ using BankHandle = SoundBank*;
  
  void snd_StartSoundSystem();
  void snd_StopSoundSystem();
 +void snd_PumpAudioInit();
 +void snd_PauseAudioOutput();
 +void snd_ResumeAudioOutput();
-+bool snd_StartVAGProbe(const u8* adpcm_data, u32 byte_length, u32 sample_rate);
-+bool snd_StartVAGProbeShared(const std::shared_ptr<std::vector<u16>>& sample,
-+                             u32 sample_words,
-+                             u32 sample_rate);
-+void snd_StopVAGProbeShared();
  s32 snd_GetTick();
  void snd_RegisterIOPMemAllocator(AllocFun alloc, FreeFun free);
  int snd_LockVoiceAllocator(bool block);
@@ -19193,10 +18103,10 @@ index 000000000..527126791
 +}
 diff --git a/test/test_macos_audio_policy.cpp b/test/test_macos_audio_policy.cpp
 new file mode 100644
-index 000000000..b9f8ce6cf
+index 000000000..f35f9400b
 --- /dev/null
 +++ b/test/test_macos_audio_policy.cpp
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,34 @@
 +#include <fstream>
 +#include <string>
 +
@@ -19231,23 +18141,13 @@ index 000000000..b9f8ce6cf
 +  EXPECT_EQ(main_source.find("OTTSEL_ENABLE_HOST_AUDIO"), std::string::npos);
 +}
 +
-+TEST(MacHostAudioPolicy, VAGDiagnosticVoiceUsesBoundedVolumeAndEndGuard) {
-+  const auto path = file_util::get_file_path({"game/sound/sndshim.cpp"});
-+  std::ifstream stream(path);
-+  ASSERT_TRUE(stream) << path;
-+  const std::string source((std::istreambuf_iterator<char>(stream)), {});
-+  EXPECT_NE(source.find("vag_probe_voice->SetVolume(0x3fff, 0x3fff)"), std::string::npos);
-+  EXPECT_NE(source.find("SetSampleLength((u32)vag_probe_sample.size())"), std::string::npos);
-+  EXPECT_NE(source.find("vag_probe_sample.size() - 8"), std::string::npos);
-+}
 diff --git a/test/test_platform_input.cpp b/test/test_platform_input.cpp
 new file mode 100644
-index 000000000..5d325996f
+index 000000000..dcd142263
 --- /dev/null
 +++ b/test/test_platform_input.cpp
-@@ -0,0 +1,342 @@
+@@ -0,0 +1,327 @@
 +#include "game/sce/ottsel_platform_input.h"
-+#include "game/sce/ottsel_stream_clock.h"
 +#include "../../../src/shell/mobile_generic_policy.h"
 +#include "../../../src/shell/mobile_scene_policy.h"
 +#include "../../../src/shell/mobile_snapshot_store.h"
@@ -19312,20 +18212,6 @@ index 000000000..5d325996f
 +  }
 +  EXPECT_EQ(get_pad_state(0).buttons, Start);
 +  EXPECT_EQ(get_pad_state(0).buttons, 0);
-+}
-+
-+TEST(PlatformInput, StreamClockAdvancesCutsceneTimelineWithoutAnIop) {
-+  using namespace std::chrono_literals;
-+  ottsel::stream_clock::Clock clock;
-+  const auto start = ottsel::stream_clock::Clock::TimePoint{};
-+
-+  EXPECT_FALSE(clock.snapshot(start).playing);
-+  clock.play(0x10001, start);
-+  EXPECT_EQ(clock.snapshot(start + 500ms).position, 512);
-+  EXPECT_EQ(clock.snapshot(start + 2s).position, 2048);
-+  EXPECT_EQ(clock.snapshot(start + 2s).id, 0x10001);
-+  clock.stop();
-+  EXPECT_EQ(clock.snapshot(start + 3s).position, -1);
 +}
 +
 +TEST(PlatformInput, RemapOwnershipRejectsSentinelAndStaleInstances) {
