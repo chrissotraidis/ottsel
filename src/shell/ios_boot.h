@@ -15,6 +15,19 @@ std::string ottsel_ios_bundle_dir();
 void ottsel_ios_set_writable_dir(const std::string& dir);
 std::string ottsel_ios_writable_dir();
 
+// True on a phone-shaped device (UIUserInterfaceIdiomPhone).  The shell keys the per-class touch layout
+// and its defaults on this, deliberately not on a surface size: the CAMetalLayer's drawable is only known
+// after layout (it reads the 1024x768 window request at creation) and a device's layer reports points
+// scaled by its contentsScale, so a raw pixel width would call a real iPhone a tablet.  Implemented in
+// metal_shell.mm, which is where the shell's Objective-C++ platform code lives; always false on a host.
+bool ottsel_ios_shell_is_phone();
+
+// The key window's safe-area insets as fractions of the window's own bounds (left, top, right, bottom), in
+// the current interface orientation.  Fractions rather than points so they are in the same coordinate space
+// as the touch layout and cannot drift when the CAMetalLayer reports points x contentsScale.  Returns 0 when
+// no window is available yet, in which case the caller leaves the layout alone.
+int ottsel_ios_shell_safe_area(float* left, float* top, float* right, float* bottom);
+
 // Diagnostic startup seam: prepare and cache the validated user-data root
 // before a caller creates native Metal resources.
 void ottsel_ios_prepare_user_data();

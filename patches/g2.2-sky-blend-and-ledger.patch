@@ -1,0 +1,1731 @@
+# g2.2-sky-blend-and-ledger.patch -- the G2.2 sky work, the MERC eye decoder/bind and the HUD probes.
+#
+# Maintenance overlay (Ottsel G2.2, 2026-09-22/23).  Outer shell sources only; the pre-existing dirty
+# deltas in these files belong to the R1/D2/D3/L3 overlays and are not repeated here.  Generated
+# against the reconstructed pre-G2.2 state and verified in both directions.
+#
+# 1. src/shell/mobile_blend_policy.h (new): the GS ALPHA register decode (six desktop combinations +
+#    Unsupported; a zero register means the bucket wrote no ALPHA_1) and the key names used by the
+#    ledgers.
+# 2. src/shell/metal_shell.mm / .h: the additive pipeline state, the register-driven Sky selection, the
+#    Direct register plumbing, the store ledger inside OttselMobileDirectFrame, the bounded SKYSTORE /
+#    SKYREG-MIX / TIEREG / DIRECTREG-MIX / SKYBLEND / SKYUV records, two live sky A/B controls, the
+#    gated ottsel-trace-sprite-overlay-depth control, the ottsel-trace-sprite-first-vertex read-back of
+#    every drawn batch's first vertex, and the ottsel_metal_sprite_store_size observability API.
+# 3. src/shell/metal_gfx.mm: the sky-bucket shape probe and the default skip of that draw; the Direct
+#    call site diagnostic_alpha argument; the bucket-54 MERC eye decoder and its bind into the MERC eye
+#    draws; and the HUD diagnostics - per-group NDC/depth/atlas statistics with a vsync tag, a per-sprite
+#    clip log, a largest-atlas dump, an append-time store-size record, plus the gated probes
+#    ottsel-trace-hud-desktop-scale, ottsel-trace-hud-opaque and ottsel-trace-hud-fixture.
+#
+# Evidence: docs/evidence/A1/g2-sky-store-not-losing-strips-2026-09-22.md,
+# docs/evidence/A1/g2-live-blend-register-ledger-2026-09-22.md,
+# docs/evidence/A1/g2-sky-additive-blend-2026-09-22.md,
+# docs/evidence/A1/g2-sky-draw-source-2026-09-22.md,
+# docs/evidence/A1/g2-merc-eyes-bucket54-decode-2026-09-22.md,
+# docs/evidence/A1/g2-merc-eyes-bind-2026-09-23.md,
+# docs/evidence/A1/g2-hud-material-decode-2026-09-23.md.
+#
+diff --git a/src/shell/mobile_blend_policy.h b/src/shell/mobile_blend_policy.h
+new file mode 100644
+--- /dev/null
++++ b/src/shell/mobile_blend_policy.h
+@@ -0,0 +1,75 @@
++#pragma once
++// Ottsel G2.2 - GS ALPHA register decode for the native blend pipelines.
++//
++// The PS2 GS ALPHA register packs four 2-bit blend sources (common/dma/gs.h,
++// GsAlpha::BlendMode {SOURCE=0, DEST=1, ZERO_OR_FIXED=2}: a=bits0-1, b=bits2-3,
++// c=bits4-5, d=bits6-7, fix()=data>>32) and the RGB equation is
++//   (Cs - Cd) * a + (Cd - 0) * b + Cd
++// so the desktop's DirectRenderer handles exactly six combinations and logs
++// every other value as 'unsupported blend (direct)':
++//   S/D/S/D -> SRC_ALPHA, ONE_MINUS_SRC_ALPHA, ADD           (0x44) source-over
++//   S/Z/S/D -> SRC_ALPHA, ONE, ADD                           (0x48) additive
++//   Z/S/S/D -> SRC_ALPHA, ONE, REVERSE_SUBTRACT
++//   S/D/Z/D -> CONSTANT_ALPHA, ONE_MINUS_CONSTANT_ALPHA, ADD (fix/127)
++//   S/S/S/S -> disable blend                                 (0x00) copy
++//   S/Z/D/D -> DST_ALPHA, ONE, ADD (color_mult 0.5)
++//
++// The native path needs the decode to tell the additive case apart from the
++// source-over case it already draws; the other keys are decoded (and
++// regression-tested) so a new population can never be silently mis-blended,
++// but no pipeline is selected for them until a ledger proves a live site asks
++// for one.
++//
++// A zero register means the bucket wrote no ALPHA_1 at all (both native capture
++// paths reset the decoder's draw state before walking a bucket), so it is
++// 'Unspecified', not a decoded copy.
++
++enum class OttselMobileBlendKey {
++  Unspecified = 0,
++  Copy = 1,
++  SourceOver = 2,
++  Additive = 3,
++  ReverseSubtract = 4,
++  ConstantAlpha = 5,
++  DestinationAlpha = 6,
++  Unsupported = 7,
++};
++
++constexpr unsigned int ottsel_mobile_alpha_field(unsigned long long alpha, int index) {
++  return (unsigned int)((alpha >> (2 * index)) & 3ull);
++}
++
++constexpr OttselMobileBlendKey ottsel_mobile_blend_key_from_alpha(unsigned long long alpha) {
++  if (alpha == 0ull) return OttselMobileBlendKey::Unspecified;
++  const unsigned int a = ottsel_mobile_alpha_field(alpha, 0);
++  const unsigned int b = ottsel_mobile_alpha_field(alpha, 1);
++  const unsigned int c = ottsel_mobile_alpha_field(alpha, 2);
++  const unsigned int d = ottsel_mobile_alpha_field(alpha, 3);
++  // a=SOURCE(0) b=ZERO_OR_FIXED(2) c=SOURCE(0) d=DEST(1) -> (Cs-0)*As + Cd
++  if (a == 0 && b == 2 && c == 0 && d == 1) return OttselMobileBlendKey::Additive;
++  // a=SOURCE b=DEST c=SOURCE d=DEST -> Cs*As + Cd*(1-As)
++  if (a == 0 && b == 1 && c == 0 && d == 1) return OttselMobileBlendKey::SourceOver;
++  // a=ZERO b=SOURCE c=SOURCE d=DEST -> Cd - Cs*As
++  if (a == 2 && b == 0 && c == 0 && d == 1) return OttselMobileBlendKey::ReverseSubtract;
++  // a=SOURCE b=DEST c=ZERO_OR_FIXED d=DEST -> constant alpha
++  if (a == 0 && b == 1 && c == 2 && d == 1) return OttselMobileBlendKey::ConstantAlpha;
++  // a=SOURCE b=SOURCE c=SOURCE d=SOURCE -> copy (blend disabled)
++  if (a == 0 && b == 0 && c == 0 && d == 0) return OttselMobileBlendKey::Copy;
++  // a=SOURCE b=ZERO_OR_FIXED c=DEST d=DEST -> Cd*Ad + Cs*As
++  if (a == 0 && b == 2 && c == 1 && d == 1) return OttselMobileBlendKey::DestinationAlpha;
++  return OttselMobileBlendKey::Unsupported;
++}
++
++constexpr const char* ottsel_mobile_blend_key_name(OttselMobileBlendKey key) {
++  switch (key) {
++    case OttselMobileBlendKey::Unspecified: return "unspecified";
++    case OttselMobileBlendKey::Copy: return "copy";
++    case OttselMobileBlendKey::SourceOver: return "source-over";
++    case OttselMobileBlendKey::Additive: return "additive";
++    case OttselMobileBlendKey::ReverseSubtract: return "reverse-subtract";
++    case OttselMobileBlendKey::ConstantAlpha: return "constant-alpha";
++    case OttselMobileBlendKey::DestinationAlpha: return "destination-alpha";
++    case OttselMobileBlendKey::Unsupported: return "unsupported";
++  }
++  return "unknown";
++}
+--- a/src/shell/mobile_direct_frame.h
++++ b/src/shell/mobile_direct_frame.h
+@@ -12,16 +12,52 @@
+   using Buffer = decltype(std::declval<Batch>().vertices);
+  public:
+   struct Snapshot { std::vector<Batch> batches; std::vector<Buffer> retired; };
+-  void begin() {
++  // G2.2 observability ledger (no behaviour change).  The live Sky decode
++  // reports `submitted=2` on every title frame while this store's published
++  // snapshot reads empty, so the store counts its own stage transitions and,
++  // decisively, a publish that replaces a non-empty ready population with an
++  // empty one - the signature of an empty bucket clear dropping strips that
++  // were already submitted.
++  struct DebugLedger {
++    unsigned long begins = 0;
++    unsigned long appends = 0;
++    unsigned long publishes = 0;
++    unsigned long rollbacks = 0;
++    unsigned long empty_publishes = 0;
++    unsigned long empty_replacements = 0;
++    unsigned long published_batches = 0;
++  };
++  DebugLedger debug_take() {
+     std::lock_guard<std::mutex> lock(mutex_);
++    DebugLedger out = ledger_;
++    ledger_ = DebugLedger{};
++    return out;
++  }
++  void debug_sizes(std::size_t& building, std::size_t& completed, std::size_t& active) {
++    std::lock_guard<std::mutex> lock(mutex_);
++    building = building_.size();
++    completed = completed_ ? completed_->size() : 0;
++    active = active_.size();
++  }
++  void begin(bool rollback = false) {
++    std::lock_guard<std::mutex> lock(mutex_);
++    ++ledger_.begins;
++    if (rollback) ++ledger_.rollbacks;
+     retire(building_);
+   }
+   void append(const Batch& batch) {
+     std::lock_guard<std::mutex> lock(mutex_);
++    ++ledger_.appends;
+     building_.push_back(batch);
+   }
+   void publish() {
+     std::lock_guard<std::mutex> lock(mutex_);
++    ++ledger_.publishes;
++    if (building_.empty()) {
++      ++ledger_.empty_publishes;
++      if (completed_ && !completed_->empty()) ++ledger_.empty_replacements;
++    }
++    ledger_.published_batches += (unsigned long)building_.size();
+     if (completed_) retire(*completed_);
+     completed_ = std::move(building_);
+     building_.clear();
+@@ -53,4 +89,5 @@
+   std::vector<Batch> building_, active_;
+   std::optional<std::vector<Batch>> completed_;
+   std::vector<Buffer> retired_;
++  DebugLedger ledger_;
+ };
+--- a/src/shell/metal_shell.h
++++ b/src/shell/metal_shell.h
+@@ -182,12 +182,21 @@
+                                        unsigned int width,
+                                        unsigned int height,
+                                        int blended);
++// G2.2 HUD parity: how many sprite batches the store currently holds.  Used to
++// place a producer's append against the pass' snapshot (observability only).
++unsigned int ottsel_metal_sprite_store_size(OttselMetal* m);
+ 
+ // Append Direct/GIF geometry to the background pass. These batches render
+ // before TFRAG/TIE so Sky and other pre-world Direct buckets preserve the
+ // desktop renderer's ordering.
+ // A complete bucket replaces the retained Sky; a failed attempt keeps it.
+ void ottsel_metal_begin_sky_bucket(OttselMetal* m);
++// G2.2 blend ledger: re-arm the bounded per-site GS blend-register sample.
++void ottsel_metal_arm_blend_ledger(OttselMetal* m);
++// G2.2: non-zero reproduces the previous behaviour of drawing the Sky bucket's
++// quads even though their composited source texture is not implemented here
++// (A/B control only).
++int ottsel_metal_sky_draw_legacy(OttselMetal* m);
+ void ottsel_metal_finish_sky_bucket(OttselMetal* m, int complete);
+ int ottsel_metal_append_sky_mesh_n(OttselMetal* m,
+                                     const OttselMetalSpriteVertex* vertices,
+@@ -211,7 +220,8 @@
+                                        unsigned int height,
+                                        int blended,
+                                        unsigned char ta0,
+-                                    const OttselMetalDirectDepthState* depth_state);
++                                    const OttselMetalDirectDepthState* depth_state,
++                                    unsigned long long diagnostic_alpha);
+ 
+ // T1 first increment: draw the visible touch overlay above the native scene.
+ // The shared ShellPadInput seam remains the input owner; this only supplies
+--- a/src/shell/metal_shell.mm
++++ b/src/shell/metal_shell.mm
+@@ -37,6 +37,7 @@
+ #include "mobile_scene_policy.h"
+ #include "mobile_snapshot_store.h"
+ #include "mobile_direct_frame.h"
++#include "mobile_blend_policy.h"
+ #include "common/dma/ottsel_sprite_math.h"
+ #include "common/log/log.h"
+ #include "ios_boot.h"
+@@ -550,6 +551,18 @@
+ @property (nonatomic, strong) id<MTLRenderPipelineState> pipeline;
+ @property (nonatomic, strong) id<MTLRenderPipelineState> directPipeline;
+ @property (nonatomic, strong) id<MTLRenderPipelineState> directBlendPipeline;
++// G2.2: GS ALPHA 0x48 (S/Z/S/D) draws as (Cs-0)*As + Cd, so it needs its own
++// state; the source-over pipeline stays the fallback for every other key.
++@property (nonatomic, strong) id<MTLRenderPipelineState> directAdditivePipeline;
++// G2.2 attribution: while `ottsel-trace-sky-skip-draw` exists the Sky batch loop
++// issues no draws at all, so whatever is still on screen cannot be a Sky batch.
++@property (nonatomic) BOOL skySkipDraw;
++// G2.2: the sky bucket's quads sample the composited sky texture upstream
++// produces in its SkyBlend buckets, which this lane does not implement, and the
++// port's own sky composite already draws the sky region.  They are skipped by
++// default; this flag reproduces the previous behaviour (draw them anyway) for a
++// controlled A/B.
++@property (nonatomic) BOOL skyDrawLegacy;
+ @property (nonatomic, strong) id<MTLRenderPipelineState> spritePipeline;
+ @property (nonatomic, strong) id<MTLRenderPipelineState> spriteBlendPipeline;
+ @property (nonatomic, strong) id<MTLRenderPipelineState> directNoDepthPipeline;
+@@ -636,6 +649,8 @@
+ @property (nonatomic, strong) id<MTLDepthStencilState> tieDepthState;
+ @property (nonatomic, strong) id<MTLDepthStencilState> directDepthState;
+ @property (nonatomic, strong) id<MTLDepthStencilState> spriteDepthState;
++// G2.2 HUD parity: how many sprite batches the store holds right now.
++@property (nonatomic, readonly) NSUInteger spriteStoreSize;
+ @property (nonatomic, strong) id<MTLDepthStencilState> overlayDepthState;
+ @property (nonatomic) NSUInteger tieIndexCount;
+ @property (nonatomic) NSUInteger tfragIndexCount;
+@@ -740,7 +755,7 @@
+                     height:(NSUInteger)height
+                    blended:(BOOL)blended
+                        ta0:(unsigned char)ta0
+-                  depth:(const OttselMetalDirectDepthState*)depth;
++                  depth:(const OttselMetalDirectDepthState*)depth diagnosticAlpha:(unsigned long long)diagnosticAlpha;
+ - (id<MTLDepthStencilState>)depthStateForDirectBatch:(const NativeSpriteBatch&)batch;
+ - (void)clearSpriteBatches;
+ - (void)clearTransientSpriteBatches;
+@@ -779,6 +794,36 @@
+   std::deque<PendingSpriteUpload> _pendingSpriteUploads;
+   OttselMobileSnapshotStore<NativeSpriteBatch> _spriteBatches;
+   OttselMobileDirectFrame<NativeSpriteBatch> _skyFrameStore;
++  // G2.2 Sky-store probe budget (observability only; see the SKYSTORE line in
++  // the draw pass).  Bounded so the ledger can never flood the runtime log.
++  unsigned long _skyStoreProbeLogs;  // zeroed by -alloc like the other ivars
++  // G2.2 blend ledger.  Observability only: re-armed on every scene-level
++  // selection, then records a bounded sample of the raw GS blend registers the
++  // three live sites (Sky batches, TIE draws, Direct batches) actually request.
++  BOOL _blendLedgerArmed;
++  // Last logged register mix per site, so each distinct population is recorded
++  // once instead of once per level selection.
++  unsigned long long _skyMixReg[4];
++  unsigned long _skyMixCount[4];
++  unsigned long _skyMixOther;
++  unsigned long _skyMixTextured;
++  unsigned long _skyMixUntextured;
++  unsigned long _skyMixLines;
++  // G2.2 Sky blend selection ledger: the last logged (forced, additive-drawn,
++  // per-key counts) so each distinct selection is recorded once.
++  unsigned long _skyBlendLogAdditive;
++  unsigned long _skyBlendLogKeys[8];
++  unsigned long _skyBlendLogLines;
++  unsigned long long _directMixReg[4];
++  unsigned long _directMixCount[4];
++  unsigned long _directMixOther;
++  unsigned long _directMixLines;
++  unsigned long _blendLedgerTieDraws;
++  unsigned long _blendLedgerTiePreset[8];
++  unsigned long _blendLedgerTieEnable[2];
++  unsigned long _blendLedgerTieBlend[2];
++  BOOL _blendLedgerTieLogged;
++  unsigned long _blendLedgerArms;
+   std::shared_ptr<SkyIsolationProbe> _skyIsolation;
+   // Foreground Direct/GIF geometry (title logo, "PRESS START", debug/menu
+   // text).  The desktop draws these after the world and after sprites, so they
+@@ -939,6 +984,24 @@
+     NSLog(@"ottsel metal: Direct blended pipeline error %@", err);
+     return NO;
+   }
++  // G2.2: the additive branch of the desktop's alpha table
++  // (DirectRenderer: S/Z/S/D -> SRC_ALPHA, ONE, ADD with alpha ONE/ZERO).
++  MTLRenderPipelineDescriptor* directAdditivePd = [directPd copy];
++  MTLRenderPipelineColorAttachmentDescriptor* directAdditiveColor =
++      directAdditivePd.colorAttachments[0];
++  directAdditiveColor.blendingEnabled = YES;
++  directAdditiveColor.rgbBlendOperation = MTLBlendOperationAdd;
++  directAdditiveColor.alphaBlendOperation = MTLBlendOperationAdd;
++  directAdditiveColor.sourceRGBBlendFactor = MTLBlendFactorSourceAlpha;
++  directAdditiveColor.destinationRGBBlendFactor = MTLBlendFactorOne;
++  directAdditiveColor.sourceAlphaBlendFactor = MTLBlendFactorOne;
++  directAdditiveColor.destinationAlphaBlendFactor = MTLBlendFactorZero;
++  self.directAdditivePipeline =
++      [device newRenderPipelineStateWithDescriptor:directAdditivePd error:&err];
++  if (!self.directAdditivePipeline) {
++    NSLog(@"ottsel metal: Direct additive pipeline error %@", err);
++    return NO;
++  }
+   _skyIsolation=std::make_shared<SkyIsolationProbe>();
+   _skyIsolation->device=device;
+   _skyIsolation->plain=[directPd copy];_skyIsolation->blend=[directBlendPd copy];
+@@ -1415,6 +1478,19 @@
+       NSLog(@"ottsel metal: scene no-CPU-frame probe enabled");
+     }
+   }
++  // G2.2 Sky blend gate (live, not latched): presence of the trigger file enables
++  // the register-driven additive selection, so one run can capture both states
++  // at one camera and one time-of-day.
++  {
++    const std::string sky_skip_draw_trigger = ottsel_ios_writable_dir() +
++                                              "ottsel-trace-sky-skip-draw";
++    self.skySkipDraw = access(sky_skip_draw_trigger.c_str(), F_OK) == 0;
++  }
++  {
++    const std::string sky_draw_legacy_trigger = ottsel_ios_writable_dir() +
++                                                "ottsel-trace-sky-draw-legacy";
++    self.skyDrawLegacy = access(sky_draw_legacy_trigger.c_str(), F_OK) == 0;
++  }
+   if (!self.sceneNoOverlayProbe) {
+     const std::string scene_no_overlay_trigger = ottsel_ios_writable_dir() +
+                                                  "ottsel-trace-metal-scene-no-overlay";
+@@ -1529,8 +1605,31 @@
+   RenderEncoderEndGuard encoder_guard(enc);
+   // One captured Sky population serves every position in this command buffer.
+   // Later producer uploads belong to the next frame, including probe redraws.
++  // G2.2 Sky-store probe (observability only, bounded to eight lines): the live
++  // Sky decode reports `submitted=2` on every title frame while this snapshot
++  // reads empty, so read the store's own ledger for the window that just ended,
++  // its sizes immediately before consumption, and the snapshot it yields.  A
++  // non-zero empty-replace is a publish that retired a non-empty ready
++  // population with an empty one - the drop named without further guessing.
++  const OttselMobileDirectFrame<NativeSpriteBatch>::DebugLedger sky_store_ledger =
++      _skyFrameStore.debug_take();
++  std::size_t sky_pre_building = 0, sky_pre_completed = 0, sky_pre_active = 0;
++  _skyFrameStore.debug_sizes(sky_pre_building, sky_pre_completed, sky_pre_active);
+   const auto sky_snapshot = _skyFrameStore.snapshot();
+   const auto& sky_batches = sky_snapshot.batches;
++  if (_skyStoreProbeLogs < 8 &&
++      (sky_store_ledger.begins || sky_store_ledger.appends || sky_store_ledger.publishes ||
++       sky_store_ledger.rollbacks || sky_pre_completed || !sky_batches.empty())) {
++    ++_skyStoreProbeLogs;
++    NSLog(@"ottsel metal: SKYSTORE probe=%lu begin=%lu append=%lu publish=%lu rollback=%lu "
++          @"empty-publish=%lu empty-replace=%lu published-batches=%lu pre(building=%zu "
++          @"completed=%zu active=%zu) snapshot=%zu",
++          (unsigned long)_skyStoreProbeLogs, sky_store_ledger.begins, sky_store_ledger.appends,
++          sky_store_ledger.publishes, sky_store_ledger.rollbacks,
++          sky_store_ledger.empty_publishes, sky_store_ledger.empty_replacements,
++          sky_store_ledger.published_batches, sky_pre_building, sky_pre_completed,
++          sky_pre_active, sky_batches.size());
++  }
+   std::vector<id<MTLBuffer>> frame_vertex_buffers = sky_snapshot.retired;
+   // BOT66 pass-position bisect.  Three constant-magenta quarter-screen
+   // triangles are drawn at three positions in this single encoder:
+@@ -1796,6 +1895,26 @@
+       const bool alpha_blend_enabled = ottsel_mobile_alpha_blend_enabled(
+           (draw.mode & (1u << 20)) != 0, (draw.mode >> 24) & 7u);
+       const bool source_depth_write_enabled = (draw.mode & 1u) != 0;
++      // G2.2 blend ledger, TIE site (observability only, one line after 200
++      // draws following a level selection): the 3-bit AlphaBlend preset and the
++      // blend-enable bit this population actually requests, so an additive
++      // pipeline state is landed only where the ledger proves it is asked for.
++      if (_blendLedgerArmed) {
++        const unsigned int tie_reg_preset_index = (unsigned int)((draw.mode >> 24) & 7u);
++        ++_blendLedgerTiePreset[tie_reg_preset_index];
++        ++_blendLedgerTieEnable[(draw.mode & (1u << 20)) ? 1 : 0];
++        ++_blendLedgerTieBlend[alpha_blend_enabled ? 1 : 0];
++        if (!_blendLedgerTieLogged && ++_blendLedgerTieDraws >= 200) {
++          _blendLedgerTieLogged = YES;
++          NSLog(@"ottsel metal: TIEREG draws=%lu enable=%lu/%lu blend=%lu/%lu "
++                @"preset=%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu",
++                _blendLedgerTieDraws, _blendLedgerTieEnable[0], _blendLedgerTieEnable[1],
++                _blendLedgerTieBlend[0], _blendLedgerTieBlend[1], _blendLedgerTiePreset[0],
++                _blendLedgerTiePreset[1], _blendLedgerTiePreset[2], _blendLedgerTiePreset[3],
++                _blendLedgerTiePreset[4], _blendLedgerTiePreset[5], _blendLedgerTiePreset[6],
++                _blendLedgerTiePreset[7]);
++        }
++      }
+       const float alpha_min = ottsel_mobile_alpha_min(
+           alpha_test_kind, alpha_test, alpha_fail, source_depth_write_enabled,
+           (draw.mode >> 8) & 0xff);
+@@ -1870,6 +1989,38 @@
+   // the existing diagnostic overlay remain unchanged.
+   if (!sky_batches.empty() && !self.directFixtureIsolated && !self.sceneNoSkyProbe) {
+     unsigned int sky_state[6] = {0, 0, 0, 1, 0, 0};
++    // G2.2 blend ledger: the decode outcome and the pipeline this pass selected.
++    unsigned long sky_blend_key_counts[8] = {0, 0, 0, 0, 0, 0, 0, 0};
++    unsigned long sky_blend_additive_drawn = 0;
++    // G2.2 Sky ST/Q ledger (observability only, three batches): the stored ST and
++    // Q each vertex carries plus the post-divide uv the fragment shader computes,
++    // so a quad that tiles its texture many times can be told apart from a
++    // texture whose data is wrong.
++    if (_blendLedgerArmed) {
++      static unsigned int sky_uv_logs = 0;
++      for (const auto& sky : sky_batches) {
++        if (sky_uv_logs >= 3) {
++          break;
++        }
++        if (sky.texture.width < 32 || sky.vertex_count < 3) {
++          continue;
++        }
++        ++sky_uv_logs;
++        const OttselMetalSpriteVertex* sv =
++            (const OttselMetalSpriteVertex*)sky.vertices.contents;
++        const float q0 = sv[0].q != 0.f ? sv[0].q : 1.f;
++        const float q1 = sv[1].q != 0.f ? sv[1].q : 1.f;
++        const float q2 = sv[2].q != 0.f ? sv[2].q : 1.f;
++        NSLog(@"ottsel metal: SKYUV i=%u tex=%lux%lu n=%lu q=(%.6g,%.6g,%.6g) "
++              @"st0=(%.6f,%.6f) st1=(%.6f,%.6f) st2=(%.6f,%.6f) "
++              @"uv0=(%.4f,%.4f) uv1=(%.4f,%.4f) uv2=(%.4f,%.4f)",
++              sky_uv_logs - 1, (unsigned long)sky.texture.width,
++              (unsigned long)sky.texture.height, (unsigned long)sky.vertex_count, q0, q1, q2,
++              sv[0].uv[0], sv[0].uv[1], sv[1].uv[0], sv[1].uv[1], sv[2].uv[0], sv[2].uv[1],
++              sv[0].uv[0] / q0, sv[0].uv[1] / q0, sv[1].uv[0] / q1, sv[1].uv[1] / q1,
++              sv[2].uv[0] / q2, sv[2].uv[1] / q2);
++      }
++    }
+     // BOT66: the sky block is the first consumer of this pass, so no encoder
+     // state can have leaked into it from a later bucket.  Pin viewport and
+     // scissor to the whole drawable anyway: "the later reference triangle
+@@ -1904,6 +2055,94 @@
+               sky_loop_frame_logs, (unsigned long)sky_batches.size(), textured, small,
+               (unsigned long)drawable.texture.width,
+               (unsigned long)drawable.texture.height);
++      }
++    }
++    // G2.2 blend ledger, Sky site (observability only): the raw GS ALPHA register
++    // the decoder attached to *every* batch of this population, reported as one
++    // line per distinct register mix (up to eight) so an additive (0x48) or copy
++    // register cannot hide behind a four-batch sample.  That register, not the
++    // vertex alpha, decides whether this site needs an additive (Cs*As + Cd)
++    // state.  Only the mix is logged, so a steady population costs one line.
++    if (_blendLedgerArmed && !sky_batches.empty()) {
++      unsigned long long reg[4] = {0, 0, 0, 0};
++      unsigned long count[4] = {0, 0, 0, 0};
++      unsigned long other = 0, textured = 0, untextured = 0;
++      // G2.2: the vertex colour range of the population, so a vivid additive
++      // result can be attributed to the batch colours rather than the equation.
++      float cmin[3] = {1.f, 1.f, 1.f};
++      float cmax[3] = {0.f, 0.f, 0.f};
++      // First textured batch's three vertex colours, verbatim.
++      float sample_rgb[3][3] = {{0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}};
++      bool sample_taken = false;
++      int used = 0;
++      for (const auto& sky : sky_batches) {
++        const OttselMetalSpriteVertex* sky_cv =
++            (const OttselMetalSpriteVertex*)sky.vertices.contents;
++        if (!sample_taken && sky.texture.width >= 32 && sky.vertex_count >= 3) {
++          sample_taken = true;
++          for (int v = 0; v < 3; ++v) {
++            for (int ch = 0; ch < 3; ++ch) {
++              sample_rgb[v][ch] = sky_cv[v].color[ch];
++            }
++          }
++        }
++        for (NSUInteger v = 0; v < sky.vertex_count; ++v) {
++          for (int ch = 0; ch < 3; ++ch) {
++            cmin[ch] = std::min(cmin[ch], sky_cv[v].color[ch]);
++            cmax[ch] = std::max(cmax[ch], sky_cv[v].color[ch]);
++          }
++        }
++        if (sky.texture.width >= 32 && sky.texture.height >= 32) {
++          ++textured;
++        } else {
++          ++untextured;
++        }
++        const unsigned long long r = sky.diagnostic_alpha & 0xffull;
++        int slot = -1;
++        for (int i = 0; i < used; ++i) {
++          if (reg[i] == r) {
++            slot = i;
++            break;
++          }
++        }
++        if (slot < 0 && used < 4) {
++          reg[used] = r;
++          count[used] = 0;
++          slot = used;
++          ++used;
++        }
++        if (slot < 0) {
++          ++other;
++        } else {
++          ++count[slot];
++        }
++      }
++      bool sky_mix_changed = (_skyMixLines == 0) || _skyMixOther != other ||
++                             _skyMixTextured != textured || _skyMixUntextured != untextured;
++      for (int i = 0; i < 4 && !sky_mix_changed; ++i) {
++        if (_skyMixReg[i] != reg[i] || _skyMixCount[i] != count[i]) {
++          sky_mix_changed = true;
++        }
++      }
++      if (sky_mix_changed && _skyMixLines < 8) {
++        ++_skyMixLines;
++        for (int i = 0; i < 4; ++i) {
++          _skyMixReg[i] = reg[i];
++          _skyMixCount[i] = count[i];
++        }
++        _skyMixOther = other;
++        _skyMixTextured = textured;
++        _skyMixUntextured = untextured;
++        NSLog(@"ottsel metal: SKYREG-MIX arm=%lu n=%lu textured=%lu untextured=%lu "
++              @"r0=0x%llx:%lu r1=0x%llx:%lu r2=0x%llx:%lu r3=0x%llx:%lu other=%lu "
++              @"cmin=(%.3f,%.3f,%.3f) cmax=(%.3f,%.3f,%.3f) "
++              @"v0=(%.2f,%.2f,%.2f) v1=(%.2f,%.2f,%.2f) v2=(%.2f,%.2f,%.2f)",
++              (unsigned long)_blendLedgerArms, (unsigned long)sky_batches.size(), textured,
++              untextured, reg[0], count[0], reg[1], count[1], reg[2], count[2], reg[3],
++              count[3], other, cmin[0], cmin[1], cmin[2], cmax[0], cmax[1], cmax[2],
++              sample_rgb[0][0], sample_rgb[0][1], sample_rgb[0][2], sample_rgb[1][0],
++              sample_rgb[1][1], sample_rgb[1][2], sample_rgb[2][0], sample_rgb[2][1],
++              sample_rgb[2][2]);
+       }
+     }
+     // BOT58 pass-position A/B: draw a known-good reference triangle with the
+@@ -1978,8 +2217,37 @@
+       // Diagnostic only: forcing replace blending separates "the sky geometry
+       // never covers a pixel" from "the sky blends to nothing".
+       //
++      // G2.2: otherwise the batch's own GS ALPHA register picks the equation, as
++      // upstream's DirectRenderer does.  Both capture paths reset the decoder's
++      // draw state before walking a bucket, so a non-zero register here is one
++      // the chain actually wrote: 0x48 (S/Z/S/D) is additive (Cs-0)*As + Cd,
++      // which the source-over pipeline was drawing as a lerp, and 0x44 (S/D/S/D)
++      // is the source-over the shell already drew.  Every other key - including a
++      // bucket that wrote no register at all - keeps the previous behaviour, so
++      // no path outside a proven additive population changes.
++      const OttselMobileBlendKey sky_blend_key =
++          ottsel_mobile_blend_key_from_alpha(sky.diagnostic_alpha);
++      const bool sky_additive = sky_blend_key == OttselMobileBlendKey::Additive;
++      // G2.2 attribution control: count the decode, then issue no draw at all.
++      if (self.skySkipDraw) {
++        continue;
++      }
++      if (sky.blended) {
++        if (sky_blend_key == OttselMobileBlendKey::Additive) {
++          ++sky_blend_key_counts[(int)OttselMobileBlendKey::Additive];
++          if (sky_additive) ++sky_blend_additive_drawn;
++        } else if (sky_blend_key == OttselMobileBlendKey::SourceOver) {
++          ++sky_blend_key_counts[(int)OttselMobileBlendKey::SourceOver];
++        } else if (sky_blend_key == OttselMobileBlendKey::Unspecified) {
++          ++sky_blend_key_counts[(int)OttselMobileBlendKey::Unspecified];
++        } else {
++          ++sky_blend_key_counts[(int)OttselMobileBlendKey::Unsupported];
++        }
++      }
+       [enc setRenderPipelineState:(self.sceneSkyOpaqueProbe || !sky.blended)
+-                                      : self.directBlendPipeline];
++                                      ? self.directPipeline
++                                      : (sky_additive ? self.directAdditivePipeline
++                                                      : self.directBlendPipeline)];
+       if (self.sceneSkyDebugFillProbe && self.skyDebugFillPipeline) {
+         [enc setRenderPipelineState:self.skyDebugFillPipeline];
+       }
+@@ -2069,6 +2337,32 @@
+         }
+       }
+     }
++    // G2.2 Sky blend ledger (observability only, one line per distinct
++    // selection, six lines at most): what the decoded GS ALPHA register
++    // actually selected, so the A/B control and the production path are both
++    // visible in the log next to the capture.
++    if (_blendLedgerArmed) {
++      // Keyed on the selection outcome alone: the population alternates between
++      // passes (2 / 34 / 40 / 46 batches), so counting every variation would
++      // spend the budget before anything changes.  The per-population register
++      // mix is the SKYREG-MIX ledger's job.
++      const bool sky_blend_changed =
++          (_skyBlendLogLines == 0) || _skyBlendLogAdditive != sky_blend_additive_drawn;
++      if (sky_blend_changed && _skyBlendLogLines < 6) {
++        ++_skyBlendLogLines;
++        _skyBlendLogAdditive = sky_blend_additive_drawn;
++        for (int i = 0; i < 8; ++i) {
++          _skyBlendLogKeys[i] = sky_blend_key_counts[i];
++        }
++        NSLog(@"ottsel metal: SKYBLEND additive-drawn=%lu unspec=%lu "
++              @"source-over=%lu additive=%lu unsupported=%lu",
++              sky_blend_additive_drawn,
++              sky_blend_key_counts[(int)OttselMobileBlendKey::Unspecified],
++              sky_blend_key_counts[(int)OttselMobileBlendKey::SourceOver],
++              sky_blend_key_counts[(int)OttselMobileBlendKey::Additive],
++              sky_blend_key_counts[(int)OttselMobileBlendKey::Unsupported]);
++      }
++    }
+     // Diagnostic reference triangle: same encoder, pipeline and depth state as
+     // the sky batches, but a locally-owned vertex buffer.  If this paints and
+     // the sky batches do not, the defect is in the batch buffers, not the
+@@ -2346,12 +2640,60 @@
+     unsigned int sprite_state[6] = {ottsel::sprite3_alpha_test_enabled(),
+                                     ottsel::sprite3_alpha_test_gequal(),
+                                     ottsel::sprite3_primary_alpha_ref(), 1, 0, 0};
++    size_t sprite_draw_index = 0;
++    // G2.2 HUD parity: log every batch of one pass per second, so a single-sampled
++    // batch cannot hide an atlas/HUD batch that is drawn later in the same pass.
++    static double sprite_pass_last = 0.0;
++    const double sprite_pass_now = CACurrentMediaTime();
++    const bool sprite_pass_log = sprite_pass_now - sprite_pass_last >= 1.0;
++    if (sprite_pass_log) {
++      sprite_pass_last = sprite_pass_now;
++    }
+     for (const auto& sprite : sprite_batches) {
++      ++sprite_draw_index;
+       sprite_state[5] = sprite.ta0;
+       [enc setRenderPipelineState:sprite.blended ? self.spriteBlendPipeline
+                                                  : self.spritePipeline];
+-      [enc setDepthStencilState:self.sceneNoDepthProbe ? self.overlayDepthState
+-                                                       : self.spriteDepthState];
++      // G2.2 HUD parity: the sprite pass tests GEQUAL with depth writes off, so a
++      // 2D/HUD quad whose z is farther than the world's is rejected.  This gated
++      // control draws sprites with the overlay (ALWAYS/no-write) state instead, so
++      // "the depth test rejects them" can be separated from "nothing is drawn".
++      static int sprite_overlay_depth = -1;
++      if (sprite_overlay_depth < 0) {
++        const std::string sprite_depth_trigger =
++            ottsel_ios_writable_dir() + "ottsel-trace-sprite-overlay-depth";
++        sprite_overlay_depth = access(sprite_depth_trigger.c_str(), F_OK) == 0 ? 1 : 0;
++      }
++      [enc setDepthStencilState:(self.sceneNoDepthProbe || sprite_overlay_depth)
++                                  ? self.overlayDepthState
++                                  : self.spriteDepthState];
++      // G2.2 HUD parity: the vertex buffer is MTLResourceStorageModeShared, so the
++      // vertex the GPU is about to fetch can be read back here.  That decides whether
++      // the HUD path's vertices (or a fixture's known quad) reach the draw at all.
++      {
++        static int sprite_vertex_probe = -1;
++        static unsigned int sprite_vertex_logs = 0;
++        if (sprite_vertex_probe < 0) {
++          const std::string sprite_vertex_trigger =
++              ottsel_ios_writable_dir() + "ottsel-trace-sprite-first-vertex";
++          sprite_vertex_probe = access(sprite_vertex_trigger.c_str(), F_OK) == 0 ? 1 : 0;
++        }
++        // Per-second record of every batch drawn, tagged with its texture size: the
++        // HUD's atlas is 384x64 or larger while world sprites are small, so this
++        // shows whether an atlas batch ever reaches the draw at all.
++        if (sprite_vertex_probe && sprite_vertex_logs < 60 && sprite.vertices.contents &&
++            sprite_pass_log) {
++          ++sprite_vertex_logs;
++          const OttselMetalSpriteVertex* first =
++              (const OttselMetalSpriteVertex*)sprite.vertices.contents;
++          lg::info("OTTSEL SPRITE DRAW: store={} idx={} tex={}x{} n={} v0=({:.3f},{:.3f}) "
++                   "uv=({:.3f},{:.3f}) q={:.3f} z={:.4f}",
++                   (unsigned long)sprite_batches.size(), (unsigned long)sprite_draw_index,
++                   (unsigned long)sprite.texture.width, (unsigned long)sprite.texture.height,
++                   (unsigned long)sprite.vertex_count, first->pos[0], first->pos[1], first->uv[0],
++                   first->uv[1], first->q, first->z);
++        }
++      }
+       [enc setVertexBuffer:sprite.vertices offset:0 atIndex:0];
+       [enc setFragmentTexture:sprite.texture atIndex:0];
+       [enc setFragmentSamplerState:self.directSampler atIndex:0];
+@@ -2400,6 +2742,53 @@
+       [enc setFragmentBytes:direct_text_state length:sizeof(direct_text_state) atIndex:1];
+       [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0
+               vertexCount:direct_batch.vertex_count];
++    }
++    // G2.2 blend ledger, Direct site (observability only): one line per distinct
++    // register mix over the whole Direct population of this arm.
++    if (_blendLedgerArmed) {
++      unsigned long long reg[4] = {0, 0, 0, 0};
++      unsigned long count[4] = {0, 0, 0, 0};
++      unsigned long other = 0;
++      int used = 0;
++      for (const auto& direct_batch : direct_batches) {
++        const unsigned long long r = direct_batch.diagnostic_alpha & 0xffull;
++        int slot = -1;
++        for (int i = 0; i < used; ++i) {
++          if (reg[i] == r) {
++            slot = i;
++            break;
++          }
++        }
++        if (slot < 0 && used < 4) {
++          reg[used] = r;
++          count[used] = 0;
++          slot = used;
++          ++used;
++        }
++        if (slot < 0) {
++          ++other;
++        } else {
++          ++count[slot];
++        }
++      }
++      bool direct_mix_changed = (_directMixLines == 0) || _directMixOther != other;
++      for (int i = 0; i < 4 && !direct_mix_changed; ++i) {
++        if (_directMixReg[i] != reg[i] || _directMixCount[i] != count[i]) {
++          direct_mix_changed = true;
++        }
++      }
++      if (direct_mix_changed && _directMixLines < 8) {
++        ++_directMixLines;
++        for (int i = 0; i < 4; ++i) {
++          _directMixReg[i] = reg[i];
++          _directMixCount[i] = count[i];
++        }
++        _directMixOther = other;
++        NSLog(@"ottsel metal: DIRECTREG-MIX arm=%lu n=%lu r0=0x%llx:%lu r1=0x%llx:%lu "
++              @"r2=0x%llx:%lu r3=0x%llx:%lu other=%lu",
++              (unsigned long)_blendLedgerArms, (unsigned long)direct_batches.size(), reg[0],
++              count[0], reg[1], count[1], reg[2], count[2], reg[3], count[3], other);
++      }
+     }
+     if (ottsel_mobile_log_within_budget(direct_text_draw_logs, 8)) {
+       ++direct_text_draw_logs;
+@@ -2851,9 +3240,21 @@
+ 
+ - (void)beginSkyBucket { _skyFrameStore.begin(); }
+ 
++- (void)armBlendLedger {
++  _blendLedgerArmed = YES;
++  _blendLedgerTieDraws = 0;
++  _blendLedgerTieLogged = NO;
++  for (int i = 0; i < 8; ++i) {
++    _blendLedgerTiePreset[i] = 0;
++  }
++  _blendLedgerTieEnable[0] = _blendLedgerTieEnable[1] = 0;
++  _blendLedgerTieBlend[0] = _blendLedgerTieBlend[1] = 0;
++  NSLog(@"ottsel metal: BLENDLEDGER armed arm=%lu", (unsigned long)(++_blendLedgerArms));
++}
++
+ - (void)finishSkyBucket:(BOOL)complete {
+   if (complete) _skyFrameStore.publish();
+-  else _skyFrameStore.begin(); // Roll back only the failed attempt; keep ready Sky.
++  else _skyFrameStore.begin(true); // Roll back only the failed attempt; keep ready Sky.
+ }
+ 
+ // Foreground Direct/GIF batch.  Same upload contract as the sky batch; only the
+@@ -2925,7 +3326,7 @@
+                     height:(NSUInteger)height
+                    blended:(BOOL)blended
+                        ta0:(unsigned char)ta0
+-                  depth:(const OttselMetalDirectDepthState*)depth {
++                  depth:(const OttselMetalDirectDepthState*)depth diagnosticAlpha:(unsigned long long)diagnosticAlpha {
+   if (!vertices || !vertexCount || !rgba || !width || !height || !self.device ||
+       !self.directPipeline) {
+     return;
+@@ -2942,6 +3343,10 @@
+   memcpy(vertex_buffer.contents, vertices, vertex_bytes);
+   NativeSpriteBatch batch{vertex_buffer, texture, vertexCount, blended, ta0, false};
+   if (depth) { batch.depth = *depth; batch.has_gs_depth = true; }
++  // G2.2 ledger: carry the bucket's GS ALPHA register to the draw loop, exactly
++  // as the sky path does.  Selection for this site is unchanged this round - a
++  // Direct bucket that wrote no ALPHA_1 reports 0, which is not a decoded copy.
++  batch.diagnostic_alpha = diagnosticAlpha;
+   _directFrameStore.append(batch);
+ }
+ 
+@@ -3068,6 +3473,8 @@
+                                                   options:MTLResourceStorageModeShared];
+   _sceneStagingMeshes[{level ? level : "", bool(tfrag)}].colors = buffer;
+ }
++
++
+ 
+ - (void)setMeshNow:(const void*)vertices
+        vertexCount:(NSUInteger)vertexCount
+@@ -3403,6 +3810,10 @@
+   }
+   return policy.write ? self.tieDepthStates[policy.compare]
+                       : self.tieNoWriteDepthStates[policy.compare];
++}
++
++- (NSUInteger)spriteStoreSize {
++  return _spriteBatches.snapshot().size();
+ }
+ 
+ - (void)clearSpriteBatches {
+@@ -3998,13 +4409,30 @@
+                 vertexCount:vertex_count
+                        rgba:rgba
+                       width:width
+-                    height:height
+-                   blended:blended != 0];
++                     height:height
++                    blended:blended != 0];
++  }
++}
++
++unsigned int ottsel_metal_sprite_store_size(OttselMetal* m) {
++  if (!m) {
++    return 0;
++  }
++  @autoreleasepool {
++    OttselMetalRenderer* r = (__bridge OttselMetalRenderer*)m;
++    return (unsigned int)r.spriteStoreSize;
+   }
+ }
+ 
+ void ottsel_metal_begin_sky_bucket(OttselMetal* m) {
+   if (m) [(__bridge OttselMetalRenderer*)m beginSkyBucket];
++}
++void ottsel_metal_arm_blend_ledger(OttselMetal* m) {
++  if (m) [(__bridge OttselMetalRenderer*)m armBlendLedger];
++}
++int ottsel_metal_sky_draw_legacy(OttselMetal* m) {
++  if (!m) return 0;
++  return ((__bridge OttselMetalRenderer*)m).skyDrawLegacy ? 1 : 0;
+ }
+ void ottsel_metal_finish_sky_bucket(OttselMetal* m, int complete) {
+   if (m) [(__bridge OttselMetalRenderer*)m finishSkyBucket:complete != 0];
+@@ -4045,6 +4473,7 @@
+                                     int blended,
+                                     unsigned char ta0,
+                                     const OttselMetalDirectDepthState* depth_state,
++                                    unsigned long long diagnostic_alpha) {
+   if (!m || !vertices || vertex_count == 0) {
+     return;
+   }
+@@ -4057,7 +4486,7 @@
+                    height:height
+                   blended:blended != 0
+                       ta0:ta0
+-                 depth:depth_state];
++                 depth:depth_state diagnosticAlpha:diagnostic_alpha];
+   }
+ }
+ 
+--- a/src/shell/metal_gfx.mm
++++ b/src/shell/metal_gfx.mm
+@@ -306,6 +306,9 @@
+ 
+ void select_mobile_scene_level(const std::string& level) {
+   if (level == g_mobile_tie_level) return;
++  // G2.2 blend ledger: sample the live blend registers once per level selection
++  // (title backdrop, village1, the routed level), not only at process start.
++  if (g_metal) ottsel_metal_arm_blend_ledger(g_metal);
+   MobileLevelSceneState& old = g_mobile_level_scene_states[g_mobile_tie_level];
+   old.tie_geo = std::move(g_mobile_tie_geo);
+   old.tie_tree = std::move(g_mobile_tie_tree);
+@@ -353,6 +356,33 @@
+ std::unordered_set<std::string> g_mobile_missing_levels;
+ std::unordered_map<const tfrag3::Level*, u32> g_mobile_level_texture_bases;
+ u32 g_mobile_next_texture_base = 0;
++
++// G2.2 item 3: composed MERC eye slots.  `MercDraw::eye_id` is 0xff for a normal
++// draw and `(pair << 1) | is_r` for an eye, so it indexes the composed slots
++// directly (upstream: `Merc2.cpp`'s `eye_id == 0xff ? tree_tex_id :
++// (0xefffff00 | eye_id)`, resolved by `lookup_eye_texture(eye_id % 40)`).
++// Upstream loads the composed image into VRAM at `EYE_BASE_BLOCK_JAK1 + slot` so
++// the draw samples it; natively the same effect is a reserved texture slot that
++// holds the composed image, re-uploaded only when the composite changes.
++constexpr u32 kMobileEyeSlots = 40;
++constexpr u32 kMobileEyeSize = 128;
++std::vector<u8> g_mobile_eye_images[kMobileEyeSlots];
++std::vector<u8> g_mobile_eye_uploaded[kMobileEyeSlots];
++bool g_mobile_eye_image_valid[kMobileEyeSlots] = {false};
++u32 g_mobile_eye_texture_base = 0;
++u32 g_mobile_eye_bind_logs = 0;
++// Per-pair packet signature: a pair is recomposed only when its layers (textures
++// or rects) changed, so a full 20-pair chain costs nothing while nothing blinks.
++u64 g_mobile_eye_pair_sig[20] = {0};
++std::unordered_set<u32> g_mobile_eye_bind_slots;
++
++u32 mobile_eye_texture_base() {
++  if (!g_mobile_eye_texture_base) {
++    g_mobile_eye_texture_base = g_mobile_next_texture_base;
++    g_mobile_next_texture_base += kMobileEyeSlots;
++  }
++  return g_mobile_eye_texture_base;
++}
+ 
+ void update_mobile_fog_color(u64 value) {
+   const std::array<u8, 3> next = {(u8)(value & 0xff), (u8)((value >> 8) & 0xff),
+@@ -2203,8 +2233,30 @@
+       if (!native_index_count) {
+         continue;
+       }
++      // G2.2 item 3: an eye material samples the composed eye slot rather than
++      // the level's eye page, so the pupil and lid layers reach the actor.
++      int draw_texture_index =
++          ottsel_mobile_scene_texture_slot(texture_base, source_draw.tree_tex_id);
++      if (source_draw.eye_id != 0xffu) {
++        const u32 eye_slot = (u32)source_draw.eye_id % kMobileEyeSlots;
++        if (g_mobile_eye_image_valid[eye_slot]) {
++          const u32 eye_index = mobile_eye_texture_base() + eye_slot;
++          if (g_mobile_eye_uploaded[eye_slot] != g_mobile_eye_images[eye_slot]) {
++            ottsel_metal_set_tie_texture(
++                g_metal, eye_index, (const unsigned int*)g_mobile_eye_images[eye_slot].data(),
++                kMobileEyeSize, kMobileEyeSize);
++            g_mobile_eye_uploaded[eye_slot] = g_mobile_eye_images[eye_slot];
++          }
++          draw_texture_index = (int)eye_index;
++          if (g_mobile_eye_bind_slots.insert(eye_slot).second &&
++              g_mobile_eye_bind_slots.size() <= 16) {
++            lg::info("OTTSEL EYE BIND: model={} eye-id=0x{:x} slot={} texture-index={}", name,
++                     (u32)source_draw.eye_id, eye_slot, eye_index);
++          }
++        }
++      }
+       draws.push_back({index_offset, native_index_count,
+-                       ottsel_mobile_scene_texture_slot(texture_base, source_draw.tree_tex_id),
++                       draw_texture_index,
+                        source_draw.mode.as_int(),
+                        static_cast<u32>(std::hash<std::string>{}(name)),
+                        (flags.ignore_alpha_mask & (u64(1) << effect_index)) ? 1u : 0u});
+@@ -2228,6 +2280,32 @@
+       continue;
+     }
+     const auto& texture = level->textures[texture_index];
++    // G2.2 item 3: the page the eye material sampled before the composed-eye bind,
++    // dumped on request so the composition's source can be compared with it.
++    if (texture_index == 323 || texture_index == 324) {
++      static bool eye_level_page_done = false;
++      if (!eye_level_page_done) {
++        const std::string trigger =
++            ottsel_ios_writable_dir() + "ottsel-trace-eye-level-page";
++        if (access(trigger.c_str(), F_OK) == 0) {
++          unlink(trigger.c_str());
++          eye_level_page_done = true;
++          char path[512];
++          snprintf(path, sizeof(path), "%sottsel-eye-level-page-%u.ppm",
++                   ottsel_ios_writable_dir().c_str(), texture_index);
++          if (FILE* f = fopen(path, "wb")) {
++            fprintf(f, "P6\n%u %u\n255\n", texture.w, texture.h);
++            const u8* bytes = (const u8*)texture.data.data();
++            for (size_t i = 0; i < (size_t)texture.w * texture.h; ++i) {
++              fwrite(bytes + i * 4, 1, 3, f);
++            }
++            fclose(f);
++            lg::info("OTTSEL EYE LEVEL PAGE: index={} {}x{} path={}", texture_index,
++                     texture.w, texture.h, path);
++          }
++        }
++      }
++    }
+     if (texture.data.size() == (size_t)texture.w * texture.h) {
+       ottsel_metal_set_tie_texture(g_metal, texture_base + texture_index, texture.data.data(),
+                                    texture.w, texture.h);
+@@ -4324,6 +4402,474 @@
+   return true;
+ }
+ 
++// ---------------------------------------------------------------------------
++// G2.2 item 3: the eye bucket (MERC_EYES_AFTER_PRIS = 54).
++//
++// Upstream's EyeRenderer decodes a per-eye sequence of (scissor, sprite) pairs and
++// composes background/iris/pupil/lid into one texture per eye slot, then loads it
++// into VRAM at EYE_BASE_BLOCK_JAK1 + slot so the MERC draw samples it (Merc2.cpp:
++// draw->texture = eye_id == 0xff ? tree_tex_id : (0xefffff00 | eye_id), resolved
++// by eye_renderer->lookup_eye_texture).  The composition window is GS 512..1024 at
++// four units per texel (shaders/eye.vert: gl_Position = (xyst - 768) / 256), so a
++// quad vertex lands at target_px = (xyz - eye_offset) / 4 - 128 for the 32-unit
++// layout and / 8 - 128 for the 64-unit one, eye_offset being (lr*512, pair*512)
++// or (lr*1024, (pair/4)*1024).  Background, iris and lid are copies; only the
++// pupil blends (SRC_ALPHA, ONE_MINUS_SRC_ALPHA); the target starts as the iris
++// texture's (0,0) texel.
++//
++// This lane had no eye consumer at all, so the eichar's two eye materials drew the
++// level's eye page (the background base) and the eyes were uncomposed.
++// ---------------------------------------------------------------------------
++
++struct MobileEyeLayer {
++  bool present = false;
++  int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
++  u64 uv0 = 0, uv1 = 0;  // raw uv fields; the background draw's uv0 is the name hash
++};
++
++struct MobileEyeSlot {
++  u64 name_hash = 0;
++  u64 iris_tex0 = 0, pupil_tex0 = 0, lid_tex0 = 0;
++  bool using_64 = false;
++  MobileEyeLayer iris, pupil, lid;
++};
++
++static bool mobile_eye_read_adgif(DmaFollower& dma, u64* tex0_out) {
++  const auto t = dma.read_and_advance();
++  if (t.size_bytes != 96 || t.vif0() != 0 || t.vifcode1().kind != VifCode::Kind::DIRECT) {
++    return false;
++  }
++  const auto* adgif = (const AdGifData*)(t.data + 16);
++  static u32 adgif_logs = 0;
++  if (adgif_logs < 2) {
++    ++adgif_logs;
++    lg::info("OTTSEL EYE ADGIF: addr0=0x{:x} addr1=0x{:x} addr2=0x{:x} addr3=0x{:x} "
++             "addr4=0x{:x} tex0=0x{:016x}",
++             (u32)adgif[0].tex0_addr, (u32)adgif[0].tex1_addr, (u32)adgif[0].mip_addr,
++             (u32)adgif[0].clamp_addr, (u32)adgif[0].alpha_addr, adgif[0].tex0_data);
++  }
++  *tex0_out = adgif[0].tex0_data;
++  return true;
++}
++
++static bool mobile_eye_read_draw(DmaFollower& dma, MobileEyeLayer* out, u64* uv0_out) {
++  const auto scissor_t = dma.read_and_advance();
++  if (scissor_t.size_bytes != 32 || scissor_t.vif0() != 0 ||
++      scissor_t.vifcode1().kind != VifCode::Kind::DIRECT) {
++    return false;
++  }
++  const auto sprite_t = dma.read_and_advance();
++  if (sprite_t.size_bytes != 96 || sprite_t.vif0() != 0 ||
++      sprite_t.vifcode1().kind != VifCode::Kind::DIRECT) {
++    return false;
++  }
++  u32 xyz0[3] = {0, 0, 0}, xyz1[3] = {0, 0, 0};
++  memcpy(xyz0, sprite_t.data + 48, 12);
++  memcpy(xyz1, sprite_t.data + 80, 12);
++  out->present = true;
++  out->x0 = (int)(xyz0[0] & 0xffffu);
++  out->y0 = (int)(xyz0[1] & 0xffffu);
++  out->x1 = (int)(xyz1[0] & 0xffffu);
++  out->y1 = (int)(xyz1[1] & 0xffffu);
++  memcpy(&out->uv0, sprite_t.data + 32, 8);
++  memcpy(&out->uv1, sprite_t.data + 64, 8);
++  if (uv0_out) {
++    *uv0_out = out->uv0;  // the reader's FNV name hash on the background draw
++  }
++  return true;
++}
++
++static std::shared_ptr<std::vector<u8>> mobile_eye_source(u64 tex0_value, u32* out_w,
++                                                         u32* out_h, const char** path_out) {
++  *out_w = 0;
++  *out_h = 0;
++  const GsTex0 tex0(tex0_value);
++  // Upstream resolves an eye layer through the level's texture pool by TBP0
++  // (`texture_pool->lookup_gpu_texture(adgif.tex0().tbp0())`).  Mirror that
++  // first: the page's metadata carries the pool combo id and the pool texture
++  // holds the level's own decoded image.
++  const auto meta = g_direct_texture_metadata.find(tex0.tbp0());
++  if (meta != g_direct_texture_metadata.end() && meta->second.combo_id) {
++    const auto pool = g_mobile_pool_textures.find(meta->second.combo_id);
++    if (pool != g_mobile_pool_textures.end() && pool->second && pool->second->w &&
++        pool->second->h &&
++        pool->second->data.size() == (size_t)pool->second->w * pool->second->h) {
++      auto px = std::make_shared<std::vector<u8>>((size_t)pool->second->w * pool->second->h * 4);
++      memcpy(px->data(), pool->second->data.data(), px->size());
++      *out_w = pool->second->w;
++      *out_h = pool->second->h;
++      if (path_out) {
++        *path_out = "pool";
++      }
++      return px;
++    }
++  }
++  // Same lookup the sprite/sky consumers use: prefer the registered (uploaded)
++  // image for this page and fall back to the VRAM decode, so a palettized page
++  // resolves through its real CLUT instead of a bare VRAM read.
++  const u32 width = 1u << tex0.tw();
++  const u32 height = 1u << tex0.th();
++  if (path_out) {
++    *path_out =
++        g_direct_relocated_textures.count(direct_texture_cache_key(tex0.tbp0(), (u32)tex0.psm()))
++            ? "registry"
++            : "vram";
++  }
++  auto rgba = download_sprite_texture_cached(tex0.tbp0(), std::max(1u, width / 64), width,
++                                             height, (u32)tex0.psm(), tex0.cpsm(), tex0.cbp());
++  if (!rgba) {
++    return nullptr;
++  }
++  *out_w = width;
++  *out_h = height;
++  return rgba;
++}
++
++static void mobile_eye_sample_flat(const std::vector<u8>& px, u32 w, u32 h, u8 out[4]) {
++  if (px.size() < 4) {
++    out[0] = out[1] = out[2] = 0;
++    out[3] = 255;
++    return;
++  }
++  (void)w;
++  (void)h;
++  out[0] = px[0];
++  out[1] = px[1];
++  out[2] = px[2];
++  out[3] = px[3];
++}
++
++// The oracle filters LINEAR on every eye layer, so sample bilinearly: nearest
++// sampling of a 16x16 page over a 100-pixel rect is visibly blocky.
++static void mobile_eye_texel_bilinear(const std::vector<u8>& px, u32 w, u32 h, float u, float v,
++                                      u8 out[4]) {
++  const float fx = u * (float)w - 0.5f;
++  const float fy = v * (float)h - 0.5f;
++  const int x0 = (int)std::floor(fx);
++  const int y0 = (int)std::floor(fy);
++  const float tx = fx - (float)x0;
++  const float ty = fy - (float)y0;
++  auto texel = [&](int x, int y, int channel) -> float {
++    x = std::clamp(x, 0, (int)w - 1);
++    y = std::clamp(y, 0, (int)h - 1);
++    return (float)px[((size_t)y * w + (size_t)x) * 4 + channel];
++  };
++  for (int c = 0; c < 4; ++c) {
++    const float top = texel(x0, y0, c) * (1.f - tx) + texel(x0 + 1, y0, c) * tx;
++    const float bottom = texel(x0, y0 + 1, c) * (1.f - tx) + texel(x0 + 1, y0 + 1, c) * tx;
++    out[c] = (u8)std::clamp(top * (1.f - ty) + bottom * ty, 0.f, 255.f);
++  }
++}
++
++static void mobile_eye_quad(std::vector<u8>& dst, u32 size, const MobileEyeLayer& layer,
++                            const std::vector<u8>& src, u32 src_w, u32 src_h, bool blend) {
++  if (!layer.present || src.size() < 4 || src_w == 0 || src_h == 0) {
++    return;
++  }
++  const int dx0 = std::max(0, layer.x0), dy0 = std::max(0, layer.y0);
++  const int dx1 = std::min((int)size, layer.x1), dy1 = std::min((int)size, layer.y1);
++  if (dx1 <= dx0 || dy1 <= dy0) {
++    return;
++  }
++  for (int y = dy0; y < dy1; ++y) {
++    const float v = ((float)(y - layer.y0) + 0.5f) / (float)(layer.y1 - layer.y0);
++    for (int x = dx0; x < dx1; ++x) {
++      const float u = ((float)(x - layer.x0) + 0.5f) / (float)(layer.x1 - layer.x0);
++      u8 texel[4];
++      mobile_eye_texel_bilinear(src, src_w, src_h, u, v, texel);
++      u8* out = dst.data() + ((size_t)y * size + (size_t)x) * 4;
++      if (!blend) {
++        memcpy(out, texel, 4);
++      } else {
++        const float a = (float)texel[3] / 255.f;
++        for (int c = 0; c < 3; ++c) {
++          out[c] = (u8)std::clamp((float)texel[c] * a + (float)out[c] * (1.f - a), 0.f, 255.f);
++        }
++        out[3] = (u8)std::clamp((float)texel[3] + (float)out[3] * (1.f - a), 0.f, 255.f);
++      }
++    }
++  }
++}
++
++static void mobile_eye_dump(const char* dir, int slot, const std::vector<u8>& rgba, u32 size) {
++  char path[512];
++  snprintf(path, sizeof(path), "%sottsel-eye-slot-%d.ppm", dir, slot);
++  FILE* f = fopen(path, "wb");
++  if (!f) {
++    return;
++  }
++  fprintf(f, "P6\n%u %u\n255\n", size, size);
++  for (u32 i = 0; i < size * size; ++i) {
++    fwrite(rgba.data() + (size_t)i * 4, 1, 3, f);
++  }
++  fclose(f);
++  lg::info("OTTSEL EYE DUMP: slot={} path={}", slot, path);
++}
++
++// Source-layer dump: the composition is only as good as the pages it samples, so
++// record each layer's page exactly as resolved.
++static void mobile_eye_dump_source(const char* dir, const char* name, const std::vector<u8>& rgba,
++                                   u32 w, u32 h) {
++  char path[512];
++  snprintf(path, sizeof(path), "%sottsel-eye-%s.ppm", dir, name);
++  FILE* f = fopen(path, "wb");
++  if (!f) {
++    return;
++  }
++  fprintf(f, "P6\n%u %u\n255\n", w, h);
++  for (u32 i = 0; i < w * h; ++i) {
++    fwrite(rgba.data() + (size_t)i * 4, 1, 3, f);
++  }
++  fclose(f);
++}
++
++// Compose one eye slot into a 128x128 RGBA image, faithfully to EyeRenderer:
++// the target is filled with the iris texture's (0,0) texel, then the iris, pupil
++// (blended) and lid quads are stretched over their rectangles.
++static void mobile_eye_compose(const MobileEyeSlot& slot, bool lr, std::vector<u8>& out,
++                               u32 size) {
++  const int pair = slot.iris.y0 >= 512 ? (int)(((u32)(slot.iris.y0 - 512) >> 4) / 32u) : 0;
++  const int x_off = slot.using_64 ? lr * 1024 : lr * 512;
++  const int y_off = slot.using_64 ? (pair / 4) * 1024 : pair * 512;
++  const float scale = slot.using_64 ? 0.125f : 0.25f;
++  auto remap = [&](MobileEyeLayer layer) {
++    MobileEyeLayer r = layer;
++    r.x0 = (int)std::lround((float)(layer.x0 - x_off) * scale - 128.f);
++    r.y0 = (int)std::lround((float)(layer.y0 - y_off) * scale - 128.f);
++    r.x1 = (int)std::lround((float)(layer.x1 - x_off) * scale - 128.f);
++    r.y1 = (int)std::lround((float)(layer.y1 - y_off) * scale - 128.f);
++    return r;
++  };
++  const MobileEyeLayer iris = remap(slot.iris);
++  const MobileEyeLayer pupil = remap(slot.pupil);
++  const MobileEyeLayer lid = remap(slot.lid);
++  u32 iris_w = 0, iris_h = 0, pupil_w = 0, pupil_h = 0, lid_w = 0, lid_h = 0;
++  auto iris_px = mobile_eye_source(slot.iris_tex0, &iris_w, &iris_h, nullptr);
++  auto pupil_px = mobile_eye_source(slot.pupil_tex0, &pupil_w, &pupil_h, nullptr);
++  auto lid_px = mobile_eye_source(slot.lid_tex0, &lid_w, &lid_h, nullptr);
++  out.assign((size_t)size * size * 4, 0);
++  u8 flat[4] = {0, 0, 0, 255};
++  if (iris_px && iris_px->size() >= 4) {
++    mobile_eye_sample_flat(*iris_px, iris_w, iris_h, flat);
++  }
++  for (u32 i = 0; i < size * size; ++i) {
++    memcpy(out.data() + (size_t)i * 4, flat, 4);
++  }
++  if (iris_px) {
++    mobile_eye_quad(out, size, iris, *iris_px, iris_w, iris_h, false);
++  }
++  if (pupil_px) {
++    mobile_eye_quad(out, size, pupil, *pupil_px, pupil_w, pupil_h, true);
++  }
++  if (lid_px) {
++    mobile_eye_quad(out, size, lid, *lid_px, lid_w, lid_h, false);
++  }
++}
++
++static u32 submit_mobile_native_eye_bucket(const void* data, u32 start_offset, u32 next_bucket) {
++  if (!g_metal || !data || start_offset == next_bucket) {
++    return 0;
++  }
++  static bool eye_dump_armed = false;
++  static bool eye_dump_done = false;
++  static u32 eye_logs = 0;
++  if (!eye_dump_armed) {
++    const std::string eye_dump_trigger = ottsel_ios_writable_dir() + "ottsel-trace-eye-dump";
++    if (access(eye_dump_trigger.c_str(), F_OK) == 0) {
++      unlink(eye_dump_trigger.c_str());
++      eye_dump_armed = true;
++      lg::info("OTTSEL EYE DUMP: armed for the next composed eye bucket");
++    }
++  }
++  DmaFollower dma(data, start_offset);
++  if (dma.current_tag().kind != DmaTag::Kind::NEXT) {
++    return 0;
++  }
++  const auto first = dma.read_and_advance();
++  if (first.size_bytes || first.vif0() || first.vif1() || dma.ended()) {
++    return 0;
++  }
++  if (dma.current_tag().kind == DmaTag::Kind::CALL) {
++    return 0;  // the eye renderer did not run this frame
++  }
++  const auto offset_setup = dma.read_and_advance();
++  const auto alpha_setup = dma.read_and_advance();
++  if (offset_setup.size_bytes != 128 || alpha_setup.size_bytes != 32) {
++    if (eye_logs < 2) {
++      ++eye_logs;
++      lg::info("OTTSEL EYE SHAPE: unexpected setup offset={} alpha={}", offset_setup.size_bytes,
++               alpha_setup.size_bytes);
++    }
++    return 0;
++  }
++  if (dma.current_tag().kind == DmaTag::Kind::NEXT) {
++    dma.read_and_advance();
++  }
++  constexpr u32 kEyePairBudget = 20;
++  u32 pairs_done = 0;
++  u32 pairs_composed = 0;
++  while (!dma.ended() && dma.current_tag().qwc != 8 && pairs_done < kEyePairBudget) {
++    MobileEyeSlot l, r;
++    u64 hash = 0;
++    MobileEyeLayer background;
++    if (!mobile_eye_read_adgif(dma, &l.iris_tex0)) {
++      break;
++    }
++    if (!mobile_eye_read_draw(dma, &background, &hash)) {
++      break;
++    }
++    l.name_hash = hash;
++    r.name_hash = hash;
++    r.iris_tex0 = l.iris_tex0;
++    r.pupil_tex0 = 0;
++    r.lid_tex0 = 0;
++    // using_64 is selected by the background draw's scissor height in the
++    // reference; the scissor is not consumed here, so derive it from the rect as
++    // well: a 64-unit layout packs four pairs per row.
++    l.using_64 = false;
++    r.using_64 = false;
++    if (!mobile_eye_read_draw(dma, &l.iris, nullptr)) {
++      break;
++    }
++    if (dma.current_tag().qwc == 6) {
++      u64 r_iris_tex = 0;
++      if (!mobile_eye_read_adgif(dma, &r_iris_tex)) {
++        break;
++      }
++      r.iris_tex0 = r_iris_tex;
++      if (!mobile_eye_read_draw(dma, &r.iris, nullptr)) {
++        break;
++      }
++    } else if (!mobile_eye_read_draw(dma, &r.iris, nullptr)) {
++      break;
++    }
++    dma.read_and_advance();  // test1
++    if (!mobile_eye_read_adgif(dma, &l.pupil_tex0)) {
++      break;
++    }
++    r.pupil_tex0 = l.pupil_tex0;
++    if (!mobile_eye_read_draw(dma, &l.pupil, nullptr)) {
++      break;
++    }
++    if (dma.current_tag().qwc == 6) {
++      u64 r_pupil_tex = 0;
++      if (!mobile_eye_read_adgif(dma, &r_pupil_tex)) {
++        break;
++      }
++      r.pupil_tex0 = r_pupil_tex;
++    }
++    if (!mobile_eye_read_draw(dma, &r.pupil, nullptr)) {
++      break;
++    }
++    dma.read_and_advance();  // test2
++    if (!mobile_eye_read_adgif(dma, &l.lid_tex0)) {
++      break;
++    }
++    r.lid_tex0 = l.lid_tex0;
++    if (!mobile_eye_read_draw(dma, &l.lid, nullptr)) {
++      break;
++    }
++    if (dma.current_tag().qwc == 6) {
++      u64 r_lid_tex = 0;
++      if (!mobile_eye_read_adgif(dma, &r_lid_tex)) {
++        break;
++      }
++      r.lid_tex0 = r_lid_tex;
++    }
++    if (!mobile_eye_read_draw(dma, &r.lid, nullptr)) {
++      break;
++    }
++    dma.read_and_advance();  // end-of-eye
++    ++pairs_done;
++    const int pair = l.iris.y0 >= 512 ? (int)(((u32)(l.iris.y0 - 512) >> 4) / 32u) : 0;
++    // Compose into the slot cache the MERC bind reads (MercDraw::eye_id =
++    // (pair << 1) | is_r), whether or not a dump was requested.
++    const u32 eye_slot_l = (u32)pair * 2u;
++    const u32 eye_slot_r = eye_slot_l + 1u;
++    // Signature of everything the composition reads, so an unchanged pair is not
++    // recomposed (a blink moves the lid rect and does trigger it).
++    u64 eye_sig = 1469598103934665603ull;
++    auto eye_mix = [&eye_sig](u64 value) {
++      eye_sig ^= value;
++      eye_sig *= 1099511628211ull;
++    };
++    for (const MobileEyeSlot* slot : {&l, &r}) {
++      eye_mix(slot->iris_tex0);
++      eye_mix(slot->pupil_tex0);
++      eye_mix(slot->lid_tex0);
++      for (const MobileEyeLayer* layer : {&slot->iris, &slot->pupil, &slot->lid}) {
++        eye_mix((u64)(u32)layer->x0 | ((u64)(u32)layer->y0 << 16) |
++                ((u64)(u32)layer->x1 << 32) | ((u64)(u32)layer->y1 << 48));
++      }
++    }
++    eye_mix(l.using_64 ? 1ull : 0ull);
++    if (eye_slot_r < kMobileEyeSlots &&
++        (eye_sig != g_mobile_eye_pair_sig[pair % 20u] ||
++         !g_mobile_eye_image_valid[eye_slot_l])) {
++      mobile_eye_compose(l, false, g_mobile_eye_images[eye_slot_l], kMobileEyeSize);
++      mobile_eye_compose(r, true, g_mobile_eye_images[eye_slot_r], kMobileEyeSize);
++      g_mobile_eye_image_valid[eye_slot_l] = true;
++      g_mobile_eye_image_valid[eye_slot_r] = true;
++      g_mobile_eye_pair_sig[pair % 20u] = eye_sig;
++      ++pairs_composed;
++    }
++    if (eye_logs < 6) {
++      ++eye_logs;
++      lg::info("OTTSEL EYE: pair={} using64={} hash=0x{:x} iris=0x{:x} pupil=0x{:x} lid=0x{:x} "
++               "lrect=({},{}..{},{}) prect=({},{}..{},{}) lidrect=({},{}..{},{}) "
++               "iris-uv0=0x{:x} iris-uv1=0x{:x} lid-uv0=0x{:x}",
++               pair, l.using_64 ? 1 : 0, hash, l.iris_tex0, l.pupil_tex0, l.lid_tex0, l.iris.x0,
++               l.iris.y0, l.iris.x1, l.iris.y1, l.pupil.x0, l.pupil.y0, l.pupil.x1, l.pupil.y1,
++               l.lid.x0, l.lid.y0, l.lid.x1, l.lid.y1, l.iris.uv0, l.iris.uv1, l.lid.uv0);
++    }
++    if (eye_dump_armed && !eye_dump_done && eye_slot_r < kMobileEyeSlots) {
++      const std::string dir = ottsel_ios_writable_dir();
++      mobile_eye_dump(dir.c_str(), (int)eye_slot_l, g_mobile_eye_images[eye_slot_l], kMobileEyeSize);
++      mobile_eye_dump(dir.c_str(), (int)eye_slot_r, g_mobile_eye_images[eye_slot_r], kMobileEyeSize);
++      for (int layer = 0; layer < 3; ++layer) {
++        const u64 tex0 = layer == 0 ? l.iris_tex0 : (layer == 1 ? l.pupil_tex0 : l.lid_tex0);
++        u32 sw = 0, sh = 0;
++        const char* source_path = "none";
++        auto px = mobile_eye_source(tex0, &sw, &sh, &source_path);
++        const char* name = layer == 0 ? "iris" : (layer == 1 ? "pupil" : "lid");
++        const GsTex0 t(tex0);
++        const bool in_registry =
++            g_direct_relocated_textures.count(direct_texture_cache_key(t.tbp0(), (u32)t.psm())) != 0;
++        const auto meta = g_direct_texture_metadata.find(t.tbp0());
++        const auto registered = g_direct_relocated_textures.find(
++            direct_texture_cache_key(t.tbp0(), (u32)t.psm()));
++        lg::info("OTTSEL EYE SRC: name={} path={} tbp0=0x{:x} psm={} cpsm={} cbp=0x{:x} registry={} "
++                 "reg-size={}x{} meta=(psm={},{}x{}) resolved={} {}x{}",
++                 name, source_path, t.tbp0(), (u32)t.psm(), t.cpsm(), t.cbp(), in_registry ? 1 : 0,
++                 registered != g_direct_relocated_textures.end() ? registered->second.width : 0,
++                 registered != g_direct_relocated_textures.end() ? registered->second.height : 0,
++                 meta != g_direct_texture_metadata.end() ? (u32)meta->second.psm : 999u,
++                 meta != g_direct_texture_metadata.end() ? meta->second.width : 0,
++                 meta != g_direct_texture_metadata.end() ? meta->second.height : 0, px ? 1 : 0, sw,
++                 sh);
++        if (px && sw && sh) {
++          char label[64];
++          snprintf(label, sizeof(label), "%s-%d", name, pair * 2);
++          mobile_eye_dump_source(dir.c_str(), label, *px, sw, sh);
++        }
++      }
++      eye_dump_done = true;
++    }
++  }
++  // Deduped on (pairs, composed) so a later recomposition (a blink moving a lid
++  // rect) is visible as a new line rather than hidden behind the first summary.
++  static u32 eye_chain_logs = 0;
++  static u32 eye_chain_last = 0xffffffffu;
++  const u32 eye_chain_state = pairs_done * 256u + std::min(pairs_composed, 255u);
++  if (pairs_done && eye_chain_state != eye_chain_last && eye_chain_logs < 8) {
++    eye_chain_last = eye_chain_state;
++    ++eye_chain_logs;
++    lg::info("OTTSEL EYE CHAIN: pairs={} slots={} composed={}", pairs_done, pairs_done * 2,
++             pairs_composed);
++  }
++  return pairs_done;
++}
++
+ static u32 submit_mobile_native_sky_bucket(const void* data,
+                                            u32 start_offset,
+                                            u32 next_bucket,
+@@ -4348,6 +4894,50 @@
+     return 0;
+   }
+   dma = DmaFollower(data, start_offset);
++  // G2.2: upstream's bucket-3 SkyRenderer is a DirectRenderer fed a 64-byte GIF
++  // setup packet, and it only draws the sky quads when the tag after that setup
++  // is the qwc == 5 draw setup (SkyRenderer::render, SkyRenderer.cpp:196-247).
++  // Those quads sample the *composited* 64x96 sky texture that upstream's
++  // SkyBlend handlers produce (buckets 32/39, TFRAG_TRANS*_AND_SKY_BLEND_*).
++  // This lane does not implement that blend, so the same quads sample whatever
++  // the relocated texture registry holds for that key - real sky-source data,
++  // not the composite - and the port's own sky composite ("OTTSEL SKY BLEND")
++  // already draws the sky region.  Drawing the bucket's quads on top therefore
++  // double-draws the sky with uncomposited data, which the register-driven
++  // additive equation turned into a vivid rainbow over village1.  They are
++  // skipped by default; the faithful fix is to implement the blend and draw
++  // from its result.
++  {
++    static double sky_shape_last_log = 0.0;
++    const double sky_shape_now = CACurrentMediaTime();
++    DmaFollower shape(data, start_offset);
++    const DmaTag first_shape_tag = shape.current_tag();
++    shape.read_and_advance();
++    const bool shape_readable = !shape.ended();
++    const DmaTag payload_tag = shape_readable ? shape.current_tag() : first_shape_tag;
++    const u32 payload_size = shape_readable ? shape.read_and_advance().size_bytes : 0;
++    const bool after_readable = !shape.ended();
++    const DmaTag after_setup_tag = after_readable ? shape.current_tag() : payload_tag;
++    const bool ignore = ottsel_metal_sky_draw_legacy(g_metal) != 0;
++    // Throttled to 1 Hz rather than line-bounded, so the same record exists in
++    // every phase (title, village, level) instead of only at process start.
++    if (sky_shape_now - sky_shape_last_log >= 1.0) {
++      sky_shape_last_log = sky_shape_now;
++      lg::info("OTTSEL SKY SHAPE: start=0x{:x} next=0x{:x} readable={} payload-kind={} "
++               "payload-qwc={} payload-size={} after-setup-kind={} after-setup-qwc={} "
++               "desktop-path={} legacy-flag={} drawn={}",
++               start_offset, next_bucket, shape_readable,
++               shape_readable ? mobile_dma_kind_name(payload_tag.kind) : "none",
++               shape_readable ? payload_tag.qwc : 0u, payload_size,
++               after_readable ? mobile_dma_kind_name(after_setup_tag.kind) : "none",
++               after_readable ? after_setup_tag.qwc : 0u,
++               after_readable ? (after_setup_tag.qwc == 5 ? "sky-draw" : "generic-vif") : "none",
++               ignore, ignore ? "as-sky" : "skipped");
++    }
++    if (!ignore) {
++      return 0;
++    }
++  }
+   // I1.1 discrimination: the leading tag kind decides whether this window is
+   // a real Sky draw list or a CALL/RET chain that upstream's SkyRenderer would
+   // short-circuit.  Observability only; no renderer behavior changes.
+@@ -4492,7 +5082,8 @@
+     ottsel_metal_append_direct_mesh_n(
+         g_metal, primitive.vertices.data(), (unsigned int)primitive.vertices.size(),
+         primitive.texture->data(), primitive.texture_width, primitive.texture_height,
+-        primitive.blended ? 1 : 0, primitive.ta0, &primitive.depth);
++        primitive.blended ? 1 : 0, primitive.ta0, &primitive.depth,
++        primitive.diagnostic_alpha);
+     ++submitted;
+   }
+   if (g_direct_product_diag_logs < 8) {
+@@ -6069,8 +6660,27 @@
+   // upload (evidence/A1/l3-atlas-upload-sized-2026-09-22.md).
+   u32 hud_rows_used = 1;
+   u32 hud_columns_used = 1;
++  // G2.2 HUD parity: where the submitted HUD quads actually land, so "the game
++  // emits HUD sprites and the port says it drew them" can be told apart from
++  // "they are off-screen or fail the GEQUAL depth test against the world".
++  float hud_ndc_min[2] = {1e9f, 1e9f};
++  float hud_ndc_max[2] = {-1e9f, -1e9f};
++  float hud_ndc_z_min = 1e9f, hud_ndc_z_max = -1e9f;
++  u32 hud_atlas_sampled = 0, hud_atlas_nonzero_rgb = 0, hud_atlas_opaque = 0;
+   const auto flush_atlas = [&] {
+     if (vertices.empty()) return;
++    for (const auto& hud_vertex : vertices) {
++      const float w = hud_vertex.q != 0.f ? hud_vertex.q : 1.f;
++      const float ndc_x = hud_vertex.pos[0] / w;
++      const float ndc_y = hud_vertex.pos[1] / w;
++      const float ndc_z = hud_vertex.z / w;
++      hud_ndc_min[0] = std::min(hud_ndc_min[0], ndc_x);
++      hud_ndc_min[1] = std::min(hud_ndc_min[1], ndc_y);
++      hud_ndc_max[0] = std::max(hud_ndc_max[0], ndc_x);
++      hud_ndc_max[1] = std::max(hud_ndc_max[1], ndc_y);
++      hud_ndc_z_min = std::min(hud_ndc_z_min, ndc_z);
++      hud_ndc_z_max = std::max(hud_ndc_z_max, ndc_z);
++    }
+     hud_rows_used = std::max(1u, (u32)((entries.size() + kColumns - 1) / kColumns));
+     hud_columns_used = std::min(kColumns, std::max(1u, (u32)entries.size()));
+     const u32 hud_height_used = kTile * hud_rows_used;
+@@ -6081,8 +6691,65 @@
+       hud_vertex.uv[0] *= hud_uv_scale_x;
+       hud_vertex.uv[1] *= hud_uv_scale;
+     }
++    // G2.2 HUD parity: the atlas is built here, so record whether it carries any
++    // opaque texels at all - "the HUD is invisible" is otherwise indistinguishable
++    // between a geometry/coverage defect and an empty atlas.
++    {
++      u32 nonzero_rgb = 0, opaque = 0, sampled = 0;
++      for (u32 row = 0; row < hud_height_used; ++row) {
++        for (u32 col = 0; col < hud_width_used; ++col) {
++          const u8* texel = atlas.data() + ((size_t)row * kWidth + col) * 4;
++          ++sampled;
++          if (texel[0] || texel[1] || texel[2]) ++nonzero_rgb;
++          if (texel[3] > 0) ++opaque;
++        }
++      }
++      hud_atlas_sampled += sampled;
++      hud_atlas_nonzero_rgb += nonzero_rgb;
++      hud_atlas_opaque += opaque;
++      // Dump the *largest* atlas seen while the trigger is armed (the first flush
++      // is a single solid-colour tile), rewriting the file as it grows.
++      static bool hud_atlas_armed = false;
++      static size_t hud_atlas_dumped_entries = 0;
++      if (!hud_atlas_armed) {
++        const std::string trigger = ottsel_ios_writable_dir() + "ottsel-trace-hud-atlas";
++        if (access(trigger.c_str(), F_OK) == 0) {
++          unlink(trigger.c_str());
++          hud_atlas_armed = true;
++        }
++      }
++      if (hud_atlas_armed && entries.size() > hud_atlas_dumped_entries) {
++          hud_atlas_dumped_entries = entries.size();
++          char path[512];
++          snprintf(path, sizeof(path), "%sottsel-hud-atlas.ppm", ottsel_ios_writable_dir().c_str());
++          if (FILE* f = fopen(path, "wb")) {
++            fprintf(f, "P6\n%u %u\n255\n", hud_width_used, hud_height_used);
++            for (u32 row = 0; row < hud_height_used; ++row) {
++              for (u32 col = 0; col < hud_width_used; ++col) {
++                fwrite(atlas.data() + ((size_t)row * kWidth + col) * 4, 1, 3, f);
++              }
++            }
++            fclose(f);
++            lg::info("OTTSEL HUD ATLAS DUMP: {}x{} path={}", hud_width_used, hud_height_used, path);
++        }
++      }
++    }
+     ottsel_metal_append_sprite_mesh_n(g_metal, vertices.data(), (u32)vertices.size(),
+                                      atlas.data(), hud_width_used, hud_height_used, 1);
++    // G2.2 HUD parity: the store size right after this append, so the producer's
++    // insert can be compared with the count the pass snapshots.
++    {
++      static u32 hud_append_logs = 0;
++      static double hud_append_last = 0.0;
++      const double hud_append_now = CACurrentMediaTime();
++      if (hud_append_logs < 40 && hud_append_now - hud_append_last >= 1.0) {
++        hud_append_last = hud_append_now;
++        ++hud_append_logs;
++        lg::info("OTTSEL HUD APPEND: tex={}x{} n={} store={}", hud_width_used, hud_height_used,
++                 (unsigned long)vertices.size(),
++                 (unsigned long)ottsel_metal_sprite_store_size(g_metal));
++      }
++    }
+     submitted_vertices += (u32)vertices.size();
+     vertices.clear();
+   };
+@@ -6158,13 +6825,24 @@
+     MobileSpriteVec4 projected = transformed;
+     projected.x *= q; projected.y *= q; projected.z *= q;
+     MobileSpriteVec4 base = sprite_add(projected, offset);
+-    const float sx = std::max(vector.xyz_sx.w * q, frame.min_scale);
+-    const float sy = std::max(vector.flag_rot_sy.w * q, frame.min_scale);
+-    const float radians = vector.flag_rot_sy.z * frame.deg_to_rad;
++  const float sx = std::max(vector.xyz_sx.w * q, frame.min_scale);
++  const float sy = std::max(vector.flag_rot_sy.w * q, frame.min_scale);
++  // Desktop sprite_3d.vert's HUD path assigns `scales_vf01.w = scales_vf01.z`, and z
++  // holds the sy-derived value, so both bases are scaled by max(sy*Q, min_scale).
++  // The port used sx for the x basis, which stretches any non-uniform HUD element
++  // (a bar or panel) horizontally - the HUD's measured NDC reaches x = 13.95.
++  static int hud_desktop_scale = -1;
++  if (hud_desktop_scale < 0) {
++    const std::string hud_scale_trigger = ottsel_ios_writable_dir() + "ottsel-trace-hud-desktop-scale";
++    hud_desktop_scale = access(hud_scale_trigger.c_str(), F_OK) == 0 ? 1 : 0;
++  }
++  const float hud_scale_x = hud_desktop_scale ? sy : sx;
++  const float radians = vector.flag_rot_sy.z * frame.deg_to_rad;
+     const float sine = std::sin(radians);
+     const float cosine = std::cos(radians);
+-    const MobileSpriteVec4 x_basis = sprite_scale(
+-        sprite_add(sprite_scale(frame.basis_x, cosine), sprite_scale(frame.basis_y, -sine)), sx);
++  const MobileSpriteVec4 x_basis = sprite_scale(
++      sprite_add(sprite_scale(frame.basis_x, cosine), sprite_scale(frame.basis_y, -sine)),
++      hud_scale_x);
+     const MobileSpriteVec4 y_basis = sprite_scale(
+         sprite_add(sprite_scale(frame.basis_x, sine), sprite_scale(frame.basis_y, cosine)), sy);
+     const u32 flags = *(const u32*)&vector.flag_rot_sy.x;
+@@ -6185,6 +6863,46 @@
+     }
+     const GsTex0 texture(adgifs[index].tex0_data);
+     trace_mobile_hud_transform(frame, hud, vector, adgifs[index].tex0_data, clip, depth);
++    // Gated fixture (ottsel-trace-hud-fixture): replace the quad with a known
++    // corner quad, opaque, sampling the centre of its own atlas cell.  "Does this
++    // path reach pixels at all?" then no longer depends on the game's clip mapping
++    // or on where the sprite's uv lands in the atlas.
++    static int hud_fixture = -1;
++    if (hud_fixture < 0) {
++      const std::string hud_fixture_trigger =
++          ottsel_ios_writable_dir() + "ottsel-trace-hud-fixture";
++      hud_fixture = access(hud_fixture_trigger.c_str(), F_OK) == 0 ? 1 : 0;
++    }
++    if (hud_fixture) {
++      static bool hud_fixture_logged = false;
++      if (!hud_fixture_logged) {
++        hud_fixture_logged = true;
++        lg::info("OTTSEL HUD FIXTURE: active (known corner quad, atlas centre, opaque)");
++      }
++      clip[0] = {-1.0f, 1.0f};
++      clip[1] = {-0.5f, 1.0f};
++      clip[2] = {-0.5f, 0.5f};
++      clip[3] = {-1.0f, 0.5f};
++      for (int corner = 0; corner < 4; ++corner) {
++        depth[corner] = 0.995f;
++        clip_w[corner] = 1.f;
++      }
++    }
++    // G2.2 HUD parity (bounded to four sprites): the colour and the four clip
++    // corners of a live HUD sprite, so "invisible" can be split into off-screen
++    // geometry, a zero vertex alpha, or a rejected draw.
++    if (index < 4) {
++      lg::info("OTTSEL HUD SPRITE: i={} tex0=0x{:016x} rgba=({:.3f},{:.3f},{:.3f},{:.3f}) "
++               "color=({:.3f},{:.3f},{:.3f},{:.3f}) clip=({:.3f},{:.3f})({:.3f},{:.3f})"
++               "({:.3f},{:.3f})({:.3f},{:.3f}) q=({:.4f},{:.4f},{:.4f},{:.4f}) "
++               "sx-raw={:.4f} sy-raw={:.4f} sx={:.4f} sy={:.4f} scale-x={:.4f}",
++               index, adgifs[index].tex0_data, vector.rgba.x, vector.rgba.y, vector.rgba.z,
++               vector.rgba.w, packet_color(vector.rgba.x), packet_color(vector.rgba.y),
++               packet_color(vector.rgba.z), packet_color(vector.rgba.w), clip[0][0], clip[0][1],
++               clip[1][0], clip[1][1], clip[2][0], clip[2][1], clip[3][0], clip[3][1],
++               clip_w[0], clip_w[1], clip_w[2], clip_w[3], vector.xyz_sx.w,
++               vector.flag_rot_sy.w, sx, sy, hud_scale_x);
++    }
+     if (!valid_clip) { ++ottsel_hud_skipped; continue; }
+     for (u32 corner = 0; corner < 4; ++corner) {
+       clip[corner][0] *= clip_w[corner];
+@@ -6246,10 +6964,23 @@
+       continue;
+     }
+     const Entry& entry = entries[entry_index];
+-    const float color[4] = {packet_color(vector.rgba.x),
+-                            packet_color(vector.rgba.y),
+-                            packet_color(vector.rgba.z),
+-                            packet_color(vector.rgba.w)};
++    float color[4] = {packet_color(vector.rgba.x),
++                      packet_color(vector.rgba.y),
++                      packet_color(vector.rgba.z),
++                      packet_color(vector.rgba.w)};
++    // Gated probe: force the HUD opaque, so "the quads are drawn but the icon
++    // alpha keeps them invisible" can be told apart from "nothing is drawn".
++    static int hud_opaque_probe = -1;
++    if (hud_opaque_probe < 0) {
++      const std::string hud_opaque_trigger = ottsel_ios_writable_dir() + "ottsel-trace-hud-opaque";
++      hud_opaque_probe = access(hud_opaque_trigger.c_str(), F_OK) == 0 ? 1 : 0;
++    }
++    if (hud_opaque_probe) {
++      color[3] = 1.f;
++    }
++    if (hud_fixture) {
++      color[3] = 1.f;
++    }
+     for (u32 out = 0; out < 6; ++out) {
+       const u32 source = order[out];
+       OttselMetalSpriteVertex vertex{};
+@@ -6261,20 +6992,36 @@
+       // Ottsel L3: atlas pixels on both axes; normalised in flush_atlas by the rows and
+       // columns actually used.
+       vertex.uv[1] = entry.y + std::clamp(frame.st[source].y, 0.f, 1.f) * entry.h;
++      if (hud_fixture) {
++        // Fixed atlas centre: the dumped 512x128 HUD atlas carries icons there, so
++        // the sample cannot land in a transparent cell corner.
++        vertex.uv[0] = (float)kWidth * 0.5f;
++        vertex.uv[1] = (float)kHeight * 0.5f;
++      }
+       memcpy(vertex.color, color, sizeof(color));
+       vertices.push_back(vertex);
+     }
+   }
+   flush_atlas();
+   if (!submitted_vertices) return false;
++  // Per-second rather than one-burst bounded: the earlier run logged all 24 lines
++  // in a single second (the intro panels), so a later in-level HUD group could not
++  // be seen.  The vsync tag lets each record be matched to the phase markers in the
++  // port log.
+   static u32 native_hud_logs = 0;
+-  if (ottsel_mobile_log_within_budget(native_hud_logs, 24)) {
++  static double native_hud_last = 0.0;
++  const double native_hud_now = CACurrentMediaTime();
++  if (native_hud_logs < 80 && native_hud_now - native_hud_last >= 1.0) {
++    native_hud_last = native_hud_now;
+     ++native_hud_logs;
+     lg::info("OTTSEL SPRITE METAL: native HUD vertices={} sprites={} atlas-textures={} "
+-             "atlas={}x{} skipped={}",
++             "atlas={}x{} skipped={} ndc=({:.3f},{:.3f})..({:.3f},{:.3f}) ndc-z=({:.4f}..{:.4f}) "
++             "atlas-rgb={}/{} atlas-alpha={}/{} vsync={}",
+              submitted_vertices, count, (u32)entries.size(), kTile * hud_columns_used,
+              kTile * hud_rows_used,
+-             ottsel_hud_skipped);
++             ottsel_hud_skipped, hud_ndc_min[0], hud_ndc_min[1], hud_ndc_max[0], hud_ndc_max[1],
++             hud_ndc_z_min, hud_ndc_z_max, hud_atlas_nonzero_rgb, hud_atlas_sampled,
++             hud_atlas_opaque, hud_atlas_sampled, g_ottsel_ios_vsync_count);
+   }
+   return true;
+ }
+@@ -8762,6 +9509,16 @@
+         data, ottsel_mobile_jak1_bucket_boundary(offset, 3),
+         ottsel_mobile_jak1_bucket_boundary(offset, 4), g_dec,
+         native_sky_product_submissions);
++  }
++  // G2.2 item 3: the eye bucket composes iris/pupil/lid into per-eye textures
++  // (MERC_EYES_AFTER_PRIS = 54).  One submission per vsync like the sky.
++  {
++    static u32 native_eye_submissions = 0;
++    if (native_sky_phase && native_eye_submissions < g_ottsel_ios_vsync_count) {
++      native_eye_submissions = g_ottsel_ios_vsync_count;
++      submit_mobile_native_eye_bucket(data, ottsel_mobile_jak1_bucket_boundary(offset, 54),
++                                      ottsel_mobile_jak1_bucket_boundary(offset, 55));
++    }
+   }
+     MobileSpriteFrameJak1 inherited_frame{};
+     MobileSpriteMatrix inherited_matrix{};

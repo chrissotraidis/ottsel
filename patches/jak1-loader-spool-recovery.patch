@@ -1,0 +1,48 @@
+diff --git a/goal_src/jak1/engine/load/loader.gc b/goal_src/jak1/engine/load/loader.gc
+--- a/goal_src/jak1/engine/load/loader.gc
++++ b/goal_src/jak1/engine/load/loader.gc
+@@ -662,6 +662,7 @@
+             (sv-40 0)
+             (sv-48 0)
+             (sv-56 0)
++            (stall-frames 0)
+             (spool-sound (new-sound-id)))
+         (backup-load-state-and-set-cmds *load-state* (-> arg0 command-list))
+         (set-setting! 'spooling (process->ppointer self) 0.0 0)
+@@ -692,7 +693,35 @@
+             (while (!= (file-status *art-control* (-> arg0 name) spool-part) 'active)
+               (if (arg3 self) (goto cfg-88))
+               (spool-push *art-control* (-> arg0 name) spool-part self -20.0)
+-              (format #t "WARNING: ---------------------> loader stall on art ~S ~D~%" (-> arg0 name) spool-part)
++              ;; Ottsel B53: recover a permanently locked spool buffer.
++              ;; While *master-mode* is not 'game (the progress screen holds it)
++              ;; clear-rec does not wipe the rec table, so a stale
++              ;; equal-priority rec keeps the partner buffer 'active and the
++              ;; kick-out in external-art-control::update (keyed on "rec 0
++              ;; buf2") never fires.  The buffer that already holds the part we
++              ;; are waiting for then stays 'locked forever.  Do exactly what
++              ;; that kick-out would: drop the partner's pending file so it can
++              ;; go 'inactive, unlock us, and let us activate.
++              (+! stall-frames 1)
++              (when (> stall-frames 2)
++                (dotimes (bi 2)
++                  (let ((b (-> *art-control* buffer bi)))
++                    (when (and (= (-> b status) 'locked)
++                               (-> b locked?)
++                               (= (-> b other status) 'active)
++                               (not (and (name= (-> b other load-file) (-> arg0 name))
++                                         (= (-> b other load-file-part) spool-part))))
++                      (format 0 "OTTSEL SPOOL RECOVER: name=~A part=~D evict-buf=~D~%"
++                              (-> arg0 name) spool-part (-> b other index))
++                      (set-pending-file (-> b other) (the-as string #f) -1 (the-as handle #f) SPOOL_PRIORITY_LOWEST)
++                      (update (-> b other))))))
++              (format #t "STALL-ART ~S ~D fs=~A,~A" (-> arg0 name) spool-part
++                      (file-status (-> *art-control* buffer 0) (-> arg0 name) spool-part)
++                      (file-status (-> *art-control* buffer 1) (-> arg0 name) spool-part))
++              (format #t " b0=~S/~D/~S/lk=~A/own=~A" (-> *art-control* buffer 0 load-file) (-> *art-control* buffer 0 load-file-part) (-> *art-control* buffer 0 status) (-> *art-control* buffer 0 locked?) (handle->name (-> *art-control* buffer 0 load-file-owner)))
++              (format #t " b1=~S/~D/~S/lk=~A/own=~A" (-> *art-control* buffer 1 load-file) (-> *art-control* buffer 1 load-file-part) (-> *art-control* buffer 1 status) (-> *art-control* buffer 1 locked?) (handle->name (-> *art-control* buffer 1 load-file-owner)))
++              (format #t " r0=~S/~D/~f r1=~S/~D/~f" (-> *art-control* rec 0 name) (-> *art-control* rec 0 parts) (-> *art-control* rec 0 priority) (-> *art-control* rec 1 name) (-> *art-control* rec 1 parts) (-> *art-control* rec 1 priority))
++              (format #t " r2=~S/~D/~f act=~S~%" (-> *art-control* rec 2 name) (-> *art-control* rec 2 parts) (-> *art-control* rec 2 priority) (-> *art-control* active-stream))
+               (suspend)
+               (if arg1 (ja :num! (loop!)))))
+           (spool-push *art-control* (-> arg0 name) spool-part self -20.0)

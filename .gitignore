@@ -29,3 +29,9 @@ __pycache__/
 # Simulator recordings stay outside the worktree; ignore any accidental copies.
 docs/evidence/**/*.mp4
 docs/evidence/**/*.mov
+# Evidence media stays on local disk; commit the concise markdown record only.
+docs/evidence/**/*.png
+docs/evidence/**/*.jpg
+docs/evidence/**/*.jpeg
+docs/evidence/**/*.gif
+docs/evidence/**/*.wav

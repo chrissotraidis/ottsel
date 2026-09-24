@@ -21,13 +21,11 @@ renderer-integration prototype, not yet a playable mobile game.**
   or bundled game data is claimed. Users supply their own local game data; the
   repository contains no game assets.
 
-The top section of [`docs/STATUS.md`](docs/STATUS.md) is the canonical
-verified/unverified gate board. Read
-[`docs/reports/2026-08-19-ipad-iphone-blocker-investigation.md`](docs/reports/2026-08-19-ipad-iphone-blocker-investigation.md)
-for the source-rooted renderer decision and
-[`docs/BOT33_PROMPT.md`](docs/BOT33_PROMPT.md) for the executable next-builder
-loop. Older S1/S2 documents are retained as evidence history, not current
-product status.
+The current execution plan is [`docs/RECOVERY_GOAL_LOOP.md`](docs/RECOVERY_GOAL_LOOP.md).
+The [September 12 recovery review](docs/reports/2026-09-12-recovery-review.md)
+separates verified progress from source defects and unsupported gameplay claims.
+The top of [`docs/STATUS.md`](docs/STATUS.md) records the current step; older
+boards and numbered BOT prompts remain evidence history.
 
 ## What this repo contains
 - `docs/` — plans, gate board, evidence, audits, and continuation prompts
@@ -46,13 +44,12 @@ product status.
 - At most one runtime executable; no fullscreen test executable
 
 ## Start here
-1. [`docs/STATUS.md`](docs/STATUS.md)
-2. [`docs/reports/2026-08-19-ipad-iphone-blocker-investigation.md`](docs/reports/2026-08-19-ipad-iphone-blocker-investigation.md)
-3. [`docs/BOT33_PROMPT.md`](docs/BOT33_PROMPT.md)
-4. [`docs/15-macos-to-mobile-goal-loop.md`](docs/15-macos-to-mobile-goal-loop.md)
-5. [`docs/macos-settings-and-packaging.md`](docs/macos-settings-and-packaging.md)
-6. [`docs/16-ipados-ios-goal-loop-2026-08-23.md`](docs/16-ipados-ios-goal-loop-2026-08-23.md)
-5. [`docs/13-current-state.md`](docs/13-current-state.md)
+1. [`docs/RECOVERY_GOAL_LOOP.md`](docs/RECOVERY_GOAL_LOOP.md)
+2. [`docs/reports/2026-09-12-recovery-review.md`](docs/reports/2026-09-12-recovery-review.md)
+3. [`docs/STATUS.md`](docs/STATUS.md)
+4. [`docs/16-ipados-ios-goal-loop-2026-08-23.md`](docs/16-ipados-ios-goal-loop-2026-08-23.md)
+5. [`docs/00-phase1-brief.md`](docs/00-phase1-brief.md) and [`docs/05-roadmap.md`](docs/05-roadmap.md)
+6. [`docs/macos-settings-and-packaging.md`](docs/macos-settings-and-packaging.md)
 
 ### macOS test controls
 

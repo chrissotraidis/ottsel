@@ -1,0 +1,163 @@
+--- a/tools/ottsel_a1_1/a11_module_emitter.h
++++ b/tools/ottsel_a1_1/a11_module_emitter.h
+@@ -24,11 +24,14 @@
+ };
+ struct ModuleDistance { uint32_t patch, target; uint8_t target_segment; };
+ struct ModuleSegment {
+-  uint32_t base = 0, size = 0, text = 0;
++  uint32_t base = 0, size = 0, text = 0;  // Original object bounds, never rewritten.
++  bool loaded = true;
+   std::vector<ModuleSlot> slots;
+   std::vector<ModuleDistance> distances;
+ };
++enum class ModuleDebugPolicy { RejectNonempty, ReleaseOmit };
+ struct SignedModule {
++  ModuleDebugPolicy debug_policy = ModuleDebugPolicy::RejectNonempty;
+   std::vector<uint8_t> bytes;
+   std::array<ModuleSegment, 3> segments;
+   uint32_t function_type = 0;
+@@ -41,9 +44,10 @@
+   if (!module_fits(p, 4, b.size())) throw std::runtime_error("truncated object word");
+   uint32_t v; std::memcpy(&v, b.data() + p, 4); return v;
+ }
+-inline SignedModule parse_signed_module(std::vector<uint8_t> bytes, uint32_t function_type) {
++inline SignedModule parse_signed_module(std::vector<uint8_t> bytes, uint32_t function_type,
++                                        ModuleDebugPolicy debug_policy = ModuleDebugPolicy::RejectNonempty) {
+   if (!function_type || (function_type & 3)) throw std::runtime_error("invalid function Type identity");
+-  SignedModule result; result.bytes = std::move(bytes); result.function_type = function_type;
++  SignedModule result; result.debug_policy = debug_policy; result.bytes = std::move(bytes); result.function_type = function_type;
+   const auto& b = result.bytes;
+   if (b.size() > UINT32_MAX) throw std::runtime_error("object exceeds v3 size range");
+   auto u32 = [&](size_t p) { return module_word(b, p); };
+@@ -72,8 +76,11 @@
+           other.base < base + seg.size) throw std::runtime_error("overlapping segments");
+     }
+   }
+-  // This first whole-object path has no optional-debug load policy yet.
+-  if (result.segments[1].size) throw std::runtime_error("unsupported nonempty debug segment");
++  if (debug_policy == ModuleDebugPolicy::RejectNonempty && result.segments[1].size)
++    throw std::runtime_error("unsupported nonempty debug segment");
++  if (debug_policy == ModuleDebugPolicy::ReleaseOmit) result.segments[1].loaded = false;
++  // Still parse and validate EVERY record in the original debug segment below.
++  // Omission affects loaded layout, never source bounds or the authenticated SHA.
+   if (!result.segments[0].text || result.segments[2].text < 8)
+     throw std::runtime_error("missing main/top-level code");
+   for (size_t s = 0; s < 3; ++s) {
+@@ -146,6 +153,8 @@
+         // static_load_f32 uses ADRP + unsigned-immediate LDR S. Its immediate
+         // is scaled by four and the complete scalar must lie in static data.
+         const auto& destination = result.segments[target_seg];
++        if (seg.loaded && !destination.loaded && scalar_float)
++          throw std::runtime_error("unsupported scalar load from omitted debug segment");
+         if (scalar_float && ((target & 3) || target < destination.text ||
+                              !module_fits(target, 4, destination.size)))
+           throw std::runtime_error("invalid scalar LDR target");
+@@ -187,7 +196,7 @@
+   for (size_t i = 0; i < 3; ++i) {
+     data_size = (data_size + 15u) & ~15u;
+     data_offsets[i] = data_offset + data_size;
+-    data_size += module.segments[i].size - module.segments[i].text;
++    if (module.segments[i].loaded) data_size += module.segments[i].size - module.segments[i].text;
+   }
+   if (!data_offset || (data_offset & 15u) ||
+       !module_fits(data_offset, data_size, 128u * 1024u * 1024u))
+@@ -200,10 +209,15 @@
+   auto label = [&](size_t seg, bool data) { return "_ottsel_module_" + name + "_s" + std::to_string(seg) + (data ? "_data" : "_code"); };
+   auto target_label = [&](const ModuleDistance& ref) {
+     const auto& target = module.segments[ref.target_segment];
++    // The mutable release linker discards the source offset entirely for an
++    // absent segment. The native address of GOAL0 is the shared arena base.
++    if (!target.loaded) return std::string("_ottsel_module_arena");
+     bool data = ref.target >= target.text;
+     return label(ref.target_segment, data) + " + " + std::to_string(ref.target - (data ? target.text : 0));
+   };
+-  manifest << "{\n\"schema\":1,\"module\":" << module_json(name)
++  manifest << "{\n\"schema\":" << (module.debug_policy == ModuleDebugPolicy::ReleaseOmit ? 2 : 1)
++           << ",\"debug_policy\":" << module_json(module.debug_policy == ModuleDebugPolicy::ReleaseOmit ? "release-omit" : "reject-nonempty")
++           << ",\"module\":" << module_json(name)
+            << ",\"source_sha256\":" << module_json(module.sha256)
+            << ",\"source_bytes\":" << module.bytes.size()
+            << ",\"required_function_type\":" << module.function_type
+@@ -214,26 +228,31 @@
+   for (size_t s = 0; s < 3; ++s) {
+     const auto& seg = module.segments[s];
+     if (s) manifest << ",\n";
+-    manifest << "{\"id\":" << s << ",\"size\":" << seg.size << ",\"text_size\":" << seg.text
++    const uint32_t loaded_text = seg.loaded ? seg.text : 0;
++    const uint32_t loaded_size = seg.loaded ? seg.size : 0;
++    manifest << "{\"id\":" << s << ",\"size\":" << loaded_size << ",\"text_size\":" << loaded_text
++             << ",\"source_size\":" << seg.size << ",\"source_text_size\":" << seg.text
++             << ",\"loaded\":" << (seg.loaded ? "true" : "false")
+              << ",\"code_label\":" << module_json(label(s, false))
+              << ",\"data_label\":" << module_json(label(s, true))
+              << ",\"data_arena_offset\":" << data_offsets[s] << ",\"slots\":[";
+-    for (size_t i = 0; i < seg.slots.size(); ++i) {
++    for (size_t i = 0; seg.loaded && i < seg.slots.size(); ++i) {
+       const auto& slot = seg.slots[i]; if (i) manifest << ',';
+       const char* kinds[] = {"symbol_offset", "symbol_address", "type_pointer", "immutable_function_tag"};
+       manifest << "{\"offset\":" << slot.offset << ",\"name\":" << module_json(slot.name)
+                << ",\"kind\":" << module_json(kinds[slot.kind]) << ",\"methods\":" << unsigned(slot.methods) << '}';
+     }
+     manifest << "],\"distances\":[";
+-    for (size_t i = 0; i < seg.distances.size(); ++i) {
++    for (size_t i = 0; seg.loaded && i < seg.distances.size(); ++i) {
+       const auto& r = seg.distances[i]; if (i) manifest << ',';
+       manifest << "{\"patch\":" << r.patch << ",\"target_segment\":" << unsigned(r.target_segment)
+-               << ",\"target\":" << r.target << '}';
++               << ",\"target\":" << r.target
++               << ",\"target_policy\":" << module_json(module.segments[r.target_segment].loaded ? "segment" : "goal-zero") << '}';
+     }
+     manifest << "]}";
+     assembly << ".section __GOAL,__text,regular,pure_instructions\n.balign 4\n.globl " << label(s, false) << '\n' << label(s, false) << ":\n";
+     size_t ri = 0;
+-    for (uint32_t off = 0; off < seg.text; off += 4) {
++    for (uint32_t off = 0; off < loaded_text; off += 4) {
+       uint32_t word = module_word(module.bytes, seg.base + off);
+       if (ri < seg.distances.size() && seg.distances[ri].patch == off) {
+         const auto& r = seg.distances[ri++];
+@@ -254,7 +273,7 @@
+     // Runtime restores templates into its explicitly reserved zero-fill span.
+     assembly << ".globl " << label(s, true) << "\n";
+     std::ofstream data(directory / (name + "-s" + std::to_string(s) + "-data.bin"), std::ios::binary);
+-    data.write(reinterpret_cast<const char*>(module.bytes.data() + seg.base + seg.text), seg.size - seg.text);
++    data.write(reinterpret_cast<const char*>(module.bytes.data() + seg.base + seg.text), loaded_size - loaded_text);
+     if (!data) throw std::runtime_error("cannot write data template");
+   }
+   manifest << "\n]}\n";
+@@ -264,17 +283,22 @@
+   arena << ".globl _ottsel_module_arena\n.zerofill __ARENA,__zero,_ottsel_module_arena," << data_offset << ",14\n";
+   for (size_t s = 0; s < 3; ++s) {
+     arena << ".globl " << label(s, true) << "\n.zerofill __ARENA,__zero,"
+-          << label(s, true) << "," << module.segments[s].size - module.segments[s].text << ",4\n";
+-  }
++          << label(s, true) << "," << (module.segments[s].loaded ? module.segments[s].size - module.segments[s].text : 0) << ",4\n";
++  }
++  // The tail's alignment consumes padding too. Subtract its aligned start,
++  // otherwise a final non16-byte template silently grows the arena mapping.
++  const uint32_t tail_offset = (data_offset + data_size + 15u) & ~15u;
++  if (tail_offset > 134217728u) throw std::runtime_error("invalid aligned arena tail");
+   arena << ".zerofill __ARENA,__zero,_ottsel_module_arena_tail,"
+-        << 134217728u - data_offset - data_size << ",4\n";
++        << 134217728u - tail_offset << ",4\n";
+   if (!arena) throw std::runtime_error("cannot write arena layout");
+   std::ofstream original(directory / (name + ".source.o"), std::ios::binary);
+   original.write(reinterpret_cast<const char*>(module.bytes.data()), module.bytes.size());
+   if (!assembly || !manifest || !original) throw std::runtime_error("cannot write module output");
+ }
+ inline int signed_module_cli(int argc, char** argv) {
+-  if (argc != 7) throw std::runtime_error("usage: --module object.o name output-directory function-type-offset reserved-data-offset");
++  if (argc != 7 && argc != 8) throw std::runtime_error("usage: --module object.o name output-directory function-type-offset reserved-data-offset [--release-no-debug]");
++  if (argc == 8 && std::string(argv[7]) != "--release-no-debug") throw std::runtime_error("invalid debug policy");
+   std::ifstream input(argv[2], std::ios::binary);
+   if (!input) throw std::runtime_error("cannot read module object");
+   std::vector<uint8_t> bytes{std::istreambuf_iterator<char>(input), {}};
+@@ -282,7 +306,8 @@
+   if (used != std::strlen(argv[5]) || type > UINT32_MAX) throw std::runtime_error("invalid function Type argument");
+   size_t offset_used = 0; unsigned long offset = std::stoul(argv[6], &offset_used, 0);
+   if (offset_used != std::strlen(argv[6]) || offset > UINT32_MAX) throw std::runtime_error("invalid data reservation argument");
+-  emit_signed_module(parse_signed_module(std::move(bytes), uint32_t(type)), argv[3], argv[4], uint32_t(offset));
++  emit_signed_module(parse_signed_module(std::move(bytes), uint32_t(type),
++      argc == 8 ? ModuleDebugPolicy::ReleaseOmit : ModuleDebugPolicy::RejectNonempty), argv[3], argv[4], uint32_t(offset));
+   return 0;
+ }
+ } // namespace ottsel::a11

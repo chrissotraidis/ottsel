@@ -1,0 +1,203 @@
+diff --git a/goal_src/jak1/kernel/gkernel.gc b/goal_src/jak1/kernel/gkernel.gc
+index 73a056e45..1a13b2378 100644
+--- a/goal_src/jak1/kernel/gkernel.gc
++++ b/goal_src/jak1/kernel/gkernel.gc
+@@ -432,7 +432,10 @@
+          (s1 :reg rbp :type uint)
+          (s2 :reg r10 :type uint)
+          (s3 :reg r11 :type uint)
+-         (s4 :reg r12 :type uint))
++         (s4 :reg r12 :type uint)
++         ;; Ottsel A1.13: the sixth kernel slot (the A1.10 stash) is reclaimed here
++         ;; too, so sp lands on the caller's resume point.
++         (lr :reg x30 :type uint))
+     ;; get the kernel stack pointer as a GOAL pointer (won't use a temp reg)
+     (.load-sym :sext #f sp *kernel-sp*)
+     ;; convert it back to a real pointer
+@@ -444,6 +447,12 @@
+     (.pop :color #f s2)
+     (.pop :color #f s1)
+     (.pop :color #f s0)
++    ;; Ottsel A1.13: pop the resume side's stashed x30 as well.  Five pops land sp on
++    ;; the stash slot ([*kernel-sp* + 0x50]); leaving it there resumed the kernel 0x10
++    ;; low on every dispatch, so the kernel frames drifted into each other's slots.
++    ;; Popping it restores sp == the caller's resume point, and x30 = the stash is the
++    ;; guarded .ret's fallback when the caller's synthetic slot is unreadable.
++    (.pop :color #f lr)
+     ;; return to the kernel function that called the user code
+     ;; rax should still contain the return value.
+     (.ret)))
+@@ -461,7 +470,8 @@
+          (s1 :reg rbp :type uint)
+          (s2 :reg r10 :type uint)
+          (s3 :reg r11 :type uint)
+-         (s4 :reg r12 :type uint))
++         (s4 :reg r12 :type uint)
++         (lr :reg x30 :type uint))
+     ;; first call the deactivate method.
+     (deactivate pp)
+     ;; get the kernel stack pointer as a GOAL pointer
+@@ -475,6 +485,7 @@
+     (.pop :color #f s2)
+     (.pop :color #f s1)
+     (.pop :color #f s0)
++    (.pop :color #f lr) ;; Ottsel A1.13: reclaim the resume side's stash (see return-from-thread)
+     ;; return to the kernel function that called the user code
+     (.ret)))
+ 
+@@ -494,26 +505,39 @@
+ 
+ (defun reset-and-call ((this thread) (func function))
+   "Make the given thread the top thread, reset the stack, and call the function.
+-  Sets up a return trampoline so when the function returns it will return to the
+-  kernel context. Will NOT deactivate on return, so this is intended for temporary threads.
+-  NOTE: this should only be done from the kernel, running on the
+-  kernel's stack."
++   Sets up a return trampoline so when the function returns it will return to the
++   kernel context. Will NOT deactivate on return, so this is intended for temporary threads.
++   NOTE: this should only be done from the kernel, running on the
++   kernel's stack."
+   (declare (asm-func object))
+   (rlet ((pp :reg r13 :type process)
+          (sp :reg rsp :type uint)
++         ;; Ottsel A1.10: return-from-thread/thread-suspend get back to the kernel by
++         ;; reading [*kernel-sp* + 0x50] - exactly where their five .pop s4..s0 end
++         ;; (A1.13: they then pop this stash too, so sp returns to this resume point).
++         ;; That slot used to hold whatever the kernel stack had above the five saved
++         ;; registers.  When the kernel tail-calls the resume hook there is no GOAL
++         ;; synthetic slot there at all and the strict signed-GAME lane measured
++         ;; 0x00000050ffffffff (a GOAL frame local): the guarded .ret rejected it and
++         ;; fell back to its own entry x30, returning into GOAL code with the kernel
++         ;; register file.  x30 at entry IS the kernel continuation (blr sets it), so
++         ;; stash it as the sixth slot and the .ret always finds a real address.
++         (lr :reg x30 :type uint)
+          (off :reg r15 :type uint)
+          (s0 :reg rbx :type uint)
+          (s1 :reg rbp :type uint)
+          (s2 :reg r10 :type uint)
+          (s3 :reg r11 :type uint)
+          (s4 :reg r12 :type uint)
+-         (temp :reg rax :type uint))
++         (temp :reg rax :type uint)
++         )
+     ;; set up the process pointer
+     (set! pp (-> this process))
+     ;; mark the process as running and set its top thread
+     (set! (-> pp status) 'running)
+     (set! (-> pp top-thread) this)
+     ;; save the current kernel regs
++    (.push :color #f lr) ;; A1.10: the kernel continuation the .ret must land on
+     (.push :color #f s0)
+     (.push :color #f s1)
+     (.push :color #f s2)
+@@ -530,6 +554,12 @@
+     (set! temp (the uint return-from-thread))
+     (.add temp off)
+     (.push temp) ;; stack now 16 + 8 aligned
++    ;; Ottsel ARM64 (S2.1): a GOAL function's epilogue returns via its ENTRY
++    ;; x30 (the caller's blr value).  A tail jump (.jr) does not set x30, so
++    ;; the entered function would restore a stale/zero x30 and ret to pc=0.
++    ;; Set x30 to the pushed return trampoline so the entered function
++    ;; returns to return-from-thread, matching the x86 model.
++    (.mov lr temp)
+     ;; and call the function!
+     (.add func off)
+     (.jr func)))
+@@ -555,6 +585,10 @@
+          (s2 :reg r10 :type uint)
+          (s3 :reg r11 :type uint)
+          (s4 :reg r12 :type uint)
++         ;; Ottsel A1.13: the resume side's sixth kernel slot (the A1.10 stash) is
++         ;; reclaimed by the (.pop lr) before the guarded .ret below, so sp returns to
++         ;; the caller's resume point instead of drifting 0x10 lower every dispatch.
++         (lr :reg x30 :type uint)
+          (xmm8 :reg xmm8 :class fpr)
+          (xmm9 :reg xmm9 :class fpr)
+          (xmm10 :reg xmm10 :class fpr)
+@@ -564,7 +598,15 @@
+          (xmm14 :reg xmm14 :class fpr)
+          (xmm15 :reg xmm15 :class fpr))
+     ;; get the return address pushed by "call" in the suspend.
+-    (.pop temp)
++    ;; Ottsel ARM64: read [sp] WITHOUT advancing.  The call shim pushed two
++    ;; 16-byte slots (the incoming x30 and the synthetic post-blr
++    ;; continuation); the saved sp must point at the synthetic slot so the
++    ;; resume's post-blr pops BOTH slots (restoring the caller's x30 and sp).
++    ;; An advancing pop double-pops on resume: sp climbs +16 per dispatch,
++    ;; the observed camera stack climb into the debug-dead-pool region
++    ;; (S2.1 cont 18).  On x86, .load is a plain pop (the x86 shim has no
++    ;; synthetic slot).
++    (.load temp)
+     ;; convert to a GOAL address
+     (.sub temp off)
+     ;; store return address in thread
+@@ -629,6 +671,12 @@
+     (.pop :color #f s2)
+     (.pop :color #f s1)
+     (.pop :color #f s0)
++    ;; Ottsel A1.13: reclaim the resume side's stashed x30 (the sixth kernel slot) so sp
++    ;; returns to the caller's resume point.  Five pops left sp 0x10 low, and every
++    ;; resume then resumed the kernel 0x10 lower: measured, the argument group handed to
++    ;; execute-process-tree's recursion rotated after a few dispatches.  x30 = the stash
++    ;; is also the guarded .ret's fallback if the caller's synthetic slot is unreadable.
++    (.pop :color #f lr)
+     ;; return to the kernel function that called the user code
+     (.ret))
+   (none))
+@@ -649,6 +697,20 @@
+          (s2 :reg r10 :type uint)
+          (s3 :reg r11 :type uint)
+          (s4 :reg r12 :type uint)
++         ;; Ottsel A1.10: thread-suspend returns to the kernel by reading
++         ;; [*kernel-sp* + 0x50] - exactly where its five .pop s4..s0 end (A1.13: it
++         ;; pops this stash too, so sp returns to this resume point).  That
++         ;; slot used to hold whatever the kernel stack had above the five saved
++         ;; registers.  When the kernel tail-calls this resume hook there is no
++         ;; GOAL synthetic slot there at all, and the strict signed-GAME lane
++         ;; measured 0x00000050ffffffff (a GOAL frame local) in it: the guarded
++         ;; .ret rejected it and fell back to its own entry x30, the caller's blr
++         ;; return address (main+0xbf0c), so display-loop resumed with the kernel's
++         ;; register file (pp=0, x19 = a kernel-stack address) and faulted on
++         ;; *display*-relative garbage.  x30 at entry IS the kernel continuation
++         ;; (blr sets it; verified gkernel_s0_code+23892), so stash it as the sixth
++         ;; slot and the .ret always finds a real return address.
++         (lr :reg x30 :type uint)
+          (a4 :reg r8 :type uint)
+          (a5 :reg r9 :type uint)
+          (temp-float :reg xmm0 :class fpr)
+@@ -661,6 +723,7 @@
+          (xmm14 :reg xmm14 :class fpr)
+          (xmm15 :reg xmm15 :class fpr))
+     ;; save the current kernel regs
++    (.push :color #f lr) ;; A1.10: the kernel continuation the .ret must land on
+     (.push :color #f s0)
+     (.push :color #f s1)
+     (.push :color #f s2)
+@@ -1380,8 +1443,8 @@
+                                   (profiler-end-event)
+                                   'dead)
+                                  (else
+-                                  ;; not dead.
+-                                  ;; POST CODE
++                                 ;; not dead.
++                                 ;; POST CODE
+                                   (cond
+                                     ((-> this post-hook)
+                                      ;; Note: use dram stack always. This will allow actors to use the scratchpad stack and get a speedup for trans/code
+@@ -1845,10 +1908,15 @@
+          (off :reg r15 :type uint)
+          (a4 :reg r8 :type uint)
+          (a5 :reg r9 :type uint)
+-         (temp :reg rax))
++         (temp :reg rax)
++         (lr :reg x30 :type uint))
+     (.mov temp return-from-thread-dead)
+     (.add temp off)
+     (.push temp)
++    ;; Ottsel ARM64 (S2.1): see reset-and-call - the tail jump must leave
++    ;; x30 = the pushed trampoline so the entered main code returns to
++    ;; return-from-thread-dead instead of a stale/zero x30.
++    (.mov lr temp)
+     ;; stack is 16 + 8 aligned now
+     (.mov :color #f a0 s1)
+     (.mov :color #f a1 s2)

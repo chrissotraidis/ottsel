@@ -1,0 +1,245 @@
+# a11-goal-bridge-regfile.patch -- the C->GOAL bridges preserve the GOAL register file.
+#
+# Maintenance overlay (Ottsel A1.7). GOAL owns x19-x28 and v8-v15 as its register file
+# (RegisterInfo::make_register_info_arm64; _call_goal_on_stack_asm_arm64 documents it),
+# but _call_goal_asm_arm64 and _call_goal8_asm_arm64 saved only x20/x21/x22 + x29/x30, so a
+# GOAL caller with a live value in x19/x23-x28 lost it across a bridge call.  Measured on
+# the strict signed-GAME lane: display-loop kept disp in x19 and got a host address back,
+# so its frame-buffer chain produced a null dma-buffer and draw-string store SIGBUSed at
+# font seg0 +0x6864.  Fix: preserve the whole set, LIFO and balanced.
+#
+#
+# A1.7c-fix (2026-09-22): _stack_call_arm64 pushed the A1.7c GPR saves AFTER the
+# vector saves while its epilogue still popped the vectors first, so every
+# GOAL->C call through that trampoline restored x19-x28 from the vector save
+# area (and v8-v15 from the GPR slots).  Measured: signed rpc-h call ran with
+# x19=0 after the rpc-call and stored through a null rpc-buffer-pair at ee+0xC.
+# The GPR block now sits immediately after stp q15,q14 in that prologue, so the
+# pop sequence is the exact reverse of the push sequence.
+diff --git a/game/kernel/asm_funcs_arm64.s b/game/kernel/asm_funcs_arm64.s
+index b917a02..209d341 100644
+--- a/game/kernel/asm_funcs_arm64.s
++++ b/game/kernel/asm_funcs_arm64.s
+@@ -24,6 +24,27 @@ _arg_call_arm64:
+   ; Putting an exclamation point after the close-bracket 
+   ; means that the calculated effective address is written back to the base register. (pre-indexing)
+   stp q15, q14, [sp, #-32]!
++  ;; Ottsel A1.7b (diagnostic): record x19 across the GOAL->C++ call so a callee that
++  ;; fails to preserve GOAL's x19 is named in the fault log.  x9/x10 are caller-saved
++  ;; and not argument registers, so the C++ call's argument setup is untouched.
++  adrp x9, _ottsel_cbridge_calls@PAGE
++  add  x9, x9, _ottsel_cbridge_calls@PAGEOFF
++  ldr  x10, [x9]
++  add  x10, x10, #1
++  str  x10, [x9]
++  adrp x9, _ottsel_cbridge_in@PAGE
++  add  x9, x9, _ottsel_cbridge_in@PAGEOFF
++  str  x19, [x9]
++  adrp x9, _ottsel_cbridge_target@PAGE
++  add  x9, x9, _ottsel_cbridge_target@PAGEOFF
++  str  x8, [x9]
++  ;; Ottsel A1.7c: a GOAL->C++ trampoline must leave GOAL's register file (x19-x28,
++  ;; v8-v15) intact even when the C++ callee does not restore x19 itself: measured,
++  ;; jak1::method_set returned with x19 = the heap pointer, 42 times in 7268 calls.
++  stp x19, x23, [sp, #-16]!
++  stp x24, x25, [sp, #-16]!
++  stp x26, x27, [sp, #-16]!
++  str x28, [sp, #-16]!
+   stp q13, q12, [sp, #-32]!
+   stp q11, q10, [sp, #-32]!
+   stp q9, q8, [sp, #-32]!
+@@ -31,8 +52,40 @@ _arg_call_arm64:
+   blr x8
+ 
+   ldp q9, q8, [sp], #32
++  ;; Ottsel A1.7b (diagnostic): a callee that returns with a different x19 leaked it.
++  adrp x9, _ottsel_cbridge_out@PAGE
++  add  x9, x9, _ottsel_cbridge_out@PAGEOFF
++  str  x19, [x9]
++  adrp x9, _ottsel_cbridge_in@PAGE
++  add  x9, x9, _ottsel_cbridge_in@PAGEOFF
++  ldr  x10, [x9]
++  cmp  x19, x10
++  b.eq 4f
++  adrp x9, _ottsel_cbridge_leaks@PAGE
++  add  x9, x9, _ottsel_cbridge_leaks@PAGEOFF
++  ldr  x11, [x9]
++  add  x11, x11, #1
++  str  x11, [x9]
++  adrp x9, _ottsel_cbridge_leak_in@PAGE
++  add  x9, x9, _ottsel_cbridge_leak_in@PAGEOFF
++  str  x10, [x9]
++  adrp x9, _ottsel_cbridge_leak_out@PAGE
++  add  x9, x9, _ottsel_cbridge_leak_out@PAGEOFF
++  str  x19, [x9]
++  adrp x9, _ottsel_cbridge_target@PAGE
++  add  x9, x9, _ottsel_cbridge_target@PAGEOFF
++  ldr  x10, [x9]
++  adrp x9, _ottsel_cbridge_leak_target@PAGE
++  add  x9, x9, _ottsel_cbridge_leak_target@PAGEOFF
++  str  x10, [x9]
++4:
+   ldp q11, q10, [sp], #32
+   ldp q13, q12, [sp], #32
++  ;; Ottsel A1.7c: restore the GOAL register file pushed last (LIFO).
++  ldr x28, [sp], #16
++  ldp x26, x27, [sp], #16
++  ldp x24, x25, [sp], #16
++  ldp x19, x23, [sp], #16
+   ldp q15, q14, [sp], #32
+ 
+   ;; Ottsel H3: the caller stub pushed the C target at [sp] before jumping
+@@ -58,6 +111,13 @@ _stack_call_arm64:
+   ldr x8, [sp, #16]
+ 
+   stp q15, q14, [sp, #-32]!
++  ;; Ottsel A1.7c: a GOAL->C++ trampoline must leave GOAL's register file (x19-x28,
++  ;; v8-v15) intact even when the C++ callee does not restore x19 itself: measured,
++  ;; jak1::method_set returned with x19 = the heap pointer, 42 times in 7268 calls.
++  stp x19, x23, [sp, #-16]!
++  stp x24, x25, [sp, #-16]!
++  stp x26, x27, [sp, #-16]!
++  str x28, [sp, #-16]!
+   stp q13, q12, [sp, #-32]!
+   stp q11, q10, [sp, #-32]!
+   stp q9, q8, [sp, #-32]!
+@@ -72,8 +132,47 @@ _stack_call_arm64:
+ 
+   ; set first argument
+   mov x0, sp
++  ;; Ottsel A1.7b (diagnostic): record x19 across the GOAL->C++ call.
++  adrp x9, _ottsel_cbridge_calls@PAGE
++  add  x9, x9, _ottsel_cbridge_calls@PAGEOFF
++  ldr  x10, [x9]
++  add  x10, x10, #1
++  str  x10, [x9]
++  adrp x9, _ottsel_cbridge_in@PAGE
++  add  x9, x9, _ottsel_cbridge_in@PAGEOFF
++  str  x19, [x9]
++  adrp x9, _ottsel_cbridge_target@PAGE
++  add  x9, x9, _ottsel_cbridge_target@PAGEOFF
++  str  x8, [x9]
+   ; call function
+   blr x8
++  ;; Ottsel A1.7b (diagnostic): a callee that returns with a different x19 leaked it.
++  adrp x9, _ottsel_cbridge_out@PAGE
++  add  x9, x9, _ottsel_cbridge_out@PAGEOFF
++  str  x19, [x9]
++  adrp x9, _ottsel_cbridge_in@PAGE
++  add  x9, x9, _ottsel_cbridge_in@PAGEOFF
++  ldr  x10, [x9]
++  cmp  x19, x10
++  b.eq 4f
++  adrp x9, _ottsel_cbridge_leaks@PAGE
++  add  x9, x9, _ottsel_cbridge_leaks@PAGEOFF
++  ldr  x11, [x9]
++  add  x11, x11, #1
++  str  x11, [x9]
++  adrp x9, _ottsel_cbridge_leak_in@PAGE
++  add  x9, x9, _ottsel_cbridge_leak_in@PAGEOFF
++  str  x10, [x9]
++  adrp x9, _ottsel_cbridge_leak_out@PAGE
++  add  x9, x9, _ottsel_cbridge_leak_out@PAGEOFF
++  str  x19, [x9]
++  adrp x9, _ottsel_cbridge_target@PAGE
++  add  x9, x9, _ottsel_cbridge_target@PAGEOFF
++  ldr  x10, [x9]
++  adrp x9, _ottsel_cbridge_leak_target@PAGE
++  add  x9, x9, _ottsel_cbridge_leak_target@PAGEOFF
++  str  x10, [x9]
++4:
+   ;; BOT24: discard the argument array WITHOUT restoring registers -- the C
+   ;; function's return value is in x0, and the old `ldp x0, x1, [sp], #16`
+   ;; clobbered it with saved arg 0.  GOAL received the first argument as the
+@@ -86,6 +185,11 @@ _stack_call_arm64:
+   ldp q9, q8, [sp], #32
+   ldp q11, q10, [sp], #32
+   ldp q13, q12, [sp], #32
++  ;; Ottsel A1.7c: restore the GOAL register file pushed last (LIFO).
++  ldr x28, [sp], #16
++  ldp x26, x27, [sp], #16
++  ldp x24, x25, [sp], #16
++  ldp x19, x23, [sp], #16
+   ldp q15, q14, [sp], #32
+ 
+   ;; pop our saved frame plus the stub's pushed target
+@@ -193,6 +297,21 @@ _call_goal_asm_arm64:
+   str x22, [sp, #-16]!
+ 
+   ;; x0 - first arg
++  ;; Ottsel A1.7: GOAL's register file is x19-x28 plus v8-v15 (RegisterInfo::
++  ;; make_register_info_arm64; see also _call_goal_on_stack_asm_arm64).  A C->GOAL
++  ;; bridge that preserves only x20-x22 leaves the caller's live x19/x23-x28 to the
++  ;; GOAL callee, which uses them as general registers.  Measured on this lane:
++  ;; display-loop's `disp` (held in x19) came back as a host continuation address,
++  ;; so its frame-buffer chain read a foreign object and handed draw-string a null
++  ;; dma-buffer.  Preserve the whole set.
++  stp x19, x23, [sp, #-16]!
++  stp x24, x25, [sp, #-16]!
++  stp x26, x27, [sp, #-16]!
++  str x28, [sp, #-16]!
++  stp q8, q9, [sp, #-32]!
++  stp q10, q11, [sp, #-32]!
++  stp q12, q13, [sp, #-32]!
++  stp q14, q15, [sp, #-32]!
+   ;; x1 - second arg
+   ;; x2 - third arg
+   ;; x3 - function pointer
+@@ -218,6 +337,17 @@ _call_goal_asm_arm64:
+ 1:
+   add sp, sp, #16
+ 
++  ;; restore saved registers.
++  ;; Ottsel A1.7: restore the GOAL register file pushed last (LIFO), then the
++  ;; bridge's own saved registers.
++  ldp q14, q15, [sp], #32
++  ldp q12, q13, [sp], #32
++  ldp q10, q11, [sp], #32
++  ldp q8, q9, [sp], #32
++  ldr x28, [sp], #16
++  ldp x26, x27, [sp], #16
++  ldp x24, x25, [sp], #16
++  ldp x19, x23, [sp], #16
+   ;; restore saved registers.
+   ldr x22, [sp], #16
+   ldp x20, x21, [sp], #16
+@@ -235,6 +365,21 @@ _call_goal8_asm_arm64:
+   str x22, [sp, #-16]!
+ 
+   ;; x0 - first arg (func)
++  ;; Ottsel A1.7: GOAL's register file is x19-x28 plus v8-v15 (RegisterInfo::
++  ;; make_register_info_arm64; see also _call_goal_on_stack_asm_arm64).  A C->GOAL
++  ;; bridge that preserves only x20-x22 leaves the caller's live x19/x23-x28 to the
++  ;; GOAL callee, which uses them as general registers.  Measured on this lane:
++  ;; display-loop's `disp` (held in x19) came back as a host continuation address,
++  ;; so its frame-buffer chain read a foreign object and handed draw-string a null
++  ;; dma-buffer.  Preserve the whole set.
++  stp x19, x23, [sp, #-16]!
++  stp x24, x25, [sp, #-16]!
++  stp x26, x27, [sp, #-16]!
++  str x28, [sp, #-16]!
++  stp q8, q9, [sp, #-32]!
++  stp q10, q11, [sp, #-32]!
++  stp q12, q13, [sp, #-32]!
++  stp q14, q15, [sp, #-32]!
+   ;; x1 - second arg (arg array)
+   ;; x2 - third arg  (0)
+   ;; x3 - pp (goes in r13)
+@@ -266,6 +411,17 @@ _call_goal8_asm_arm64:
+ 2:
+   add sp, sp, #16
+ 
++  ;; retore registers.
++  ;; Ottsel A1.7: restore the GOAL register file pushed last (LIFO), then the
++  ;; bridge's own saved registers.
++  ldp q14, q15, [sp], #32
++  ldp q12, q13, [sp], #32
++  ldp q10, q11, [sp], #32
++  ldp q8, q9, [sp], #32
++  ldr x28, [sp], #16
++  ldp x26, x27, [sp], #16
++  ldp x24, x25, [sp], #16
++  ldp x19, x23, [sp], #16
+   ;; retore registers.
+   ldr x22, [sp], #16
+   ldp x20, x21, [sp], #16

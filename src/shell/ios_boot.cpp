@@ -1,3 +1,5 @@
+#include "game/kernel/common/ottsel_signed_gstate.h"
+#include "game/kernel/common/ottsel_signed_exports.h"
 // Ottsel S1.3 — no-emit runtime boot driver for iOS.
 //
 // Mirrors the host boot (runtime.cpp + jak1::kboot) minus the subsystems the
@@ -9,6 +11,22 @@
 #include "ios_boot.h"
 #include "goal_pointer_policy.h"
 #include "game/sound/sdshim.h"
+#include "ottsel_fault_state.h"
+
+// Ottsel A1.7b diagnostic: counters written by the GOAL->C++ trampolines in
+// out/jak-project/game/kernel/asm_funcs_arm64.s.  A GOAL->C++ call that returns with a
+// different x19 has clobbered GOAL's register file; the fault handler prints the last one
+// so the offending C++ target can be named.
+extern "C" {
+volatile unsigned long long ottsel_cbridge_calls;
+volatile unsigned long long ottsel_cbridge_in;
+volatile unsigned long long ottsel_cbridge_out;
+volatile unsigned long long ottsel_cbridge_target;
+volatile unsigned long long ottsel_cbridge_leaks;
+volatile unsigned long long ottsel_cbridge_leak_in;
+volatile unsigned long long ottsel_cbridge_leak_out;
+volatile unsigned long long ottsel_cbridge_leak_target;
+}
 
 #include <cstdarg>
 #include <cstdint>
@@ -17,10 +35,17 @@
 #include <csignal>
 #include <algorithm>
 #include <array>
+#include <execinfo.h>
+#include <dlfcn.h>
+#include <mach/mach.h>
+#include <mach/vm_map.h>
+#include <mach-o/dyld.h>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <fcntl.h>
 #include <cstdlib>
+#include <pthread.h>
 #include <set>
 #include <string>
 #include <thread>
@@ -213,15 +238,41 @@ bool user_pack_valid(const fs::path& pack) {
 }
 
 std::string select_ios_iso_data_dir() {
-  g_has_user_data = false;
-  const char* home = std::getenv("HOME");
+  // Ottsel I0 (2026-09-22): the bundle iso_data is the diagnostic fallback and only ever
+  // carries the build own TIT/VI1 DGOs and TEXT.  Name every missing family instead of
+  // letting a consumer hit a missing directory and die with an uncaught filesystem error
+  // (that is what made a fresh install look frozen).
+  auto bundle_data_fallback = [&]() -> std::string {
+    // Only the fallback clears the flag.  Resetting it up front made it oscillate: this function runs again
+    // while a pack is re-imported, and during the remove/rename window a frame saw "no user data" and raised
+    // the status screen - which is uploaded inside a branch that is skipped once the scene is live, so it then
+    // stayed up over the game.
+    g_has_user_data = false;
+    const fs::path bundle = fs::path(g_bundle_dir) / "iso_data";
+    static constexpr const char* bundle_families[] = {"CGO", "DGO", "fr3", "MUS",
+                                                      "SBK", "STR", "TEXT", "VAG", "VIS"};
+    std::error_code check_error;
+    std::string missing;
+    for (const char* family : bundle_families) {
+      if (!fs::is_directory(bundle / family, check_error)) {
+        if (!missing.empty()) missing += ", ";
+        missing += family;
+      }
+    }
+    if (!missing.empty()) {
+      lg::error("OTTSEL F1: bundle data at {} is incomplete (missing: {}); import a user pack "
+                "with scripts/import-ios-user-data.sh", bundle.string(), missing);
+    }
+    return bundle.string();
+  };  const char* home = std::getenv("HOME");
   if (!home || !*home) {
     lg::info("OTTSEL F1: HOME unavailable; using diagnostic bundle data");
-    return g_bundle_dir + "iso_data";
+    return bundle_data_fallback();
   }
   const fs::path imported = fs::path(home) / "Documents" / "OttselUserData";
   const fs::path durable = fs::path(g_writable_dir) / "OttselUserData";
   const fs::path staging = fs::path(g_writable_dir) / "OttselUserData.staging";
+
   auto valid_pack = [](const fs::path& path) {
     try {
       return fs::is_directory(path) && user_pack_valid(path);
@@ -241,7 +292,7 @@ std::string select_ios_iso_data_dir() {
       return durable.string();
     }
     lg::info("OTTSEL F1: no user pack at {}; using diagnostic bundle data", imported.string());
-    return g_bundle_dir + "iso_data";
+    return bundle_data_fallback();
   }
   if (!valid_pack(imported)) {
     if (valid_pack(durable)) {
@@ -250,7 +301,7 @@ std::string select_ios_iso_data_dir() {
       return durable.string();
     }
     lg::error("OTTSEL F1: rejected user pack at {}; using diagnostic bundle data", imported.string());
-    return g_bundle_dir + "iso_data";
+    return bundle_data_fallback();
   }
   std::error_code error;
   fs::remove_all(staging, error);
@@ -528,6 +579,69 @@ void maybe_probe_user_sound_bank(const std::string& iso_data_dir) {
 bool has_user_data_impl() {
   return g_has_user_data;
 }
+// G2.3: the iOS sound path had no VAG dialogue player, so a voicebox hint - which plays a sound named
+// "spool-<line>" - fell through to the sound-bank lookup and was dropped, and the cutscene str-play path never
+// started a stream.  The voice lines are VAG entries in VAG/VAGWAD.<lang> indexed by VAG/VAGDIR.AYB (u32 count,
+// then an 8-byte name and a u32 offset in 2048-byte sectors - measured: entry * 2048 lands exactly on the
+// "VAGp" header for every entry).  The sound engine already knows how to play a VAG sample, so this reads the
+// line and hands it over.  Called from the iOS sound RPC (game/overlord/jak1/srpc.cpp) for "spool-" names.
+namespace {
+struct VagDialogue {
+  bool loaded = false;
+  std::string wad_path;
+  std::map<std::string, u32> entries;  // 8-character name -> sector offset
+  // The engine's voice holds a raw pointer to the sample, so every buffer handed to it stays alive; a line
+  // played again reuses its buffer instead of allocating a second copy.  A small ring is not enough - a long
+  // cutscene line can outlive several later plays, and freeing its buffer under the decoder faulted.
+  std::map<std::string, std::shared_ptr<std::vector<u16>>> keep_alive;
+  // Token of the line the engine is currently playing, so a stop for a different stream cannot cut it short.
+  std::string playing;
+};
+VagDialogue g_vag_dialogue;
+
+bool load_vag_dialogue_directory() {
+  if (g_vag_dialogue.loaded) {
+    return !g_vag_dialogue.entries.empty();
+  }
+  g_vag_dialogue.loaded = true;
+  const std::string dir =
+      g_prepared_iso_data_dir.empty() ? select_ios_iso_data_dir() : g_prepared_iso_data_dir;
+  if (dir.empty()) {
+    lg::warn("OTTSEL AUDIO: VAG dialogue has no data root");
+    return false;
+  }
+  const fs::path root = fs::path(dir) / "VAG";
+  const fs::path dir_path = root / "VAGDIR.AYB";
+  std::error_code error;
+  if (!fs::exists(dir_path, error)) {
+    lg::warn("OTTSEL AUDIO: VAG dialogue directory unavailable {}", dir_path.string());
+    return false;
+  }
+  const auto data = file_util::read_binary_file(dir_path.string());
+  if (data.size() < 4) {
+    lg::warn("OTTSEL AUDIO: VAG dialogue directory too small {} bytes", data.size());
+    return false;
+  }
+  u32 count = 0;
+  memcpy(&count, data.data(), sizeof(count));
+  const size_t capacity = (data.size() - 4) / 12;
+  if (count > capacity) {
+    count = (u32)capacity;
+  }
+  for (u32 i = 0; i < count; i++) {
+    const char* entry = reinterpret_cast<const char*>(data.data() + 4 + (size_t)i * 12);
+    u32 offset = 0;
+    memcpy(&offset, entry + 8, sizeof(offset));
+    g_vag_dialogue.entries.emplace(std::string(entry, 8), offset);
+  }
+  g_vag_dialogue.wad_path = (root / "VAGWAD.ENG").string();
+  lg::info("OTTSEL AUDIO: VAG dialogue directory entries={} wad={}", g_vag_dialogue.entries.size(),
+           g_vag_dialogue.wad_path);
+  return !g_vag_dialogue.entries.empty();
+}
+}  // namespace
+
+
 
 // The gated fault handler may only use async-signal-safe operations.  Keep
 // its formatting local and write directly to the app's fault log and stderr.
@@ -598,6 +712,48 @@ bool safe_read_u32(const volatile void* p, u32* out) {
 // function-pointer resolution bug in the H3 work) must stop with an explicit
 // message in the log instead of a silent crash loop.  This is the S1.3
 // "explicit gated error" fallback, NOT a fix for the underlying defect.
+// S1.4 (2026-09-21, signed-GAME dispatch fault): classify an address by region
+// and name the GOAL symbol slot that holds it. The pre-2026-09-21 scans accepted
+// only the legacy RX code window (kOttselIosGoalCodeOffsetMin..Max), so in a
+// signed-AOT build every query printed below=none even though the symbols
+// existed: signed modules execute from the GOAL module window and their function
+// symbols hold those addresses.
+const char* goal_region_name(u32 off) {
+  if (off == 0) {
+    return " region=zero";
+  }
+  if (ottsel_ios_goal_code_offset_is_valid(off)) {
+    return " region=legacy-code";
+  }
+  if (off < 0x08000000u) {
+    return " region=goal-data";
+  }
+  if (off < 0x80000000u) {
+    return " region=module-window";
+  }
+  return " region=host";
+}
+
+// Bounded symbol-name read for the fault classifier: slot is EE-relative, the
+// name pointer sits at slot + 0x1fffc + 4 and its bytes are EE-relative too.
+void goal_slot_name(u32 slot) {
+  u32 strp = 0;
+  if (!safe_read_u32((volatile u32*)(g_ee_main_mem + slot + 0x1fffc + 4), &strp)) {
+    return;
+  }
+  if (!strp || strp >= 0x08000000) {
+    return;
+  }
+  raw_write_lit(" name:");
+  for (int i = 0; i < 0x20; i += 4) {
+    u32 w = 0;
+    if (safe_read_u32((volatile u32*)(g_ee_main_mem + strp + (uintptr_t)i), &w)) {
+      raw_write_lit(" ");
+      raw_write_hex(w);
+    }
+  }
+}
+
 void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
   ucontext_t* uc = (ucontext_t*)ctx;
   uintptr_t pc = 0;
@@ -611,6 +767,31 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
   raw_write_hex(lr);
   raw_write_lit("\nOTTSEL_IOS: fault sp=");
   raw_write_hex(sp);
+  // Stability instrumentation (2026-09-23): a fault in the app's own host text used to leave only raw
+  // addresses, which cannot be attributed after the fact because the run's slide is unknown.  Name the pc and
+  // lr through dladdr and record the image slide, so a recurrence (or the dump of one already on disk, once
+  // its slide is known) identifies its own site.
+  {
+    const uintptr_t slide = (uintptr_t)_dyld_get_image_vmaddr_slide(0);
+    raw_write_lit("\nOTTSEL_IOS: slide=");
+    raw_write_hex(slide);
+    Dl_info info = {};
+    if (dladdr((void*)pc, &info) && info.dli_sname) {
+      raw_write_lit("\nOTTSEL_IOS: pc symbol=");
+      raw_write_lit(info.dli_sname);
+      raw_write_lit(" offset=");
+      raw_write_hex(pc - (uintptr_t)info.dli_saddr);
+      raw_write_lit(" image=");
+      raw_write_lit(info.dli_fname ? info.dli_fname : "?");
+    }
+    info = {};
+    if (dladdr((void*)lr, &info) && info.dli_sname) {
+      raw_write_lit("\nOTTSEL_IOS: lr symbol=");
+      raw_write_lit(info.dli_sname);
+      raw_write_lit(" offset=");
+      raw_write_hex(lr - (uintptr_t)info.dli_saddr);
+    }
+  }
   if (ottsel_ios_pc_is_in_spu_memory(pc, (uintptr_t)spu_memory, sizeof(spu_memory))) {
     raw_write_lit("\nOTTSEL_IOS: fault target is spu_memory offset=");
     raw_write_dec((unsigned)(pc - (uintptr_t)spu_memory));
@@ -743,7 +924,185 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
       }
     }
   }
+  // A1.6 (2026-09-22) ring auditor v2. A corrupt ring entry is indistinguishable
+  // from a good one by eye, so this scans the WHOLE ring (up to 128 entries) and
+  // classifies both implausibility criteria the strict-dispatch loop selected:
+  //   target    -- a registered signed-module function entry
+  //                (gstate::valid_function) or a signed export-bank entry
+  //                (signed_exports::valid_function). Anything else is BAD-TARGET.
+  //   caller-lr -- the truncated low half of some loaded module's host text. A
+  //                literal 0 is counted separately: the bridge/synthetic-return
+  //                contract leaves x30 clear on some trampoline frames. Anything
+  //                else is BAD-CALLER, i.e. an EE-valued LR.
+  // Measured note: "site" is a HOST address (the recorder ADR), not a GOAL
+  // address, so it is classified as host text rather than as a module range.
+  // Runs only when traced objects fed a ring (idx > 0); a product build never
+  // reaches it and the counters are only printed on the fault path.
+#ifdef OTTSEL_SIGNED_GSTATE_EXPERIMENT
+  {
+    const u64 idx = g_ottsel_call_idx;
+    if (idx) {
+      const size_t mod_count = ottsel::signed_gstate::module_count;
+      const u32 ee_low = (u32)(uintptr_t)g_ee_main_mem;
+      // True when the low 32 bits are the truncated address of some loaded
+      // module's host text (modular so a text range may cross the 2^32 seam).
+      auto hosted = [&](u32 low) {
+        for (size_t m = 0; m < mod_count; m++) {
+          const auto* module = ottsel::signed_gstate::modules[m];
+          if (!module) continue;
+          for (const auto& segment : module->segments) {
+            if (!segment.code || !segment.text_size) continue;
+            const u32 begin = (u32)(uintptr_t)segment.code;
+            if ((u32)(low - begin) < segment.text_size) return true;
+          }
+        }
+        return false;
+      };
+      // Name a GOAL address: module+offset, else export-bank, else its region.
+      auto goal_owner = [&](u32 goal) {
+        bool named = false;
+        for (size_t m = 0; m < mod_count; m++) {
+          const auto* module = ottsel::signed_gstate::modules[m];
+          if (!module) continue;
+          for (const auto& segment : module->segments) {
+            if (!segment.code || !segment.text_size) continue;
+            const uintptr_t begin = (uintptr_t)segment.code;
+            const uintptr_t address = (uintptr_t)g_ee_main_mem + goal;
+            if (address >= begin && address - begin < segment.text_size) {
+              raw_write_lit(module->name);
+              raw_write_lit("+0x");
+              raw_write_hex((u32)(address - begin));
+              named = true;
+            }
+          }
+        }
+        if (!named) {
+          if (ottsel::signed_exports::valid_function(goal)) raw_write_lit("export-bank");
+          else raw_write_lit(goal_region_name(goal));
+        }
+        return named;
+      };
+      const u64 first = idx > 128 ? idx - 128 : 0;
+      u32 entries = 0, mod_fn = 0, bank_fn = 0, bad_target = 0;
+      u32 caller_host = 0, caller_zero = 0, bad_caller = 0, pp_live = 0;
+      for (u64 i = first; i < idx; i++) {
+        const u64 v = g_ottsel_call_trace[(i * 2) & 255];
+        const u64 lr = g_ottsel_call_trace[(i * 2 + 1) & 255];
+        if (!v && !lr) continue;
+        ++entries;
+        const u32 target = (u32)(v & 0xffffffff);
+        const u32 caller = (u32)(lr & 0xffffffff);
+        const u32 pp = (u32)(lr >> 32);
+        if (ottsel::signed_gstate::valid_function(target)) ++mod_fn;
+        else if (ottsel::signed_exports::valid_function(target)) ++bank_fn;
+        else ++bad_target;
+        if (caller == 0) ++caller_zero;
+        else if (hosted(caller)) ++caller_host;
+        else ++bad_caller;
+        if (pp) ++pp_live;
+      }
+      raw_write_lit("OTTSEL_IOS: ring-audit v2 ring=");
+      raw_write_dec((unsigned)(idx > 128 ? 128 : idx));
+      raw_write_lit(" entries=");
+      raw_write_dec(entries);
+      raw_write_lit(" target[mod-fn=");
+      raw_write_dec(mod_fn);
+      raw_write_lit(",bank-fn=");
+      raw_write_dec(bank_fn);
+      raw_write_lit(",BAD=");
+      raw_write_dec(bad_target);
+      raw_write_lit("] caller[host=");
+      raw_write_dec(caller_host);
+      raw_write_lit(",zero=");
+      raw_write_dec(caller_zero);
+      raw_write_lit(",BAD=");
+      raw_write_dec(bad_caller);
+      raw_write_lit("] pp-nonzero=");
+      raw_write_dec(pp_live);
+      raw_write_lit("\n");
+      // Every implausible entry with raw values, bounded to 16 lines.
+      u32 shown = 0;
+      for (u64 i = first; i < idx && shown < 16; i++) {
+        const u64 v = g_ottsel_call_trace[(i * 2) & 255];
+        const u64 lr = g_ottsel_call_trace[(i * 2 + 1) & 255];
+        if (!v && !lr) continue;
+        const u32 site = (u32)(v >> 32);
+        const u32 target = (u32)(v & 0xffffffff);
+        const u32 caller = (u32)(lr & 0xffffffff);
+        const u32 pp = (u32)(lr >> 32);
+        const bool g_fn = ottsel::signed_gstate::valid_function(target);
+        const bool b_fn = g_fn || ottsel::signed_exports::valid_function(target);
+        const bool c_bad = caller != 0 && !hosted(caller);
+        if (b_fn && !c_bad) continue;
+        ++shown;
+        raw_write_lit("  audit age=");
+        raw_write_dec((unsigned)(idx - i));
+        raw_write_lit(" site-host=0x");
+        raw_write_hex(site);
+        raw_write_lit("/goal=0x");
+        raw_write_hex((u32)(site - ee_low));
+        raw_write_lit(" target=0x");
+        raw_write_hex(target);
+        raw_write_lit(" <- ");
+        goal_owner(target);
+        raw_write_lit(" fn=");
+        raw_write_lit(g_fn ? "module" : (b_fn ? "bank" : "NO"));
+        raw_write_lit(" caller=0x");
+        raw_write_hex(caller);
+        raw_write_lit(c_bad ? " BAD-EE?" : (caller ? " host" : " zero"));
+        raw_write_lit(" pp=0x");
+        raw_write_hex(pp);
+        raw_write_lit("\n");
+      }
+    }
+  }
+#endif
   // S2.1 (2026-08-10, corrupt-process-type probe): the faulting dispatch
+  // A1.7/G1.13: the flag and the on-screen frame buffer slots read at the fault
+  // itself. A post-fault snapshot is not trustworthy here: only the faulting thread
+  // is held, so the streamed activation thread keeps mutating GOAL state.
+  {
+    static const char nl17[2] = {10, 0};
+    const auto fs = ottsel_fault_state_read((const unsigned char*)g_ee_main_mem, &safe_read_u32);
+    raw_write_lit("OTTSEL_IOS: a17 debug-segment=0x");
+    raw_write_hex(fs.debug_segment);
+    raw_write_lit(" (compare the x21 register above) display=0x");
+    raw_write_hex(fs.display);
+    raw_write_lit(nl17);
+    raw_write_lit("OTTSEL_IOS: a17 sound-loader-rpc=0x");
+    raw_write_hex(fs.sound_loader_rpc);
+    raw_write_lit(" sound-player-rpc=0x");
+    raw_write_hex(fs.sound_player_rpc);
+    raw_write_lit(nl17);
+    if (fs.display) {
+      raw_write_lit("OTTSEL_IOS: a17 on-screen=");
+      raw_write_dec((unsigned)fs.on_screen);
+      raw_write_lit(" vframe=0x");
+      raw_write_hex(fs.vframe);
+      raw_write_lit(" +0x20=0x");
+      raw_write_hex(fs.b20);
+      raw_write_lit(" +0x24=0x");
+      raw_write_hex(fs.b24);
+      raw_write_lit(" +0x28=0x");
+      raw_write_hex(fs.b28);
+      raw_write_lit(nl17);
+    }
+  }
+  // A1.7b: did any GOAL->C++ call fail to preserve GOAL's x19?  Name it.
+  {
+    static const char nl18[2] = {10, 0};
+    raw_write_lit("OTTSEL_IOS: a18 cbridge calls=");
+    raw_write_dec((unsigned)ottsel_cbridge_calls);
+    raw_write_lit(" leaks=");
+    raw_write_dec((unsigned)ottsel_cbridge_leaks);
+    raw_write_lit(" leak-target=0x");
+    raw_write_hex((uintptr_t)ottsel_cbridge_leak_target);
+    raw_write_lit(" in=0x");
+    raw_write_hex((uintptr_t)ottsel_cbridge_leak_in);
+    raw_write_lit(" out=0x");
+    raw_write_hex((uintptr_t)ottsel_cbridge_leak_out);
+    raw_write_lit(nl18);
+  }
   // (execute-process-tree's run-logic? call) read [this-4] as the type tag and
   // [type+0x40] as the method pointer (x1 at the fault).  Dump the node header
   // and the type object's method slot in-process -- lldb cannot read the
@@ -1310,6 +1669,295 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
       }
     }
   }
+  // S1.4 (2026-09-21): classify the faulting addresses before the older dumps.
+  // In a signed-AOT build the code that faults is often a jump to a GOAL address
+  // that is data (app build 01480677: pc == lr == FAR == 0x181674 with s7 near
+  // 0x18ff40), so the decisive facts are which region the target landed in,
+  // which symbol slot holds it verbatim, and which signed module owns it when it
+  // really is text.
+  {
+    const u32 s7_val = s7.offset;
+    const uintptr_t fpc = uc->uc_mcontext->__ss.__pc;
+    const uintptr_t flr = uc->uc_mcontext->__ss.__lr;
+    const u32 probes[] = {(u32)fpc, (u32)flr, (u32)(fpc - (uintptr_t)g_ee_main_mem),
+                          (u32)(flr - (uintptr_t)g_ee_main_mem)};
+    for (u32 q : probes) {
+      raw_write_lit("OTTSEL_IOS: classify 0x");
+      raw_write_hex(q);
+      raw_write_lit(goal_region_name(q));
+      u32 best = 0;
+      u32 best_slot = 0;
+      u32 exact_slot = 0;
+      u32 exact_value = 0;
+      for (u32 slot = s7_val - 0x10000; slot < s7_val + 0x20000; slot += 8) {
+        u32 v = 0;
+        if (!safe_read_u32((volatile u32*)(g_ee_main_mem + slot), &v) || v < 0x1000) {
+          continue;
+        }
+        if (v == q) {
+          exact_slot = slot;
+          exact_value = v;
+        }
+        if (v <= q && v > best) {
+          best = v;
+          best_slot = slot;
+        }
+      }
+      if (best_slot) {
+        raw_write_lit(" nearest=0x");
+        raw_write_hex(best);
+        goal_slot_name(best_slot);
+      }
+      if (exact_slot) {
+        raw_write_lit(" exact=0x");
+        raw_write_hex(exact_value);
+        raw_write_lit(" slot=0x");
+        raw_write_hex(exact_slot);
+        goal_slot_name(exact_slot);
+      }
+      raw_write_lit("\n");
+    }
+#ifdef OTTSEL_SIGNED_GSTATE_EXPERIMENT
+    for (size_t m = 0; m < ottsel::signed_gstate::module_count; m++) {
+      const auto* module = ottsel::signed_gstate::modules[m];
+      if (!module) {
+        continue;
+      }
+      for (const auto& segment : module->segments) {
+        if (!segment.code || !segment.text_size) {
+          continue;
+        }
+        const uintptr_t begin = (uintptr_t)segment.code;
+        if (fpc >= begin && fpc - begin < segment.text_size) {
+          raw_write_lit("OTTSEL_IOS: pc is signed text of module=");
+          raw_write_lit(module->name);
+          raw_write_lit(" offset=0x");
+          raw_write_hex(fpc - begin);
+          raw_write_lit("\n");
+        }
+      }
+    }
+#endif
+    // S1.4b (2026-09-21): the branch used pc as a host address, so if the value
+    // was meant to be a GOAL/EE offset the real content is at g_ee_main_mem + pc.
+    // A Symbol slot there names what the branch aimed at, which separates
+    // "called a Symbol object instead of its value" from "called code without a
+    // base". Print the base, the EE words, the name probe, and the table test.
+    {
+      const uintptr_t ee = (uintptr_t)g_ee_main_mem;
+      const u32 target = (u32)fpc;
+      raw_write_lit("OTTSEL_IOS: ee-base=0x");
+      raw_write_hex(ee);
+      raw_write_lit(" target=0x");
+      raw_write_hex(target);
+      raw_write_lit(" ee-words:");
+      for (u32 i = 0; i < 16; i += 4) {
+        u32 w = 0;
+        if (safe_read_u32((volatile u32*)(ee + target + i), &w)) {
+          raw_write_lit(" ");
+          raw_write_hex(w);
+        }
+      }
+      raw_write_lit("\n");
+      raw_write_lit("OTTSEL_IOS: target-name-probe");
+      goal_slot_name(target);
+      raw_write_lit("\n");
+      raw_write_lit("OTTSEL_IOS: s7=0x");
+      raw_write_hex(s7.offset);
+      raw_write_lit(" target-in-probed-table=");
+      raw_write_lit(target >= s7.offset - 0x10000 && target < s7.offset + 0x20000 ? "yes" : "no");
+      raw_write_lit("\n");
+    }
+    // S1.4c (2026-09-21): pc == x30 (the link register) at the fault, so the only
+    // way to name the caller is the return chain. x21 is st (EE-relative, the GOAL
+    // stack). Print the stack words that look like code addresses; resolving them
+    // against the modules names the frame that returned into data.
+    {
+      const uintptr_t ee = (uintptr_t)g_ee_main_mem;
+      const u32 st_val = (u32)uc->uc_mcontext->__ss.__x[21];
+      raw_write_lit("OTTSEL_IOS: goal-stack st=0x");
+      raw_write_hex(st_val);
+      raw_write_lit(" code-words:");
+      for (u32 i = 0; i < 0x200; i += 4) {
+        u32 w = 0;
+        if (safe_read_u32((volatile u32*)(ee + st_val + i), &w) && w >= 0x08000000u) {
+          raw_write_lit(" +0x");
+          raw_write_hex(i);
+          raw_write_lit("=0x");
+          raw_write_hex(w);
+        }
+      }
+      raw_write_lit("\n");
+      // S1.4e: where does the bad target sit on the GOAL stack? A copy in a
+      // saved-link-register slot is the corruption; a copy in an argument slot
+      // is a leaked argument.
+      raw_write_lit("OTTSEL_IOS: target-on-goal-stack:");
+      for (u32 i = 0; i < 0x400; i += 4) {
+        u32 w = 0;
+        if (safe_read_u32((volatile u32*)(ee + st_val + i), &w) && w == (u32)fpc) {
+          raw_write_lit(" +0x");
+          raw_write_hex(i);
+        }
+      }
+      raw_write_lit("\n");
+      // S1.4f: the CPU stack (sp) is the real frame stack; x21 is the symbol
+      // table base in this port. Locate the bad target on the CPU stack.
+      const uintptr_t csp = (uintptr_t)uc->uc_mcontext->__ss.__sp;
+      raw_write_lit("OTTSEL_IOS: target-on-cpu-stack:");
+      for (u32 i = 0; i < 0x1000; i += 4) {
+        u32 w = 0;
+        if (safe_read_u32((volatile u32*)(csp + i), &w) && w == (u32)fpc) {
+          raw_write_lit(" +0x");
+          raw_write_hex(i);
+        }
+      }
+      raw_write_lit("\n");
+      // S1.4g: the bad value sits at [sp], which is exactly where IR_AsmRet
+      // reads its continuation (ldr x30, [sp]; ret). Dump the words there so the
+      // entry path that left a non-continuation in that slot is identifiable:
+      // vector-save data means the export bridge, code addresses mean a GOAL
+      // frame, symbol/offset values mean a build-time record.
+      raw_write_lit("OTTSEL_IOS: sp-words:");
+      for (u32 i = 0; i < 0x40; i += 4) {
+        u32 w = 0;
+        if (safe_read_u32((volatile u32*)(csp + i), &w)) {
+          raw_write_lit(" 0x");
+          raw_write_hex(w);
+        }
+      }
+      raw_write_lit("\n");
+#ifdef OTTSEL_SIGNED_GSTATE_EXPERIMENT
+      // S1.4h: name every CPU-stack word that lies inside signed module text, so
+      // the frame that left the bad value in x30 is identifiable without lldb.
+      for (u32 i = 0; i < 0x400; i += 4) {
+        u32 w = 0;
+        if (!safe_read_u32((volatile u32*)(csp + i), &w) || !w) {
+          continue;
+        }
+        for (size_t m = 0; m < ottsel::signed_gstate::module_count; m++) {
+          const auto* module = ottsel::signed_gstate::modules[m];
+          if (!module) {
+            continue;
+          }
+          bool hit = false;
+          for (const auto& segment : module->segments) {
+            if (!segment.code || !segment.text_size) {
+              continue;
+            }
+            const uintptr_t begin = (uintptr_t)segment.code;
+            const uintptr_t address = (uintptr_t)g_ee_main_mem + w;
+            if (address >= begin && address - begin < segment.text_size) {
+              raw_write_lit("OTTSEL_IOS: sp+0x");
+              raw_write_hex(i);
+              raw_write_lit(" in ");
+              raw_write_lit(module->name);
+              raw_write_lit("+0x");
+              raw_write_hex(address - begin);
+              raw_write_lit("\n");
+              hit = true;
+              break;
+            }
+          }
+          if (hit) {
+            break;
+          }
+        }
+      }
+      // S1.4i: walk the GOAL frame chain. The faulting frame has its previous sp
+      // at [sp+0x10] (= sp+0x60 in the 2026-09-21 crash), so each link names the
+      // caller; print per frame the first words (the slot IR_AsmRet reads is
+      // [frame]), the saved-frame slot, and every code word resolved to a module.
+      {
+        uintptr_t frame = csp;
+        const uintptr_t stack_top = (uintptr_t)g_ee_main_mem + 0x8000000;
+        for (int depth = 0; depth < 24; depth++) {
+          u32 w0 = 0, w1 = 0, w2 = 0, w3 = 0, saved = 0;
+          if (!safe_read_u32((volatile u32*)(frame), &w0)) {
+            break;
+          }
+          safe_read_u32((volatile u32*)(frame + 4), &w1);
+          safe_read_u32((volatile u32*)(frame + 8), &w2);
+          safe_read_u32((volatile u32*)(frame + 12), &w3);
+          safe_read_u32((volatile u32*)(frame + 16), &saved);
+          raw_write_lit("OTTSEL_IOS: frame[");
+          raw_write_dec((unsigned)depth);
+          raw_write_lit("] +0x");
+          raw_write_hex(frame - csp);
+          raw_write_lit(" [0]=0x");
+          raw_write_hex(w0);
+          raw_write_lit(" [4]=0x");
+          raw_write_hex(w1);
+          raw_write_lit(" [8]=0x");
+          raw_write_hex(w2);
+          raw_write_lit(" [c]=0x");
+          raw_write_hex(w3);
+          raw_write_lit(" prev=0x");
+          raw_write_hex(saved);
+          raw_write_lit("\n");
+          // The GOAL frame stores its caller sp as the low 32 bits of the host
+          // address, so rebuild it inside the current frame's 4 GiB region.
+          const uintptr_t next = (frame & 0xffffffff00000000ull) | (uintptr_t)saved;
+          if (next <= frame || next >= stack_top) {
+            break;
+          }
+          frame = next;
+        }
+      }
+#endif
+    }
+    // S1.4d (2026-09-21): name the C/C++ frames of the faulting thread. The seam
+    // that loses the GOAL base lives in a hand-written shim, so the symbol name is
+    // the answer; scan the host stack for words inside this app's image.
+    {
+      const uintptr_t sp0 = (uintptr_t)uc->uc_mcontext->__ss.__sp;
+      int printed = 0;
+      for (u32 i = 0; i < 0x1000 && printed < 16; i += 8) {
+        u32 lo = 0;
+        u32 hi = 0;
+        if (!safe_read_u32((volatile u32*)(sp0 + i), &lo)) {
+          continue;
+        }
+        if (!safe_read_u32((volatile u32*)(sp0 + i + 4), &hi)) {
+          continue;
+        }
+        const uint64_t value = (uint64_t(hi) << 32) | lo;
+        if (value < 0x100000000ull || value > 0x10ffffffffull) {
+          continue;
+        }
+        // Only executable pages are return addresses; data pointers on the stack
+        // (arenas, manifests, globals) are not part of the chain.
+        {
+          vm_address_t page = (vm_address_t)(value & ~0xffffull);
+          vm_size_t size = 0;
+          vm_region_basic_info_data_64_t info{};
+          mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+          mach_port_t object = MACH_PORT_NULL;
+          const kern_return_t result = vm_region_64(mach_task_self(), &page, &size,
+                                                    VM_REGION_BASIC_INFO_64,
+                                                    reinterpret_cast<vm_region_info_t>(&info),
+                                                    &count, &object);
+          if (object != MACH_PORT_NULL) {
+            mach_port_deallocate(mach_task_self(), object);
+          }
+          if (result != KERN_SUCCESS || !(info.protection & VM_PROT_EXECUTE)) {
+            continue;
+          }
+        }
+        Dl_info info{};
+        if (dladdr(reinterpret_cast<void*>(value), &info) && info.dli_fname &&
+            std::strstr(info.dli_fname, "OttselShell")) {
+          raw_write_lit("OTTSEL_IOS: host-frame 0x");
+          raw_write_hex(value);
+          raw_write_lit(" ");
+          raw_write_lit(info.dli_sname ? info.dli_sname : "?");
+          raw_write_lit("+0x");
+          raw_write_hex(info.dli_saddr ? value - (uintptr_t)info.dli_saddr : 0);
+          raw_write_lit("\n");
+          printed++;
+        }
+      }
+    }
+  }
   // S2.1 (2026-08-10, link-phase fault probe): the fault pc is inside a
   // transient top-level segment; dump the runtime-patched code words around pc
   // and lr so the dispatch (ADRP/ADD/load/blr chain) can be decoded without
@@ -1426,12 +2074,26 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
   // the process + state objects (type names included) from the app's own
   // memory so the null state/enter can be identified without lldb (which
   // cannot read the EE mapping reliably).
+  // 2026-09-21 correction: this block used to name the caller enter-state
+  // unconditionally because the S2.2 fault (2026-08-15) had lr inside the legacy
+  // code window. In app build 01480677 the same wording was printed for an lr of
+  // 0x181674, which resolves to no symbol at all and is not legacy code, so the
+  // evidence was read as an enter-state dispatch that never happened. Only claim
+  // enter-state when lr really is legacy GOAL code; otherwise dump the raw
+  // x20/pp register alone.
   {
     const u32 ee = 0;
     const u32 pp_val = (u32)uc->uc_mcontext->__ss.__x[20];
-    raw_write_lit("OTTSEL_IOS: enter-state pp=x20=0x");
-    raw_write_hex(pp_val);
-    raw_write_lit("\n");
+    const u32 lr_off = (u32)(uc->uc_mcontext->__ss.__lr - (uintptr_t)g_ee_main_mem);
+    if (ottsel_ios_goal_code_offset_is_valid(lr_off)) {
+      raw_write_lit("OTTSEL_IOS: enter-state pp=x20=0x");
+      raw_write_hex(pp_val);
+      raw_write_lit("\n");
+    } else {
+      raw_write_lit("OTTSEL_IOS: fault x20(pp)=0x");
+      raw_write_hex(pp_val);
+      raw_write_lit(" (lr is not legacy GOAL code: this is not an enter-state dispatch)\n");
+    }
     // Helper lambdas are not async-signal-safe; inline the reads.
     const u32 slots[] = {0x34, 0x48, 0x28, 0x2c};
     for (u32 off : slots) {
@@ -1731,6 +2393,103 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
   }
 #endif
 #endif
+  // A1.2/A1.5 (2026-09-22): the strict signed-GAME crash recurses into
+  // execute-process-tree with 'this' = a module-data (arena) object address (the
+  // static kernel-context), so a process-tree link fed the walk a cell whose
+  // content cannot be a process.  The direct value scan is stable; the earlier
+  // DFS chased a healthy *active-pool* tree and then walked the symbol table
+  // through a "no child" link, so it is replaced by owner identification: for
+  // each non-stack hit, print the 0x20-aligned block around it and resolve every
+  // symbol-looking word, which names the object whose field holds that address.
+  // Fault path only, bounded to eight hits and one mincore per page.
+  {
+    const u32 page_u32 = (u32)sysconf(_SC_PAGESIZE);
+    auto rd = [&](u32 off, u32* out) {
+      return safe_read_u32((volatile u32*)(g_ee_main_mem + off), out);
+    };
+    // GOAL basic name: the string pointer lives at symbol + SYM_TO_STRING_OFFSET.
+    auto name_of = [&](u32 sym) {
+      u32 strp = 0;
+      if (!sym || sym >= 0x08000000u) { raw_write_lit("?"); return; }
+      if (!rd(sym + 0x20000u, &strp) || !strp || strp >= 0x08000000u) {
+        raw_write_lit("?");
+        return;
+      }
+      u32 len = 0;
+      if (!rd(strp, &len) || len == 0 || len > 40) { raw_write_lit("?"); return; }
+      raw_write_lit("<<");
+      for (u32 i = 0; i < len; i++) {
+        u32 w = 0;
+        if (!rd(strp + 4 + i, &w)) break;
+        const char c = (char)(w & 0xff);
+        if (c < 0x20 || c > 0x7e) break;
+        char one[2] = {c, 0};
+        raw_write_lit(one);
+      }
+      raw_write_lit(">>");
+    };
+    auto print_context = [&](u32 at) {
+      for (int k = -4; k < 4; k++) {
+        if (k < 0 && at < (u32)(-k * 4)) break;
+        u32 v = 0;
+        if (rd((u32)(at + k * 4), &v)) {
+          raw_write_lit(k == 0 ? " [" : " ");
+          raw_write_hex(v);
+          if (k == 0) raw_write_lit("]");
+        }
+      }
+    };
+    auto scan_value = [&](u32 needle, const char* label) {
+      if (!needle || needle >= 0x08000000u) return;
+      int hits = 0;
+      raw_write_lit("\nOTTSEL_IOS: scan ");
+      raw_write_lit(label);
+      raw_write_lit("=0x");
+      raw_write_hex(needle);
+      raw_write_lit(" hits:");
+      for (u32 base = 0; base < 0x08000000u && hits < 8; base += page_u32) {
+        char vec = 0;
+        if (mincore((void*)(uintptr_t)(g_ee_main_mem + base), page_u32, &vec) != 0 ||
+            (vec & 1) == 0) {
+          continue;
+        }
+        for (u32 off = 0; off < page_u32; off += 4) {
+          const u32 at = base + off;
+          if (*(volatile u32*)(g_ee_main_mem + at) != needle) continue;
+          raw_write_lit("\nOTTSEL_IOS:   hit@0x");
+          raw_write_hex(at);
+          raw_write_lit(" ctx:");
+          print_context(at);
+          if (at >= 0x20u) {
+            const u32 blk = (at - 0x20u) & ~0x1fu;
+            u32 w[8] = {0};
+            for (int i = 0; i < 8; i++) rd(blk + (u32)i * 4, &w[i]);
+            raw_write_lit("\nOTTSEL_IOS:     blk@0x");
+            raw_write_hex(blk);
+            raw_write_lit(":");
+            for (int i = 0; i < 8; i++) {
+              raw_write_lit(" 0x");
+              raw_write_hex(w[i]);
+            }
+            for (int i = 0; i < 8; i++) {
+              if (w[i] >= 0x180000u && w[i] < 0x200000u) {
+                raw_write_lit("\nOTTSEL_IOS:       w[");
+                raw_write_dec((unsigned)(i * 4));
+                raw_write_lit("]=0x");
+                raw_write_hex(w[i]);
+                raw_write_lit(" name=");
+                name_of(w[i]);
+              }
+            }
+          }
+          if (++hits >= 8) break;
+        }
+      }
+      raw_write_lit("\n");
+    };
+    scan_value((u32)uc->uc_mcontext->__ss.__x[24], "this(x24)");
+    scan_value((u32)uc->uc_mcontext->__ss.__x[0], "child(x0)");
+  }
   raw_write_lit("OTTSEL_IOS BOOT FAILED (gated): signal ");
   raw_write_dec((unsigned)sig);
   raw_write_lit(" at pc=");
@@ -1755,6 +2514,26 @@ void gated_signal_handler(int sig, siginfo_t* info, void* ctx) {
 #endif
   // S2.1 debug: hold the process alive at the fault so lldb can attach and
   // unwind the faulting thread (the jump source is one step behind pc).
+  // S1 (2026-09-15, VI1 oracle fault): capture the faulting thread's native
+  // backtrace so the exact caller chain is named offline via atos. Raw
+  // addresses only; resolved against the installed OttselShell image.
+  {
+    void* addrs[48];
+    const int depth = backtrace(addrs, 48);
+    raw_write_lit("OTTSEL_IOS: native backtrace depth=");
+    raw_write_dec((unsigned)depth);
+    raw_write_lit(depth > 0 ? "\n" : " (none)\n");
+    for (int i = 0; i < depth; i++) {
+      raw_write_lit("OTTSEL_IOS:   bt[");
+      raw_write_dec((unsigned)i);
+      raw_write_lit("]=0x");
+      raw_write_hex((uintptr_t)addrs[i]);
+      raw_write_lit("\n");
+    }
+    raw_write_lit("OTTSEL_IOS: fault thread=0x");
+    raw_write_hex((uintptr_t)pthread_self());
+    raw_write_lit("\n");
+  }
   raw_write_lit("OTTSEL_IOS: HELD AT FAULT for lldb attach (pid ");
   raw_write_dec((unsigned)getpid());
   raw_write_lit(")\n");
@@ -1805,6 +2584,93 @@ std::string ottsel_ios_writable_dir() {
   return g_writable_dir;
 }
 
+bool ottsel_ios_play_vag_dialogue(const char* line_name) {
+  if (!line_name || !line_name[0] || !load_vag_dialogue_directory()) {
+    return false;
+  }
+  // Bounded diagnostic, off by default: `ottsel-trace-vag-off` suppresses the dialogue player so an A/B can
+  // show what the lines contribute to the output rather than only that the engine accepted the voice.
+  static int vag_off = -1;
+  if (vag_off < 0) {
+    vag_off = access((ottsel_ios_writable_dir() + "ottsel-trace-vag-off").c_str(), F_OK) == 0 ? 1 : 0;
+  }
+  if (vag_off) {
+    return false;
+  }
+  // The game sends the line as "spool-<name>"; uppercase and pad to the directory's 8 characters.
+  std::string key(line_name, strnlen(line_name, 8));
+  for (char& c : key) {
+    if (c >= 'a' && c <= 'z') {
+      c -= 0x20;
+    }
+  }
+  key.resize(8, ' ');
+  const auto found = g_vag_dialogue.entries.find(key);
+  if (found == g_vag_dialogue.entries.end()) {
+    lg::warn("OTTSEL AUDIO: VAG dialogue line missing name='{}'", key);
+    return false;
+  }
+  std::ifstream wad(g_vag_dialogue.wad_path, std::ios::binary);
+  if (!wad) {
+    lg::warn("OTTSEL AUDIO: VAG dialogue wad unavailable {}", g_vag_dialogue.wad_path);
+    return false;
+  }
+  wad.seekg((std::streamoff)found->second * 2048);
+  std::array<u8, 48> header{};
+  wad.read(reinterpret_cast<char*>(header.data()), (std::streamsize)header.size());
+  if (wad.gcount() != (std::streamsize)header.size() || memcmp(header.data(), "VAGp", 4) != 0) {
+    lg::warn("OTTSEL AUDIO: VAG dialogue header invalid name='{}' sector={}", key, found->second);
+    return false;
+  }
+  const u32 data_bytes = ((u32)header[0x0c] << 24) | ((u32)header[0x0d] << 16) |
+                         ((u32)header[0x0e] << 8) | (u32)header[0x0f];
+  const u32 sample_rate = ((u32)header[0x10] << 24) | ((u32)header[0x11] << 16) |
+                          ((u32)header[0x12] << 8) | (u32)header[0x13];
+  constexpr u32 kMaxDialogueBytes = 8 * 1024 * 1024;
+  if (data_bytes == 0 || data_bytes > kMaxDialogueBytes) {
+    lg::warn("OTTSEL AUDIO: VAG dialogue invalid size name='{}' bytes={}", key, data_bytes);
+    return false;
+  }
+  const u32 padded_bytes = (data_bytes + 15) & ~15u;
+  auto sample = std::make_shared<std::vector<u16>>(padded_bytes / sizeof(u16), 0);
+  wad.read(reinterpret_cast<char*>(sample->data()), (std::streamsize)padded_bytes);
+  if (wad.gcount() != (std::streamsize)padded_bytes) {
+    lg::warn("OTTSEL AUDIO: VAG dialogue short read name='{}' bytes={}", key, padded_bytes);
+    return false;
+  }
+  // The last ADPCM block carries the end-of-sample flag, exactly as the VAG probe sets it.
+  if (sample->size() >= 8) {
+    sample->at(sample->size() - 8) |= 0x0100;
+  }
+  g_vag_dialogue.keep_alive[key] = sample;
+  const bool started = snd_StartVAGProbeShared(sample, (u32)sample->size(), sample_rate);
+  if (started) {
+    g_vag_dialogue.playing = key;
+  }
+  lg::info("OTTSEL AUDIO: VAG dialogue name='{}' sector={} bytes={} rate={} started={}", key,
+           found->second, data_bytes, sample_rate, started ? 1 : 0);
+  return started;
+}
+
+// G2.3: a stop names one stream.  Stopping whatever is playing would cut a different line short - the lane
+// showed a play and a stop in the same second - so only the line the engine is playing is stopped.
+void ottsel_ios_stop_vag_dialogue(const char* token8) {
+  std::string key(token8 ? token8 : "", strnlen(token8 ? token8 : "", 8));
+  for (char& c : key) {
+    if (c >= 'a' && c <= 'z') {
+      c -= 0x20;
+    }
+  }
+  key.resize(8, ' ');
+  if (g_vag_dialogue.playing != key) {
+    lg::info("OTTSEL AUDIO: VAG dialogue stop ignored name='{}' playing='{}'", key,
+             g_vag_dialogue.playing);
+    return;
+  }
+  g_vag_dialogue.playing.clear();
+  snd_StopVAGProbeShared();
+  lg::info("OTTSEL AUDIO: VAG dialogue stopped name='{}'", key);
+}
 void ottsel_ios_stop_dispatch() {
   MasterExit = RuntimeExitStatus::EXIT;
 }
@@ -1890,7 +2756,7 @@ extern "C" void ottsel_ios_load_kernel_from_bundle() {
   ottsel_ios_link_cgo_from_bundle("KERNEL.CGO");
 }
 
-void ottsel_ios_run_boot() {
+static void ottsel_ios_run_boot_impl() {
   install_gated_signal_handlers();
 
   // Ottsel A1.1 (evidence captured): the real KERNEL.CGO slice proof runs
@@ -1900,8 +2766,12 @@ void ottsel_ios_run_boot() {
   // ottsel_run_a11_slice_proof();
 
   // ---- EE memory map (same as the host runtime, OTTSEL no-emit) ----
+#ifdef OTTSEL_SIGNED_GSTATE_EXPERIMENT
+  g_ee_main_mem = ottsel::signed_gstate::prepare_arena();
+#else
   g_ee_main_mem = (u8*)mmap((void*)EE_MAIN_MEM_MAP, EE_MAIN_MEM_SIZE, PROT_READ | PROT_WRITE,
                             MAP_ANONYMOUS | MAP_PRIVATE, 0, 0);
+#endif
   if (g_ee_main_mem == MAP_FAILED) {
     gated_fail("mmap of EE main memory failed");
   }
@@ -2022,5 +2892,18 @@ void ottsel_ios_run_boot() {
     lg::info("OTTSEL_IOS: kernel dispatch loop exited cleanly");
   } else {
     gated_fail("jak1::InitMachine returned an error");
+  }
+}
+
+// Ottsel I0 (2026-09-22): the boot thread body runs inside a guard so a missing data
+// family (or any other filesystem error) reports by name instead of terminating the
+// process with an uncaught exception and no fault log.
+void ottsel_ios_run_boot() {
+  try {
+    ottsel_ios_run_boot_impl();
+  } catch (const std::exception& error) {
+    lg::error("OTTSEL BOOT: uncaught exception (data or filesystem): {}", error.what());
+    lg::error("OTTSEL BOOT: if a game-data family is missing, import a pack with "
+              "scripts/import-ios-user-data.sh <udid> [pack]");
   }
 }

@@ -1,0 +1,22 @@
+diff --git a/game/kernel/jak1/kboot.cpp b/game/kernel/jak1/kboot.cpp
+--- a/game/kernel/jak1/kboot.cpp
++++ b/game/kernel/jak1/kboot.cpp
+@@ -131,7 +131,17 @@
+  * Main loop to dispatch the GOAL kernel.
+  */
+ void KernelCheckAndDispatch() {
+-  u64 goal_stack = u64(g_ee_main_mem) + EE_MAIN_MEM_SIZE -
++  // Ottsel A1.14: the kernel's stack must not share the region that C->GOAL
++  // activations anchor at.  kboot, klink's link_and_exec and the signed loader
++  // all enter GOAL code at EE_MAIN_MEM_SIZE - 16.  A deep activation (the signed
++  // villagep-obs type/method install, ~0x1e0 bytes) that ran while the kernel was
++  // suspended overwrote the kernel's live frames, and the suspend side then read
++  // the clobbered slots and jumped into the stack (A1.13 fault: pc = the kernel
++  // stack top, SIGBUS, after `served obj 1 (oracle)`).  Keep the kernel 64 KiB
++  // below the top so every activation owns the top of EE memory; the kernel's
++  // frames only ever grow into the free EE tail.
++  constexpr u64 kActivationStackReserve = 0x10000;  // 64 KiB
++  u64 goal_stack = u64(g_ee_main_mem) + EE_MAIN_MEM_SIZE - kActivationStackReserve -
+ #ifdef __aarch64__
+                       // ARM64 stp/ldp and vector spills require 16-byte SP alignment.
+                       16;

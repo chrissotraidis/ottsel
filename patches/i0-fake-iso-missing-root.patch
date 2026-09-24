@@ -1,0 +1,28 @@
+diff --git a/game/overlord/common/fake_iso.cpp b/game/overlord/common/fake_iso.cpp
+--- a/game/overlord/common/fake_iso.cpp
++++ b/game/overlord/common/fake_iso.cpp
+@@ -64,6 +64,24 @@
+                             ? file_util::get_jak_project_dir() / "out" /
+                                   game_version_names[g_game_version] / "iso"
+                             : fs::path(g_fake_iso_root);
++  // Ottsel I0 (2026-09-22): a fresh install with no imported user pack resolves the sound
++  // root to a missing <bundle>/iso_data/SBK, and ghc::filesystem's throwing
++  // directory_iterator then unwinds out of a C++ consumer that the GOAL asm bridges
++  // reached (they carry no unwind info), so the process aborts with no diagnosis at all.
++  // Report the missing root and take the callers' documented "< 0" failure path instead:
++  // the lane then runs without sound instead of dying on a data-staging mistake.
++  std::error_code root_error;
++  if (!fs::is_directory(root, root_error)) {
++    // The sound loader retries its bank RPC, so report the root once instead of
++    // once per retry (a missing family already costs the lane its sound).
++    static bool root_reported = false;
++    if (!root_reported) {
++      root_reported = true;
++      lg::error("[FAKEISO] no readable root {}: {}; sound data is unavailable",
++                root.string(), root_error.message());
++    }
++    return -1;
++  }
+   for (const auto& f : fs::directory_iterator(root)) {
+     if (f.is_regular_file() || f.is_symlink()) {
+       ASSERT(fake_iso_entry_count < MAX_ISO_FILES);

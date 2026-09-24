@@ -1,0 +1,709 @@
+diff --git a/game/kernel/common/ottsel_signed_gstate.cpp b/game/kernel/common/ottsel_signed_gstate.cpp
+index 504e38b12..92cb5d20e 100644
+--- a/game/kernel/common/ottsel_signed_gstate.cpp
++++ b/game/kernel/common/ottsel_signed_gstate.cpp
+@@ -33,6 +33,11 @@ std::vector<uint8_t> loaded;
+   std::fprintf(stderr, "SIGNED GSTATE EXPERIMENT rejected: %s\n", reason);
+   std::abort();
+ }
++[[noreturn]] void failf(const char* reason, const char* name) {
++  char message[192];
++  std::snprintf(message, sizeof(message), "%s: %s", reason, name ? name : "");
++  fail(message);
++}
+ void require(bool condition, const char* reason) { if (!condition) fail(reason); }
+ uint32_t offset(const void* pointer) {
+   const uintptr_t p = reinterpret_cast<uintptr_t>(pointer);
+@@ -154,17 +159,22 @@ void validate_module(const Manifest& manifest) {
+   }
+ }
+ // The generated registry is any distinct non-empty ordered list whose final
+-// entry is the gstate main; its array order is the required load order, so the
+-// loader carries no KERNEL-specific names or module counts.
++// entry used to be the gstate main. GAME lists must load KERNEL gstate after
++// dgo-h and before GAME members, so gstate may appear anywhere in the array.
++// Array order remains the required load order.
+ void validate_layout() {
+   require(module_count >= 1, "invalid module count");
+-  require(modules[module_count - 1] == &manifest && !std::strcmp(manifest.name, "gstate"),
+-          "missing canonical Gstate manifest");
++  bool have_gstate = false;
+   for (size_t i = 0; i < module_count; ++i) {
+     require(modules[i] && modules[i]->name && modules[i]->name[0], "invalid empty module name");
++    if (modules[i] == &manifest) {
++      require(!std::strcmp(manifest.name, "gstate"), "canonical Gstate manifest name mismatch");
++      have_gstate = true;
++    }
+     for (size_t j = 0; j < i; ++j)
+       require(std::strcmp(modules[i]->name, modules[j]->name), "duplicate module name");
+   }
++  require(have_gstate, "missing canonical Gstate manifest");
+   for (size_t i = 0; i < module_count; ++i) {
+     const auto& current = *modules[i];
+     require(current.arena == manifest.arena && current.arena_size == manifest.arena_size &&
+@@ -255,10 +265,17 @@ bool link(const uint8_t* bytes, const char* name, int32_t size, uint32_t flags,
+   if (!name) return false;
+   size_t selected = 0;
+   while (selected < module_count && std::strcmp(name, modules[selected]->name)) ++selected;
+-  if (selected == module_count) return false;
+-  const Manifest& manifest = *modules[selected];
+-  require(prepared && (selected == 0 || loaded[selected - 1]), "signed module order mismatch");
+-  require(jump_from_c_to_goal && heap == kglobalheap.offset, "requires C entry and global heap");
++ if (selected == module_count) return false;
++ const Manifest& manifest = *modules[selected];
++  // GAME.CGO repeats some names as art after the code member. The signed
++  // registry is the code body; a later same-name payload is not this module.
++  if (loaded[selected] && (!bytes || size <= 0 || uint32_t(size) != manifest.source_size))
++    return false;
++ require(prepared && (selected == 0 || loaded[selected - 1]), "signed module order mismatch");
++  // GOAL streamed loads call link/link-begin with the level heap. Signed code
++  // is already in the arena; heap is only authenticated as a caller cookie.
++  (void)jump_from_c_to_goal;
++  (void)heap;
+   require(prepared && g_ee_main_mem == manifest.arena && !loaded[selected], "arena mismatch or duplicate module load");
+   require(bytes && size > 0 && uint32_t(size) == manifest.source_size, "source size mismatch");
+   unsigned char digest[CC_SHA256_DIGEST_LENGTH]; char hex[65];
+@@ -268,14 +285,31 @@ bool link(const uint8_t* bytes, const char* name, int32_t size, uint32_t flags,
+   require(*(s7 + jak1_symbols::FIX_SYM_FUNCTION_TYPE) == manifest.function_type, "bootstrap function Type mismatch");
+   // Explicit bounded normal KERNEL load contract. Other modes fail closed.
+   require(!MasterDebug && (!manifest.release_debug || !DebugSegment) && (flags & LINK_FLAG_EXECUTE) &&
+-          !(flags & ~(LINK_FLAG_EXECUTE | LINK_FLAG_OUTPUT_LOAD | LINK_FLAG_PRINT_LOGIN)),
++          !(flags & ~(LINK_FLAG_EXECUTE | LINK_FLAG_OUTPUT_LOAD | LINK_FLAG_OUTPUT_TRUE |
++                      LINK_FLAG_PRINT_LOGIN | LINK_FLAG_FORCE_FAST_LINK)),
+           "unsupported signed module debug/link mode");
+   validate_layout();
+   struct Write { uint8_t* address; uint32_t value; };
+   std::vector<Write> writes;
++  // A1.10: create this module's slot names before writing any slot, so a slot can never
++  // resolve to s7 (the #f symbol) merely because the name is defined by this same module
++  // and its top-level has not run yet.  Symptom without this: signed gsound's
++  // *sound-loader-rpc* slot was written as 0, the module's code then dispatched a method
++  // on #f, and the callee stored into a null object field at rpc-h seg0 +2232.
++  for (const auto& segment : manifest.segments)
++    for (size_t i = 0; i < segment.slot_count; ++i) {
++      const auto& slot = segment.slots[i];
++      if (slot.kind == SlotKind::FunctionTag || slot.kind == SlotKind::TypePointer) continue;
++      auto reserved = jak1::intern_from_c(slot.name);
++      if (!reserved.offset) failf("slot name did not intern", slot.name);
++    }
+   // Capture existing resolutions; diagnostic reads must not intern new symbols.
+   const char* diagnostic_names[] = {"inherit-state", "enter-state", "send-event-function", "looping-code", "state"};
+   uint32_t diagnostic_symbols[5] = {};
++  for (size_t i = 0; i < 5; ++i) {
++    auto diagnostic = jak1::find_symbol_from_c(diagnostic_names[i]);
++    if (diagnostic.offset) diagnostic_symbols[i] = diagnostic.offset;
++  }
+   for (const auto& segment : manifest.segments) {
+     for (size_t i = 0; i < segment.slot_count; ++i) {
+       const auto& slot = segment.slots[i]; if (slot.kind == SlotKind::FunctionTag) continue;
+@@ -283,8 +317,7 @@ bool link(const uint8_t* bytes, const char* name, int32_t size, uint32_t flags,
+       if (slot.kind == SlotKind::TypePointer) value = jak1::intern_type_from_c(slot.name, slot.methods).offset;
+       else {
+         auto sym = jak1::intern_from_c(slot.name);
+-        for (size_t i = 0; i < 5; ++i)
+-          if (!std::strcmp(slot.name, diagnostic_names[i])) diagnostic_symbols[i] = sym.offset;
++        if (!sym.offset) failf("signed slot intern failed", slot.name);
+         value = slot.kind == SlotKind::SymbolAddress ? sym.offset : sym.offset - s7.offset;
+       }
+       writes.push_back({segment.data + slot.offset - segment.text_size, value});
+@@ -298,6 +331,22 @@ bool link(const uint8_t* bytes, const char* name, int32_t size, uint32_t flags,
+   for (const auto& segment : manifest.segments)
+     if (segment.data_size) std::memcpy(segment.data, segment.initial_data, segment.data_size);
+   for (const auto& write : writes) std::memcpy(write.address, &write.value, 4);
++  // A1.1 diagnostic (2026-09-22): the strict signed-GAME crash leaves x30 at the
++  // village-cam Symbol address (0x181674) inside the module top-level. Print the
++  // five written slot words plus the Symbol and its value so the app's runtime
++  // values can be compared with the host lane, where the same loader passes.
++  if (!std::strcmp(name, "villagep-obs")) {
++    auto find_sym = jak1::find_symbol_from_c("village-cam");
++    const auto& s2 = manifest.segments[2];
++    const uint32_t* words = reinterpret_cast<const uint32_t*>(s2.data);
++    u32 sym_value = 0;
++    if (find_sym.offset) {
++      sym_value = *Ptr<u32>(find_sym.offset);
++    }
++    lg::info("OTTSEL VILLAGECAM: sym=0x{:x} value=0x{:x} w196=0x{:x} w204=0x{:x} w212=0x{:x} w224=0x{:x} w228=0x{:x} s7=0x{:x}",
++             find_sym.offset, sym_value, words[196 / 4], words[204 / 4], words[212 / 4],
++             words[224 / 4], words[228 / 4], s7.offset);
++  }
+   loaded[selected] = true;  // Never blindly replay a partially executed top-level.
+   *entry = offset(manifest.segments[2].code + 4);
+   require(valid_function(*entry), "top is not a registered signed function");
+diff --git a/game/kernel/common/ottsel_signed_gstate.h b/game/kernel/common/ottsel_signed_gstate.h
+index b11ca7010..1fc0824e2 100644
+--- a/game/kernel/common/ottsel_signed_gstate.h
++++ b/game/kernel/common/ottsel_signed_gstate.h
+@@ -24,7 +24,7 @@ struct Manifest {
+ };
+ #ifdef OTTSEL_SIGNED_GSTATE_EXPERIMENT
+ extern const Manifest manifest;  // Gstate compatibility identity.
+-extern const Manifest* const modules[];  // Generated ordered activation list, gstate last.
++extern const Manifest* const modules[];  // Generated ordered activation list; includes gstate.
+ extern const size_t module_count;
+ size_t loaded_count();
+ uint8_t* prepare_arena();
+diff --git a/game/kernel/jak1/kscheme.cpp b/game/kernel/jak1/kscheme.cpp
+index 548b148a6..fd96c1dc7 100644
+--- a/game/kernel/jak1/kscheme.cpp
++++ b/game/kernel/jak1/kscheme.cpp
+@@ -1113,6 +1113,10 @@ Ptr<Symbol> intern_from_c(const char* name) {
+   }
+ 
+   // otherwise, a new symbol!
++  if (!symbol_slot) {
++    printf("[ERROR] symbol table full while interning %s\n", name ? name : "");
++    std::abort();
++  }
+   symbol = Ptr<Symbol>(symbol_slot);
+   // set type tag
+   symbol.cast<u32>().c()[-1] = *(s7 + FIX_SYM_SYMBOL_TYPE);
+@@ -1349,6 +1353,18 @@ u64 type_typep(Ptr<Type> t1, Ptr<Type> t2) {
+  */
+ u64 method_set(u32 type_, u32 method_id, u32 method) {
+   Ptr<Type> type(type_);
++  // A1.1 diagnostic (2026-09-22): the strict signed-GAME crash leaves the village-cam
++  // Symbol address (0x181674) in x30 and its method value in the frame, which is the
++  // shape of a method-set! call whose type argument is a Symbol instead of a Type.
++  // Type objects live in the heap and Symbol objects in the symbol table, so log any
++  // call whose type argument lands in the symbol-table window.
++  {
++    static int reported = 0;
++    if (type_ >= 0x160000 && type_ < 0x1a0000 && reported < 32) {
++      reported++;
++      lg::info("OTTSEL METHODSET-SYMBOL: type=0x{:x} id={} method=0x{:x}", type_, method_id, method);
++    }
++  }
+   if (type->symbol.offset && !strcmp(info(type->symbol)->str->data(), "cspace")) {
+     lg::info("OTTSEL S2.1 cspace method-set id={} method=0x{:x} existing=0x{:x} enable={}",
+              method_id, method, type->get_method(method_id).offset, *EnableMethodSet);
+diff --git a/game/sce/sif_ee.cpp b/game/sce/sif_ee.cpp
+index 4fbe696a8..33a85ef78 100644
+--- a/game/sce/sif_ee.cpp
++++ b/game/sce/sif_ee.cpp
+@@ -184,12 +184,17 @@ s32 sceSifCallRpc(sceSifClientData* bd,
+                   void* end_para) {
+ #ifdef OTTSEL_IOS
+   ottsel_refresh_sound_info();
++  // The GAME host fixture has no IOP thread and links desktop overlord
++  // RPC_Loader, which calls GetThreadId() on a null IOP. Product iOS uses
++  // the mobile loader in srpc.cpp instead. Keep the IRX handshake below.
++#ifndef OTTSEL_SIGNED_GAMEDATA_TEST
+   if (bd == g_ottsel_player_rpc_bd && send && ssize > 0) {
+     jak1::RPC_Player(fno, send, ssize);
+   }
+   if (bd == g_ottsel_loader_rpc_bd && send && ssize > 0) {
+     jak1::RPC_Loader(fno, send, ssize);
+   }
++#endif
+   // Ottsel S2.1: no IOP thread on iOS; the OVERLORD/sound RPC protocol is
+   // inert (IOP_Kernel::sif_rpc is a no-op stub).  GOAL calls the sound
+   // loader with mode 0 (sync), so the upstream `mode == 1` assert cannot
+diff --git a/game/sound/989snd/player.cpp b/game/sound/989snd/player.cpp
+index 912ae32bc..c677524af 100644
+--- a/game/sound/989snd/player.cpp
++++ b/game/sound/989snd/player.cpp
+@@ -4,6 +4,8 @@
+ 
+ #include <algorithm>
+ #include <chrono>
++#include <cmath>
++#include <cstdio>
+ #include <cstdlib>
+ #include <cstring>
+ #include <fstream>
+@@ -15,6 +17,8 @@
+ 
+ #ifdef __APPLE__
+ #include <SDL3/SDL.h>
++// Defined by the iOS product shell; declared at file scope so it keeps external linkage.
++extern std::string ottsel_ios_writable_dir();
+ #endif
+ 
+ #ifdef _WIN32
+@@ -46,6 +50,118 @@ struct ApplePlaybackState {
+ };
+ 
+ ApplePlaybackState g_apple_playback;
++
++// Ottsel I2 (2026-09-22): bounded proof of audibility.  The lane's sound requests are already visible in
++// the log, but "a request resolved" is not "signal came out of the substrate".  With
++// OTTSEL_AUDIO_DUMP=<seconds> set, the PCM the callback actually hands to the SDL stream is written once to
++// <writable>ottsel-audio-dump.wav in the stream's own format (S16, stereo, 48 kHz) and one peak/RMS line is
++// logged per second of captured audio.  Without the variable nothing is opened, written or logged.
++struct AudioDumpState {
++  std::mutex mutex;
++  bool announced = false;
++  bool finished = false;
++  FILE* file = nullptr;
++  u64 frames_total = 0;
++  u64 frames_target = 0;
++  u64 frames_in_window = 0;
++  int window_peak = 0;
++  double window_energy = 0.0;
++};
++
++AudioDumpState g_audio_dump;
++
++void audio_dump_put_u32(u8* p, u32 v) {
++  p[0] = v & 0xff;
++  p[1] = (v >> 8) & 0xff;
++  p[2] = (v >> 16) & 0xff;
++  p[3] = (v >> 24) & 0xff;
++}
++
++void audio_dump_put_u16(u8* p, u16 v) {
++  p[0] = v & 0xff;
++  p[1] = (v >> 8) & 0xff;
++}
++
++// 44-byte canonical WAV header for the SDL stream's format.  Written once with a zero length and rewritten
++// when the capture completes, so a half-written file is still readable.
++void audio_dump_write_header(FILE* file, u32 data_bytes) {
++  const u16 channels = 2;
++  const u32 sample_rate = 48000;
++  const u16 bits = 16;
++  const u16 block_align = channels * (bits / 8);
++  const u32 byte_rate = sample_rate * block_align;
++  u8 header[44] = {};
++  std::memcpy(header + 0, "RIFF", 4);
++  audio_dump_put_u32(header + 4, 36 + data_bytes);
++  std::memcpy(header + 8, "WAVE", 4);
++  std::memcpy(header + 12, "fmt ", 4);
++  audio_dump_put_u32(header + 16, 16);
++  audio_dump_put_u16(header + 20, 1);
++  audio_dump_put_u16(header + 22, channels);
++  audio_dump_put_u32(header + 24, sample_rate);
++  audio_dump_put_u32(header + 28, byte_rate);
++  audio_dump_put_u16(header + 32, block_align);
++  audio_dump_put_u16(header + 34, bits);
++  std::memcpy(header + 36, "data", 4);
++  audio_dump_put_u32(header + 40, data_bytes);
++  std::fseek(file, 0, SEEK_SET);
++  std::fwrite(header, 1, sizeof(header), file);
++  std::fseek(file, 0, SEEK_END);
++}
++
++void audio_dump_capture(const s16Output* buffer, int frames) {
++  std::scoped_lock lock(g_audio_dump.mutex);
++  if (!g_audio_dump.announced) {
++    g_audio_dump.announced = true;
++    const char* env = std::getenv("OTTSEL_AUDIO_DUMP");
++    const double seconds = env ? std::atof(env) : 0.0;
++    if (seconds > 0.0) {
++      g_audio_dump.frames_target = static_cast<u64>(seconds * 48000.0);
++      const std::string path = ottsel_ios_writable_dir() + "ottsel-audio-dump.wav";
++      g_audio_dump.file = std::fopen(path.c_str(), "wb");
++      lg::info("OTTSEL AUDIO PCM: dump path='{}' target-frames={}", path,
++               g_audio_dump.frames_target);
++    }
++  }
++  if (!g_audio_dump.file || g_audio_dump.finished) {
++    return;
++  }
++  if (!g_audio_dump.frames_total) {
++    audio_dump_write_header(g_audio_dump.file, 0);
++  }
++  for (int i = 0; i < frames; ++i) {
++    const s16 values[2] = {buffer[i].left, buffer[i].right};
++    for (const s16 sample : values) {
++      const int value = sample;
++      const int magnitude = value < 0 ? -value : value;
++      if (magnitude > g_audio_dump.window_peak) {
++        g_audio_dump.window_peak = magnitude;
++      }
++      g_audio_dump.window_energy += static_cast<double>(value) * static_cast<double>(value);
++    }
++  }
++  std::fwrite(buffer, sizeof(s16Output), static_cast<size_t>(frames), g_audio_dump.file);
++  g_audio_dump.frames_total += static_cast<u64>(frames);
++  g_audio_dump.frames_in_window += static_cast<u64>(frames);
++  if (g_audio_dump.frames_in_window >= 48000) {
++    const double rms = std::sqrt(g_audio_dump.window_energy /
++                                 static_cast<double>(g_audio_dump.frames_in_window) / 2.0);
++    lg::info("OTTSEL AUDIO PCM: second={} peak={} rms={:.0f}",
++             g_audio_dump.frames_total / 48000, g_audio_dump.window_peak, rms);
++    g_audio_dump.window_peak = 0;
++    g_audio_dump.window_energy = 0.0;
++    g_audio_dump.frames_in_window = 0;
++  }
++  if (g_audio_dump.frames_total >= g_audio_dump.frames_target) {
++    g_audio_dump.finished = true;
++    const u32 data_bytes = static_cast<u32>(g_audio_dump.frames_total * sizeof(s16Output));
++    audio_dump_write_header(g_audio_dump.file, data_bytes);
++    std::fclose(g_audio_dump.file);
++    g_audio_dump.file = nullptr;
++    lg::info("OTTSEL AUDIO PCM: dump complete frames={} bytes={}", g_audio_dump.frames_total,
++             data_bytes);
++  }
++}
+ }  // namespace
+ #endif
+ 
+@@ -372,6 +488,8 @@ void Player::sdl_sound_callback(void* user,
+     } else {
+       std::memset(buffer, 0, static_cast<size_t>(frames) * sizeof(s16Output));
+     }
++    // Ottsel I2: capture what is really handed to the stream, silence included.
++    audio_dump_capture(buffer, frames);
+     if (!SDL_PutAudioStreamData(stream, buffer, frames * static_cast<int>(sizeof(s16Output)))) {
+       lg::error("OTTSEL AUDIO: SDL playback callback failed: {}", SDL_GetError());
+       return;
+diff --git a/goal_src/jak1/engine/camera/cam-update.gc b/goal_src/jak1/engine/camera/cam-update.gc
+index 1247f4fb7..9fe443fc0 100644
+--- a/goal_src/jak1/engine/camera/cam-update.gc
++++ b/goal_src/jak1/engine/camera/cam-update.gc
+@@ -167,6 +167,11 @@
+ ;; four frames instead of turning the per-frame camera update into a log flood.
+ (define *ottsel-camera-update-trace-left* 0)
+ 
++;; BOT62: bounded per-frame trace of the player's world position.  Armed at the
++;; same continue-point handoff as the camera trace so a movement experiment can
++;; distinguish "Jak translated through the world" from "the camera orbited".
++(define *ottsel-target-trace-left* 0)
++
+ (matrix-identity! *save-camera-inv-rot*)
+ 
+ (defun move-camera-from-pad ((arg0 math-camera))
+diff --git a/goal_src/jak1/engine/target/target-death.gc b/goal_src/jak1/engine/target/target-death.gc
+index 4250f463c..d4ea84393 100644
+--- a/goal_src/jak1/engine/target/target-death.gc
++++ b/goal_src/jak1/engine/target/target-death.gc
+@@ -138,6 +138,7 @@
+                  (-> (-> *camera-combiner* inv-camera-rot vector 0) z))
+          (set! *ottsel-camera-update-trace-left* 4)
+          (set! *ottsel-camera-rotate-trace-left* 4)
++         (set! *ottsel-target-trace-left* 2400)
+          (send-event *camera* 'change-target self)
+          (send-event *camera* 'no-intro)
+          (send-event *camera* 'clear-entity)
+diff --git a/goal_src/jak1/kernel/gkernel.gc b/goal_src/jak1/kernel/gkernel.gc
+index d638df30b..1a13b2378 100644
+--- a/goal_src/jak1/kernel/gkernel.gc
++++ b/goal_src/jak1/kernel/gkernel.gc
+@@ -432,7 +432,10 @@
+          (s1 :reg rbp :type uint)
+          (s2 :reg r10 :type uint)
+          (s3 :reg r11 :type uint)
+-         (s4 :reg r12 :type uint))
++         (s4 :reg r12 :type uint)
++         ;; Ottsel A1.13: the sixth kernel slot (the A1.10 stash) is reclaimed here
++         ;; too, so sp lands on the caller's resume point.
++         (lr :reg x30 :type uint))
+     ;; get the kernel stack pointer as a GOAL pointer (won't use a temp reg)
+     (.load-sym :sext #f sp *kernel-sp*)
+     ;; convert it back to a real pointer
+@@ -444,6 +447,12 @@
+     (.pop :color #f s2)
+     (.pop :color #f s1)
+     (.pop :color #f s0)
++    ;; Ottsel A1.13: pop the resume side's stashed x30 as well.  Five pops land sp on
++    ;; the stash slot ([*kernel-sp* + 0x50]); leaving it there resumed the kernel 0x10
++    ;; low on every dispatch, so the kernel frames drifted into each other's slots.
++    ;; Popping it restores sp == the caller's resume point, and x30 = the stash is the
++    ;; guarded .ret's fallback when the caller's synthetic slot is unreadable.
++    (.pop :color #f lr)
+     ;; return to the kernel function that called the user code
+     ;; rax should still contain the return value.
+     (.ret)))
+@@ -461,7 +470,8 @@
+          (s1 :reg rbp :type uint)
+          (s2 :reg r10 :type uint)
+          (s3 :reg r11 :type uint)
+-         (s4 :reg r12 :type uint))
++         (s4 :reg r12 :type uint)
++         (lr :reg x30 :type uint))
+     ;; first call the deactivate method.
+     (deactivate pp)
+     ;; get the kernel stack pointer as a GOAL pointer
+@@ -475,6 +485,7 @@
+     (.pop :color #f s2)
+     (.pop :color #f s1)
+     (.pop :color #f s0)
++    (.pop :color #f lr) ;; Ottsel A1.13: reclaim the resume side's stash (see return-from-thread)
+     ;; return to the kernel function that called the user code
+     (.ret)))
+ 
+@@ -494,13 +505,24 @@
+ 
+ (defun reset-and-call ((this thread) (func function))
+   "Make the given thread the top thread, reset the stack, and call the function.
+-  Sets up a return trampoline so when the function returns it will return to the
+-  kernel context. Will NOT deactivate on return, so this is intended for temporary threads.
+-  NOTE: this should only be done from the kernel, running on the
+-  kernel's stack."
++   Sets up a return trampoline so when the function returns it will return to the
++   kernel context. Will NOT deactivate on return, so this is intended for temporary threads.
++   NOTE: this should only be done from the kernel, running on the
++   kernel's stack."
+   (declare (asm-func object))
+   (rlet ((pp :reg r13 :type process)
+          (sp :reg rsp :type uint)
++         ;; Ottsel A1.10: return-from-thread/thread-suspend get back to the kernel by
++         ;; reading [*kernel-sp* + 0x50] - exactly where their five .pop s4..s0 end
++         ;; (A1.13: they then pop this stash too, so sp returns to this resume point).
++         ;; That slot used to hold whatever the kernel stack had above the five saved
++         ;; registers.  When the kernel tail-calls the resume hook there is no GOAL
++         ;; synthetic slot there at all and the strict signed-GAME lane measured
++         ;; 0x00000050ffffffff (a GOAL frame local): the guarded .ret rejected it and
++         ;; fell back to its own entry x30, returning into GOAL code with the kernel
++         ;; register file.  x30 at entry IS the kernel continuation (blr sets it), so
++         ;; stash it as the sixth slot and the .ret always finds a real address.
++         (lr :reg x30 :type uint)
+          (off :reg r15 :type uint)
+          (s0 :reg rbx :type uint)
+          (s1 :reg rbp :type uint)
+@@ -508,13 +530,14 @@
+          (s3 :reg r11 :type uint)
+          (s4 :reg r12 :type uint)
+          (temp :reg rax :type uint)
+-         (lr :reg x30 :type uint))
++         )
+     ;; set up the process pointer
+     (set! pp (-> this process))
+     ;; mark the process as running and set its top thread
+     (set! (-> pp status) 'running)
+     (set! (-> pp top-thread) this)
+     ;; save the current kernel regs
++    (.push :color #f lr) ;; A1.10: the kernel continuation the .ret must land on
+     (.push :color #f s0)
+     (.push :color #f s1)
+     (.push :color #f s2)
+@@ -562,6 +585,10 @@
+          (s2 :reg r10 :type uint)
+          (s3 :reg r11 :type uint)
+          (s4 :reg r12 :type uint)
++         ;; Ottsel A1.13: the resume side's sixth kernel slot (the A1.10 stash) is
++         ;; reclaimed by the (.pop lr) before the guarded .ret below, so sp returns to
++         ;; the caller's resume point instead of drifting 0x10 lower every dispatch.
++         (lr :reg x30 :type uint)
+          (xmm8 :reg xmm8 :class fpr)
+          (xmm9 :reg xmm9 :class fpr)
+          (xmm10 :reg xmm10 :class fpr)
+@@ -644,6 +671,12 @@
+     (.pop :color #f s2)
+     (.pop :color #f s1)
+     (.pop :color #f s0)
++    ;; Ottsel A1.13: reclaim the resume side's stashed x30 (the sixth kernel slot) so sp
++    ;; returns to the caller's resume point.  Five pops left sp 0x10 low, and every
++    ;; resume then resumed the kernel 0x10 lower: measured, the argument group handed to
++    ;; execute-process-tree's recursion rotated after a few dispatches.  x30 = the stash
++    ;; is also the guarded .ret's fallback if the caller's synthetic slot is unreadable.
++    (.pop :color #f lr)
+     ;; return to the kernel function that called the user code
+     (.ret))
+   (none))
+@@ -664,6 +697,20 @@
+          (s2 :reg r10 :type uint)
+          (s3 :reg r11 :type uint)
+          (s4 :reg r12 :type uint)
++         ;; Ottsel A1.10: thread-suspend returns to the kernel by reading
++         ;; [*kernel-sp* + 0x50] - exactly where its five .pop s4..s0 end (A1.13: it
++         ;; pops this stash too, so sp returns to this resume point).  That
++         ;; slot used to hold whatever the kernel stack had above the five saved
++         ;; registers.  When the kernel tail-calls this resume hook there is no
++         ;; GOAL synthetic slot there at all, and the strict signed-GAME lane
++         ;; measured 0x00000050ffffffff (a GOAL frame local) in it: the guarded
++         ;; .ret rejected it and fell back to its own entry x30, the caller's blr
++         ;; return address (main+0xbf0c), so display-loop resumed with the kernel's
++         ;; register file (pp=0, x19 = a kernel-stack address) and faulted on
++         ;; *display*-relative garbage.  x30 at entry IS the kernel continuation
++         ;; (blr sets it; verified gkernel_s0_code+23892), so stash it as the sixth
++         ;; slot and the .ret always finds a real return address.
++         (lr :reg x30 :type uint)
+          (a4 :reg r8 :type uint)
+          (a5 :reg r9 :type uint)
+          (temp-float :reg xmm0 :class fpr)
+@@ -676,6 +723,7 @@
+          (xmm14 :reg xmm14 :class fpr)
+          (xmm15 :reg xmm15 :class fpr))
+     ;; save the current kernel regs
++    (.push :color #f lr) ;; A1.10: the kernel continuation the .ret must land on
+     (.push :color #f s0)
+     (.push :color #f s1)
+     (.push :color #f s2)
+diff --git a/goal_src/jak1/levels/title/title-obs.gc b/goal_src/jak1/levels/title/title-obs.gc
+index a25a47af8..65ae86e0b 100644
+--- a/goal_src/jak1/levels/title/title-obs.gc
++++ b/goal_src/jak1/levels/title/title-obs.gc
+@@ -669,15 +669,19 @@
+       ;; og:preserve-this PAL patch here
+       (when (cpad-pressed? 0 start)
+         (format 0
+-                "OTTSEL TITLE: start edge in title-wait abs=~x rel=~x progress=~A~%"
++                "OTTSEL TITLE: start edge in title-wait abs=~x rel=~x progress=~A busy=~A~%"
+                 (-> *cpad-list* cpads 0 button0-abs 0)
+                 (-> *cpad-list* cpads 0 button0-rel 0)
+-                *progress-process*)
++                *progress-process*
++                (-> *art-control* active-stream))
+         (set-setting! 'allow-progress #t 0.0 0)
+         (apply-settings *setting-control*)
+         (activate-progress *dproc* (progress-screen title))
+         (set-setting! 'allow-progress #f 0.0 0)
+-        (apply-settings *setting-control*))
++        (apply-settings *setting-control*)
++        (format 0 "OTTSEL TITLE: activate-progress returned progress=~A master=~A~%"
++                *progress-process*
++                *master-mode*))
+       (when (and (< (mod (-> *display* real-frame-counter) 300) 270) (not *progress-process*))
+         (let ((gp-0 (new 'stack 'font-context *font-default-matrix* 80 170 0.0 (font-color default) (font-flags shadow kerning))))
+           (let ((v1-12 gp-0)) (set! (-> v1-12 width) (the float 352)))
+diff --git a/goal_src/jak1/pc/progress-pc.gc b/goal_src/jak1/pc/progress-pc.gc
+index fdb83edc6..39e32795e 100644
+--- a/goal_src/jak1/pc/progress-pc.gc
++++ b/goal_src/jak1/pc/progress-pc.gc
+@@ -3312,6 +3312,15 @@
+                            (string-format "~S: ~S"
+                                           (lookup-text! *common-text* (-> options index name) #f)
+                                           (lookup-text! *common-text* (get-language-name (-> *pc-settings* text-language)) #f)))))))))
++            (format 0 "OTTSEL G1: i=~D nm=#x~X ty=~D y=~D oi=~D len=~D~%"
++                    index
++                    (the int (-> options index name))
++                    (the int (-> options index option-type))
++                    (the int option-y)
++                    (the int (-> obj option-index))
++                    (length options))
++            (format 0 "OTTSEL G1:   str=~A~%"
++                    (if option-str option-str "NONE"))
+             (when (or (<= (length options) PROGRESS_PC_PAGE_HEIGHT)
+                       (and (not (progress-scrolling?)) (>= index *progress-scroll-start*) (< index *progress-scroll-end*))
+                       (and (progress-scrolling-down?) (>= index (1- *progress-scroll-start*)) (< index *progress-scroll-end*))
+@@ -3338,6 +3347,12 @@
+                   (set! (-> font origin x) (the float (- option-x (-> obj left-x-offset))))
+                   (set! (-> font origin y) (the float (the int (* (the float option-y) (if (-> options index scale) f0-23 1.0)))))
+                   (set-scale! font (* arg2 f0-23 scroll-amt))
++                  (format 0 "OTTSEL G1:  draw i=~D tpi=~D sa=~D oy=~D a=~D~%"
++                          index
++                          (the int (* 1000.0 f0-23))
++                          (the int (* 1000.0 scroll-amt))
++                          (the int (-> font origin y))
++                          (the int (* 128.0 f0-23 scroll-amt)))
+                   (print-game-text option-str font #f (the int (* 128.0 f0-23 scroll-amt)) 22)))
+               (+! y-off arg1)
+               (+! option-count 1)))))))
+diff --git a/goalc/compiler/IR.cpp b/goalc/compiler/IR.cpp
+index 9710835b9..e67b01c07 100644
+--- a/goalc/compiler/IR.cpp
++++ b/goalc/compiler/IR.cpp
+@@ -1,5 +1,10 @@
+ #include "IR.h"
+ 
++// A1.1 temporary probe (2026-09-22): enable the existing bounded GOAL call trace
++// so the fault handler's ring dump can name the call site, target and caller LR at
++// the crash. Remove this define to disable the probe.
++#define OTTSEL_TRACE_GOAL_CALLS 1
++
+ #include <utility>
+ 
+ #include "common/symbols.h"
+@@ -669,6 +674,10 @@ void IR_FunctionCall::do_codegen_arm64(emitter::ObjectGenerator* gen,
+   // for every GOAL->GOAL call.  The recorder is a C call: save x0-x15,x16,x17
+   // (it clobbers caller-saved regs incl. the function pointer register).
+ #if defined(OTTSEL_TRACE_GOAL_CALLS)
++  // A1.1 probe gate: the trace is only emitted when the environment requests it, so
++  // the a11 slice (which has its own symbol shim and rejects this symbol) stays clean
++  // while a deliberate "OTTSEL_TRACE_GOAL_CALLS=1" GOAL compile carries it.
++  if (std::getenv("OTTSEL_TRACE_GOAL_CALLS")) {
+   // S2.1 fix: the recorder call clobbers x30 (the caller's return address).
+   // Save it with the other registers and restore it after the recorder, so
+   // the x30-push below (the GOAL call's stack return address, consumed by
+@@ -727,6 +736,7 @@ void IR_FunctionCall::do_codegen_arm64(emitter::ObjectGenerator* gen,
+   gen->add_instr(IGen::pop_gpr64(*gen, emitter::X1), irec);
+   gen->add_instr(IGen::pop_gpr64(*gen, emitter::X0), irec);
+   gen->add_instr(IGen::pop_gpr64(*gen, emitter::X30), irec);
++  }
+ #endif
+   // Ottsel S2.1: x86 `call` pushes its post-call continuation.  GOAL asm-funcs
+   // read that stack value directly (catch-frame-new's `(.pop temp)`) and later
+@@ -1899,7 +1909,84 @@ void IR_AsmRet::do_codegen_arm64(emitter::ObjectGenerator* gen,
+   // slot and restores the caller's sp; advancing here double-pops and shifts
+   // the caller's epilogue by 16 bytes (it then pops garbage -- the observed
+   // ret-to-pp in the throw-dispatch return path).
++  //
++  // Ottsel A1.1 fail-safe (2026-09-21): the slot can hold a non-return-address
++  // word.  The signed-GAME oracle serve jumped to 0x181674 (the village-cam
++  // Symbol address, a frame local at [sp]) with pc == x30, i.e. this read
++  // produced an EE offset and the following ret left the image.  Every address
++  // this port executes lives at or above 0x1_00000000, so a GOAL/EE value is
++  // exactly one whose high half is zero.  Select branchlessly, using only
++  // caller-clobbered registers and leaving the return value in x0 (and v0)
++  // untouched:
++  //   x16 = incoming x30 (the lowering's continuation), x30 = slot value
++  //   keep = ((slot >> 32) - 1) >>a 63    ; all-ones exactly when the high half is zero
++  //   x30 -= (slot - x16) & keep          ; host slot unchanged, EE -> x16
++  // A ret reached through the compiler's lowering has a host continuation in
++  // x30, so a bad slot returns to the caller instead of into data; a br-entered
++  // asm-func keeps using its pushed slot unchanged.
++  // A1.1 probe gate: OTTSEL_ASM_RET_GUARD_OFF restores the historical plain
++  // sequence so the guard can be A/B'd against the crash it masks.
++  if (std::getenv("OTTSEL_ASM_RET_GUARD_OFF")) {
++    gen->add_instr(IGen::load_gpr64_sp(*gen, emitter::X30), irec);
++  } else {
++  gen->add_instr(IGen::mov_gpr64_gpr64(*gen, emitter::X16, emitter::X30), irec);
+   gen->add_instr(IGen::load_gpr64_sp(*gen, emitter::X30), irec);
++  // A1.6 (2026-09-22): the keep-mask must be computed from the SLOT.  IGen's
++  // shr_gpr64_u8 shifts its own register, so without this move the mask came
++  // from whatever x17 held on entry (here the pushed synthetic continuation),
++  // which made the fail-safe a no-op exactly when the slot held an EE value:
++  // the shipped gkernel emitted `lsr x17, x17, #32` at all six .ret sites.
++  gen->add_instr(IGen::mov_gpr64_gpr64(*gen, emitter::X17, emitter::X30), irec);
++  // Ottsel A1.11/A1.16 (2026-09-22): keep the slot only when it is really this
++  // port's module code, and the port has TWO code bands, one per lane.  The A1.8
++  // test (high half in [1,8]) accepted the GOAL *stack* address ee + 0x7fffe10,
++  // so pc == lr == x30 left the image during the strict oracle serve.  The A1.11
++  // window [ee + 0x8000000, ee + 0x8c30000) fixed that on the iPad signed lane
++  // (ARENA_SIZE = 128 MB and module code offsets >= arena_size,
++  // ottsel_signed_gstate.cpp:109) but is empty on the macOS lane, whose no-emit
++  // loader puts every segment in [ee + 0x3ebc000, ee + 0x4ee0000) (klink.cpp:45,
++  // logged once at boot; the port's own code-address test hardcodes the same band
++  // at kscheme.cpp:211).  There every guarded .ret rejected its real return value
++  // (measured live: slot 0x7003ed79b4, keep 0) and returned through the incoming
++  // link register.  Accept either band; both exclude the iPad lane's module data
++  // (0x3ea8000..0x3eb8000), the GOAL heap (0x13fd20..0x3db0000) and the GOAL stack
++  // top (ee + 0x7fffe10), so merging them into one range would be wrong.
++  //   x9 = x22 + 0x8000000 (lo1), x10 = x22 + 0x8c30000 (hi1)
++  //   x11 = (slot < lo1), x12 = (slot < hi1); keep1 = x12 - x11 (0/1)
++  //   x9 = x22 + 0x3ebc000 (lo2), x10 = x22 + 0x4ee0000 (hi2)
++  //   x11 = (slot < lo2), x2 = (slot < hi2); keep2 = x2 - x11 (0/1)
++  //   keep = keep1 + keep2, mask = -keep; x30 = x16 + (([sp] - x16) & mask)
++  gen->add_instr(IGen::mov_gpr64_u64(*gen, emitter::X9, 0x8000000), irec);
++  gen->add_instr(IGen::add_gpr64_gpr64(*gen, emitter::X9, emitter::X22), irec);
++  gen->add_instr(IGen::mov_gpr64_u64(*gen, emitter::X10, 0x8c30000), irec);
++  gen->add_instr(IGen::add_gpr64_gpr64(*gen, emitter::X10, emitter::X22), irec);
++  gen->add_instr(IGen::mov_gpr64_gpr64(*gen, emitter::X11, emitter::X17), irec);
++  gen->add_instr(IGen::sub_gpr64_gpr64(*gen, emitter::X11, emitter::X9), irec);
++  gen->add_instr(IGen::mov_gpr64_gpr64(*gen, emitter::X12, emitter::X17), irec);
++  gen->add_instr(IGen::sub_gpr64_gpr64(*gen, emitter::X12, emitter::X10), irec);
++  gen->add_instr(IGen::shr_gpr64_u8(*gen, emitter::X11, 63), irec);
++  gen->add_instr(IGen::shr_gpr64_u8(*gen, emitter::X12, 63), irec);
++  gen->add_instr(IGen::sub_gpr64_gpr64(*gen, emitter::X12, emitter::X11), irec);
++  gen->add_instr(IGen::mov_gpr64_u64(*gen, emitter::X9, 0x3ebc000), irec);
++  gen->add_instr(IGen::add_gpr64_gpr64(*gen, emitter::X9, emitter::X22), irec);
++  gen->add_instr(IGen::mov_gpr64_u64(*gen, emitter::X10, 0x4ee0000), irec);
++  gen->add_instr(IGen::add_gpr64_gpr64(*gen, emitter::X10, emitter::X22), irec);
++  gen->add_instr(IGen::mov_gpr64_gpr64(*gen, emitter::X11, emitter::X17), irec);
++  gen->add_instr(IGen::sub_gpr64_gpr64(*gen, emitter::X11, emitter::X9), irec);
++  gen->add_instr(IGen::mov_gpr64_gpr64(*gen, emitter::X2, emitter::X17), irec);
++  gen->add_instr(IGen::sub_gpr64_gpr64(*gen, emitter::X2, emitter::X10), irec);
++  gen->add_instr(IGen::shr_gpr64_u8(*gen, emitter::X11, 63), irec);
++  gen->add_instr(IGen::shr_gpr64_u8(*gen, emitter::X2, 63), irec);
++  gen->add_instr(IGen::sub_gpr64_gpr64(*gen, emitter::X2, emitter::X11), irec);
++  gen->add_instr(IGen::add_gpr64_gpr64(*gen, emitter::X12, emitter::X2), irec);
++  gen->add_instr(IGen::mov_gpr64_u64(*gen, emitter::X11, 0), irec);
++  gen->add_instr(IGen::sub_gpr64_gpr64(*gen, emitter::X11, emitter::X12), irec);
++  gen->add_instr(IGen::mov_gpr64_gpr64(*gen, emitter::X2, emitter::X17), irec);
++  gen->add_instr(IGen::sub_gpr64_gpr64(*gen, emitter::X2, emitter::X16), irec);
++  gen->add_instr(IGen::and_gpr64_gpr64(*gen, emitter::X2, emitter::X11), irec);
++  gen->add_instr(IGen::mov_gpr64_gpr64(*gen, emitter::X30, emitter::X16), irec);
++  gen->add_instr(IGen::add_gpr64_gpr64(*gen, emitter::X30, emitter::X2), irec);
++  }
+   gen->add_instr(IGen::ret(*gen), irec);
+ }
+ 
+@@ -3201,3 +3288,6 @@ void IR_SqrtVF::do_codegen_arm64(emitter::ObjectGenerator* gen,
+   auto src = get_reg_asm(m_src, allocs, irec, m_use_coloring);
+   gen->add_instr(IGen::sqrt_vf(*gen, dst, src), irec);
+ }
++#define OTTSEL_TRACE_GOAL_CALLS 1  // A1.1 temporary probe (2026-09-22): enable the
++// existing bounded GOAL call trace so the fault handler's ring dump can name the
++// call site, target and caller LR at the crash. Remove this define to disable.

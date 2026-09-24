@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "modules": [
+    "gcommon",
+    "gstring-h",
+    "gkernel-h",
+    "gkernel",
+    "pskernel",
+    "gstring",
+    "dgo-h",
+    "gstate",
+    "math",
+    "vector-h",
+    "navigate-h"
+  ]
+}

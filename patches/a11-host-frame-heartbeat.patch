@@ -1,0 +1,74 @@
+# a11-host-frame-heartbeat.patch -- the macOS lane reports its own presented cadence and game clock.
+#
+# Maintenance overlay (Ottsel L0/L2, 2026-09-22).  A delta on top of h3-jak1-host-boot.patch,
+# which owns game/graphics/opengl_renderer/OpenGLRenderer.cpp: apply h3 first, then this.
+# OpenGLRenderer::render is the per-frame callee of GLDisplay::render
+# (game/graphics/pipelines/opengl.cpp).  It adds one bounded line every 300 rendered frames
+# (frames, wall seconds, fps) plus a read of the game's own display clock (*display* + 0x30c/0x314/
+# 0x32c/0x334/0x384; offsets measured on this lane, see
+# evidence/A1/game-clock-and-load-phases-2026-09-22.md).  Nothing else changes.
+#
+# Check: git -C out/jak-project apply --reverse --check patches/a11-host-frame-heartbeat.patch
+#
+--- a/game/graphics/opengl_renderer/OpenGLRenderer.cpp
++++ b/game/graphics/opengl_renderer/OpenGLRenderer.cpp
+@@ -5,6 +5,7 @@
+ #include "common/goal_constants.h"
+ #include "common/log/log.h"
+ #include "common/util/FileUtil.h"
++#include "common/util/Timer.h"
+ 
+ #include "game/graphics/opengl_renderer/BlitDisplays.h"
+ #include "game/graphics/opengl_renderer/DepthCue.h"
+@@ -28,6 +29,7 @@
+ #include "game/graphics/opengl_renderer/ocean/OceanNear.h"
+ #include "game/graphics/opengl_renderer/sprite/Sprite3.h"
+ #include "game/graphics/pipelines/opengl.h"
++#include "game/kernel/jak1/kscheme.h"
+ 
+ #include "third-party/imgui/imgui.h"
+ #include "third-party/imgui/imgui_stdlib.h"
+@@ -984,6 +986,43 @@
+  * Main render function. This is called from the gfx loop with the chain passed from the game.
+  */
+ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
++  // Ottsel L0 (2026-09-22): bounded host-lane frame heartbeat.  The macOS oracle
++  // had no presented-cadence line of its own (the iPad lane reports
++  // `OTTSEL SUBMITSTAT ... vsync=`), so the parity loop could not compare the game
++  // clock or the load-phase wall times.  One line every 300 rendered frames; no
++  // behaviour change, no new state outside this block.
++  {
++    static u64 s_frames = 0;
++    static Timer s_timer;
++    ++s_frames;
++    // Ottsel L2 (2026-09-22): the game's own display clock, read from *display*.
++    // Offsets are the jak1 display layout (display-h.gc) and were measured on this
++    // lane: the eight time-frame counters are u64 at 0x304..0x344 and the timing
++    // floats at 0x384..0x394 (evidence/A1/game-clock-and-load-phases-2026-09-22.md).
++    // base-frame-counter advances 300 units per wall second at full speed, so this
++    // line answers whether the lane's game clock tracks wall time or its frame rate.
++    u32 gc_display = 0, gc_base = 0, gc_game = 0, gc_actual = 0, gc_real_actual = 0;
++    float gc_time_ratio = 0.f;
++    {
++      auto sym = jak1::find_symbol_from_c("*display*");
++      gc_display = sym.offset ? (u32)sym->value : 0u;
++      if (gc_display && g_ee_main_mem) {
++        const u8* p = g_ee_main_mem + gc_display;
++        gc_base = *(const u32*)(p + 0x30c);
++        gc_game = *(const u32*)(p + 0x314);
++        gc_actual = *(const u32*)(p + 0x32c);
++        gc_real_actual = *(const u32*)(p + 0x334);
++        gc_time_ratio = *(const float*)(p + 0x384);
++      }
++    }
++    if ((s_frames % 300) == 0) {
++      const double wall_s = (double)s_timer.getNs() / 1.e9;
++      lg::info("OTTSEL HOSTFRAME: frames={} wall_s={:.3f} fps={:.2f} game-base={} game-game={} "
++               "game-actual={} game-real-actual={} time-ratio={:.3f}",
++               s_frames, wall_s, wall_s > 0.0 ? (double)s_frames / wall_s : 0.0, gc_base, gc_game,
++               gc_actual, gc_real_actual, gc_time_ratio);
++    }
++  }
+   m_profiler.clear();
+   m_render_state.reset();
+   m_render_state.ee_main_memory = g_ee_main_mem;

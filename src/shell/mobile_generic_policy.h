@@ -51,9 +51,19 @@ constexpr bool ottsel_mobile_is_jak1_texture_upload_bucket(unsigned int bucket_i
   return false;
 }
 
+// The PC_PORT camera/tfrag3 packet rides the terrain owners:
+// tfrag-0/tfrag-1, tie-0/tie-1 and shrub-generic0/1.  None of
+// those ids are in the merc-ledger or texture-upload sets, so a
+// curated candidate list walks straight past the camera and
+// *math-camera* stays stale.  The 512-transfer linear pass stops
+// even earlier: it walks buckets in order, and on a heavy level
+// the early buckets (sky, ocean, texture uploads) fill that
+// budget before the terrain buckets are reached.  Walk every
+// bucket window instead; the fallback pass parses DMA tags and
+// acts only on PC_PORT transfers, so the wider coverage costs
+// tag reads rather than VIF decoding.
 constexpr bool ottsel_mobile_jak1_pc_port_bucket_candidate(unsigned int bucket_id) {
-  return ottsel_mobile_is_jak1_merc_ledger_bucket(bucket_id) ||
-         ottsel_mobile_is_jak1_texture_upload_bucket(bucket_id);
+  return bucket_id < 70u;
 }
 
 // The submitted Jak 1 chain begins with one CALL qword. Bucket zero starts at

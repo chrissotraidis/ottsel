@@ -1,0 +1,82 @@
+diff --git a/goal_src/jak1/engine/gfx/shadow/shadow.gc b/goal_src/jak1/engine/gfx/shadow/shadow.gc
+index 06b173a02..57c12ec2a 100644
+--- a/goal_src/jak1/engine/gfx/shadow/shadow.gc
++++ b/goal_src/jak1/engine/gfx/shadow/shadow.gc
+@@ -106,6 +106,39 @@
+                                  0.0
+                                  81920.0))
+   0
++  ;; BOT62: bounded world-position trace for the controllability gate.
++  ;; Every target post behavior calls this exactly once per frame, after
++  ;; collision has finalized (-> self control trans), so it also covers the
++  ;; swim/no-stick states that target-post alone would miss.
++  (when (< 0 *ottsel-target-trace-left*)
++    (+! *ottsel-target-trace-left* -1)
++    (when (zero? (logand *ottsel-target-trace-left* 15))
++      (format 0 "OTTSEL TARGET POS: t=(~f,~f,~f) pad=~f~%"
++              (-> self control trans x)
++              (-> self control trans y)
++              (-> self control trans z)
++              (-> self control pad-magnitude)))
++    ;; Ottsel I1 (2026-09-22): the trace above showed a frozen vertical axis, so the same bounded window
++    ;; now also reports the control's own velocity, its gravity (the jump impulse is
++    ;; sqrt(2 * gravity-length * height) along gravity-normal, so a zero gravity-length makes every jump a
++    ;; no-op) and the position.  A vertical impulse shorter than the one-in-sixteen cadence would still be
++    ;; caught, because any |transv.y| above 1000 prints immediately.
++    (when (or (zero? (logand *ottsel-target-trace-left* 15))
++              (< 1000.0 (fabs (-> self control transv y))))
++      ;; GOAL's format takes at most eight arguments, so the velocity/position and the gravity fields are
++      ;; two calls inside one bounded window.
++      (format 0 "OTTSEL TARGET VEL: v=(~f,~f,~f) t=(~f,~f,~f)~%"
++              (-> self control transv x)
++              (-> self control transv y)
++              (-> self control transv z)
++              (-> self control trans x)
++              (-> self control trans y)
++              (-> self control trans z))
++      (format 0 "OTTSEL TARGET GRAV: g-len=~f g-n=(~f,~f,~f)~%"
++              (-> self control dynam gravity-length)
++              (-> self control dynam gravity-normal x)
++              (-> self control dynam gravity-normal y)
++              (-> self control dynam gravity-normal z))))
+   (none))
+ 
+ (defpart 362
+diff --git a/goal_src/jak1/engine/ui/progress/progress-draw.gc b/goal_src/jak1/engine/ui/progress/progress-draw.gc
+index 06775a5dd..67371bf2e 100644
+--- a/goal_src/jak1/engine/ui/progress/progress-draw.gc
++++ b/goal_src/jak1/engine/ui/progress/progress-draw.gc
+@@ -976,6 +976,18 @@
+                           (string-format "~S: ~S"
+                                          (lookup-text! *common-text* (-> s3-0 s0-0 name) #f)
+                                          (lookup-text! *common-text* (-> *language-name-remap* (-> (the-as (pointer uint64) (-> s3-0 s0-0 value-to-modify)))) #f))))))))
++            (when (= (-> this display-state) (progress-screen title))
++              ;; Diagnostic only.  The save/load slot rows draw their text from the slot info
++              ;; (*progress-save-info*), so their *option* name is null on purpose: print a markup
++              ;; placeholder, never a word that can be misread as game state (an earlier reading of
++              ;; "NONE" here was taken as "the slot is empty" while the row on screen named the save).
++              (format 0 "OTTSEL G1: n=~D i=~D ty=~D nm=#x~X sc=~D str=~A~%"
++                      (the int (length s3-0))
++                      s0-0
++                      (the int (-> s3-0 s0-0 option-type))
++                      (the int (-> s3-0 s0-0 name))
++                      (if (-> s3-0 s0-0 scale) 1 0)
++                      (if option-str option-str "<null-name>")))
+             (when option-str
+               (let ((f0-23 (-> this transition-percentage-invert)))
+                 (set-color! font
+@@ -983,6 +995,14 @@
+                 (set! (-> font origin x) (the float (- x-off (-> this left-x-offset))))
+                 (set! (-> font origin y) (the float (the int (* (the float y-off) (if (-> s3-0 s0-0 scale) f0-23 1.0)))))
+                 (set-scale! font (* arg2 f0-23))
++                (when (= (-> this display-state) (progress-screen title))
++                  (format 0 "OTTSEL G1:  draw i=~D x=~D y=~D a=~D tpi=~D oi=~D~%"
++                          s0-0
++                          (the int (-> font origin x))
++                          (the int (-> font origin y))
++                          (the int (* 128.0 f0-23))
++                          (the int (* 1000.0 f0-23))
++                          (the int (-> this option-index))))
+                 (print-game-text option-str font #f (the int (* 128.0 f0-23)) 22)))
+             (+! s2-1 arg1)
+             (+! s1-0 1))))))

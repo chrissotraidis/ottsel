@@ -1,0 +1,182 @@
+--- a/game/overlord/jak1/srpc.cpp
++++ b/game/overlord/jak1/srpc.cpp
+@@ -35,37 +35,74 @@
+ namespace jak1 {
+ #ifdef OTTSEL_IOS
+ 
+-// iOS has no IOP thread. Keep the Jak 1 RPC entry point, but execute PLAY
+-// commands through the existing native sound shim and fake-ISO bank loader.
+-// Sound IDs retain the shared engine Sound registry; bank/stream loading is separate.
+-void* RPC_Player(unsigned int /*fno*/, void* data, int size) {
++// The synchronous mobile loader executes the existing fake-ISO operation
++// directly; LoadSoundBank's desktop wrapper waits on an absent IOP mailbox.
++static bool mobile_sound_banks_ready() {
+   static bool initialized = false;
+-  static SoundBank bank{};
+-  static SoundBank level_bank{};
+-  if (!initialized) {
+-    initialized = true;
+-    InitSoundFalloff();
+-    InitSoundPan();
+-    const char* data_dir = ee::ottsel_iso_data_dir();
+-    if (data_dir && *data_dir) {
+-      fake_iso_set_root((fs::path(data_dir) / "SBK").string());
+-      fake_iso_init_globals();
+-      jak1::fake_iso_init_globals();
+-      if (fake_iso_FS_Init() >= 0) {
+-        char bank_name[] = "COMMON";
+-        if (FS_LoadSoundBank(bank_name, &bank) == 0 && bank.bank_handle) {
+-          lg::info("OTTSEL AUDIO: PLAYER RPC loaded COMMON bank handle={} sounds={}",
+-                   static_cast<void*>(bank.bank_handle), bank.sound_count);
+-        }
+-        char level_bank_name[] = "VILLAGE1";
+-        if (FS_LoadSoundBank(level_bank_name, &level_bank) == 0 && level_bank.bank_handle) {
+-          lg::info("OTTSEL AUDIO: PLAYER RPC loaded VILLAGE1 bank handle={} sounds={}",
+-                   static_cast<void*>(level_bank.bank_handle), level_bank.sound_count);
++  if (initialized) return true;
++  const char* data_dir = ee::ottsel_iso_data_dir();
++  if (!data_dir || !*data_dir) return false;
++  fake_iso_set_root((fs::path(data_dir) / "SBK").string());
++  fake_iso_init_globals();
++  jak1::fake_iso_init_globals();
++  if (fake_iso_FS_Init() < 0) return false;
++  InitBanks();
++  InitSoundFalloff();
++  InitSoundPan();
++  initialized = true;
++  return true;
++}
++
++void* RPC_Loader(unsigned int /*fno*/, void* data, int size) {
++  if (!data || size < (int)sizeof(SoundRpcCommand) || !mobile_sound_banks_ready())
++    return nullptr;
++  const auto* commands = reinterpret_cast<const SoundRpcCommand*>(data);
++  for (int i = 0; i < size / (int)sizeof(SoundRpcCommand); ++i) {
++    const auto& command = commands[i];
++    if (command.j1command != Jak1SoundCommand::LOAD_BANK &&
++        command.j1command != Jak1SoundCommand::UNLOAD_BANK) continue;
++    char name[17] = {};
++    memcpy(name, command.load_bank.bank_name, 16);
++    // The existing fake-ISO implementation has a 16-byte filename buffer.
++    if (!name[0] || strnlen(name, 16) >= 16) {
++      lg::warn("OTTSEL AUDIO: invalid bank name length");
++      continue;
++    }
++    SoundBank* bank = LookupBank(command.load_bank.bank_name);
++    if (command.j1command == Jak1SoundCommand::LOAD_BANK) {
++      if (bank && bank->bank_handle) continue;
++      bank = AllocateBank();
++      if (!bank) {
++        lg::warn("OTTSEL AUDIO: bank registry full requested={}", name);
++        continue;
++      }
++      const auto result = FS_LoadSoundBank(name, bank);
++      lg::info("OTTSEL AUDIO: bank request={} result={} handle={} sounds={} actual={}",
++               name, result, static_cast<void*>(bank->bank_handle), bank->sound_count,
++               std::string(bank->name.data(), strnlen(bank->name.data(), 16)));
++    } else if (bank && bank->bank_handle) {
++      const auto handle = bank->bank_handle;
++      bank->bank_handle = nullptr;
++      snd_UnloadBank(handle);  // Existing Player stops its bank's active handlers.
++      // Retire registry references before a reused bank slot replaces its names.
++      for (auto& sound : gSounds) {
++        for (const auto& record : bank->sound) {
++          if (sound.bank_entry == &record) {
++            sound.id = 0;
++            sound.sound_handle = 0;
++            sound.bank_entry = nullptr;
++            break;
++          }
+         }
+       }
+-    }
+-  }
+-  if (!data || size < (int)sizeof(SoundRpcCommand)) {
++      snd_ResolveBankXREFS();
++    }
++  }
++  return nullptr;
++}
++
++void* RPC_Player(unsigned int /*fno*/, void* data, int size) {
++  if (!data || size < (int)sizeof(SoundRpcCommand) || !mobile_sound_banks_ready()) {
+     return nullptr;
+   }
+   const int count = size / (int)sizeof(SoundRpcCommand);
+@@ -143,22 +180,7 @@
+     char sound_name[17] = {};
+     memcpy(sound_name, command.play.name, sizeof(command.play.name));
+     SoundBank* owner = nullptr;
+-    s32 index = -1;
+-    for (auto* candidate : {&bank, &level_bank}) {
+-      if (candidate->bank_handle) {
+-        for (s32 j = 0; j < (s32)candidate->sound.size(); ++j) {
+-          if (memcmp(candidate->sound[j].name.data(), command.play.name,
+-                     sizeof(command.play.name)) == 0) {
+-            owner = candidate;
+-            index = j;
+-            break;
+-          }
+-        }
+-      }
+-      if (owner) {
+-        break;
+-      }
+-    }
++    const s32 index = LookupSoundIndex(command.play.name, &owner);
+     if (!owner) {
+       lg::warn("OTTSEL AUDIO: PLAYER RPC sound missing name={} id={}", sound_name,
+                command.play.sound_id);
+--- a/game/overlord/jak1/srpc.h
++++ b/game/overlord/jak1/srpc.h
+@@ -88,7 +88,9 @@
+ 
+ u32 Thread_Loader();
+ u32 Thread_Player();
++void* RPC_Player(unsigned int fno, void* data, int size);
++void* RPC_Loader(unsigned int fno, void* data, int size);
+ 
+ s32 VBlank_Handler(void*);
+ 
+-}  // namespace jak1
+\ No newline at end of file
++}  // namespace jak1
+--- a/game/kernel/common/kdgo.cpp
++++ b/game/kernel/common/kdgo.cpp
+@@ -29,6 +29,7 @@
+ ee::sceSifClientData* g_ottsel_str_rpc_bd = &cd[STR_RPC_CHANNEL];
+ ee::sceSifClientData* g_ottsel_play_rpc_bd = &cd[PLAY_RPC_CHANNEL];
+ ee::sceSifClientData* g_ottsel_player_rpc_bd = &cd[PLAYER_RPC_CHANNEL];
++ee::sceSifClientData* g_ottsel_loader_rpc_bd = &cd[LOADER_RPC_CHANNEL];
+ ee::sceSifClientData* g_ottsel_dgo_rpc_bd = &cd[DGO_RPC_CHANNEL];
+ 
+ void kdgo_init_globals() {
+@@ -89,6 +90,8 @@
+     g_ottsel_play_rpc_bd = &cd[rpcChannel];
+   } else if (rpcChannel == PLAYER_RPC_CHANNEL) {
+     g_ottsel_player_rpc_bd = &cd[rpcChannel];
++  } else if (rpcChannel == LOADER_RPC_CHANNEL) {
++    g_ottsel_loader_rpc_bd = &cd[rpcChannel];
+   } else if (rpcChannel == DGO_RPC_CHANNEL) {
+     g_ottsel_dgo_rpc_bd = &cd[rpcChannel];
+   }
+--- a/game/kernel/common/kdgo.h
++++ b/game/kernel/common/kdgo.h
+@@ -33,4 +33,5 @@
+ extern ee::sceSifClientData* g_ottsel_str_rpc_bd;
+ extern ee::sceSifClientData* g_ottsel_play_rpc_bd;
+ extern ee::sceSifClientData* g_ottsel_player_rpc_bd;
++extern ee::sceSifClientData* g_ottsel_loader_rpc_bd;
+ extern ee::sceSifClientData* g_ottsel_dgo_rpc_bd;
+--- a/game/sce/sif_ee.cpp
++++ b/game/sce/sif_ee.cpp
+@@ -186,6 +186,9 @@
+   ottsel_refresh_sound_info();
+   if (bd == g_ottsel_player_rpc_bd && send && ssize > 0) {
+     jak1::RPC_Player(fno, send, ssize);
++  }
++  if (bd == g_ottsel_loader_rpc_bd && send && ssize > 0) {
++    jak1::RPC_Loader(fno, send, ssize);
+   }
+   // Ottsel S2.1: no IOP thread on iOS; the OVERLORD/sound RPC protocol is
+   // inert (IOP_Kernel::sif_rpc is a no-op stub).  GOAL calls the sound

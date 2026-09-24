@@ -1,0 +1,52 @@
+--- a/game/kernel/asm_funcs_arm64.s
++++ b/game/kernel/asm_funcs_arm64.s
+@@ -31,9 +31,9 @@
+   blr x8
+ 
+   ldp q9, q8, [sp], #32
+-  ldp q10, q11, [sp], #32
+-  ldp q12, q13, [sp], #32
+-  ldp q14, q15, [sp], #32
++  ldp q11, q10, [sp], #32
++  ldp q13, q12, [sp], #32
++  ldp q15, q14, [sp], #32
+ 
+   ;; Ottsel H3: the caller stub pushed the C target at [sp] before jumping
+   ;; here.  It was read above at [sp, #16] but never popped, leaking 16 bytes
+@@ -84,9 +84,9 @@
+   add sp, sp, #64
+ 
+   ldp q9, q8, [sp], #32
+-  ldp q10, q11, [sp], #32
+-  ldp q12, q13, [sp], #32
+-  ldp q14, q15, [sp], #32
++  ldp q11, q10, [sp], #32
++  ldp q13, q12, [sp], #32
++  ldp q15, q14, [sp], #32
+ 
+   ;; pop our saved frame plus the stub's pushed target
+   ldp	x29, x30, [sp], #32
+@@ -120,6 +120,12 @@
+   ;; x17 is caller-saved; keep the fake-stack size in a saved register for
+   ;; the return-value lookup and unwind after exec(ctxt).
+   mov x19, x17
++  ;; C preserves only low-d64 lanes of v8-v15, while GOAL owns full vectors.
++  ;; Save below the fixed incoming argument frame so its offsets stay valid.
++  stp q15, q14, [sp, #-32]!
++  stp q13, q12, [sp, #-32]!
++  stp q11, q10, [sp, #-32]!
++  stp q9, q8, [sp, #-32]!
+   ;; ExecutionContext on the stack (1280 bytes)
+   sub sp, sp, #1280
+   ;; GOAL args -> gprs[a0..a7] (aN at 16*N)
+@@ -150,6 +156,10 @@
+   ;; unwind
+   add sp, sp, x19
+   add sp, sp, #1280
++  ldp q9, q8, [sp], #32
++  ldp q11, q10, [sp], #32
++  ldp q13, q12, [sp], #32
++  ldp q15, q14, [sp], #32
+   ldp x27, x28, [sp], #16
+   ldp x25, x26, [sp], #16
+   ldp x23, x24, [sp], #16

@@ -1,0 +1,168 @@
+diff --git a/tools/ottsel_a1_1/a11_module_emitter.h b/tools/ottsel_a1_1/a11_module_emitter.h
+--- a/tools/ottsel_a1_1/a11_module_emitter.h
++++ b/tools/ottsel_a1_1/a11_module_emitter.h
+@@ -22,7 +22,12 @@
+   enum Kind { SymbolOffset, SymbolAddress, TypePointer, FunctionTag } kind;
+   uint8_t methods = 0;
+ };
+-struct ModulePointer { uint32_t patch, target; };
++// A kind-5 record always carries one same-segment target address. A target in
++// the module's own static data is written from the reserved arena span, so the
++// complete value is a constant. A target in the module's own signed code is
++// written from that code label, which the runtime only knows at activation, so
++// the record must carry the raw target instead of a folded value.
++struct ModulePointer { uint32_t patch, target; bool code = false; };
+ struct ModuleDistance { uint32_t patch, target; uint8_t target_segment; };
+ struct ModuleSegment {
+   uint32_t base = 0, size = 0, text = 0;  // Original object bounds, never rewritten.
+@@ -152,7 +157,12 @@
+         uint32_t adrp = u32(seg.base + patch), add = u32(seg.base + patch + 4);
+         const bool address = (add & 0xffc00000) == 0x91000000;
+         const bool scalar_float = (add & 0xffc00000) == 0xbd400000;
+-        if ((adrp & 0x9f000000) != 0x90000000 || (!address && !scalar_float) ||
++        // SIMD&FP LDR uses size=00 with opc=11 for a 128-bit Q register, not
++        // size=11/opc=01 (LDR D). The object word decides the class; the
++        // assembler then scales @PAGEOFF by sixteen for LDR Q and by eight for
++        // LDR D, so emitting the wrong mnemonic silently writes a wrong address.
++        const bool quad_load = (add & 0xffc00000) == 0x3dc00000;
++        if ((adrp & 0x9f000000) != 0x90000000 || (!address && !scalar_float && !quad_load) ||
+             ((add >> 5) & 31) != (adrp & 31) || (adrp & 31) == 31 ||
+             (address && (add & 31) == 31))
+           throw std::runtime_error("unsupported distance32 instruction pair");
+@@ -164,6 +174,12 @@
+         if (scalar_float && ((target & 3) || target < destination.text ||
+                              !module_fits(target, 4, destination.size)))
+           throw std::runtime_error("invalid scalar LDR target");
++        // The emitted reference is <data label> + (target - text), so the
++        // assembler scales that section-relative offset. A complete quad must
++        // therefore be sixteen-aligned and fit entirely inside the destination.
++        if (quad_load && (target < destination.text || ((target - destination.text) & 15) ||
++                          !module_fits(target, 16, destination.size)))
++          throw std::runtime_error("invalid LDR Q target");
+         seg.distances.push_back({patch, target, target_seg});
+       } else if (kind == 5) {
+         if (!module_fits(p, 8, end)) throw std::runtime_error("truncated pointer record");
+@@ -172,9 +188,18 @@
+         // This bounded path covers genuine Gkernel's static pair chain only.
+         // Keep target low bits; GOAL pair pointers are intentionally tagged+2.
+         if (patch < seg.text) throw std::runtime_error("pointer patch in signed text");
+-        if (target < seg.text || target >= seg.size)
++        // The original linker writes one flat same-segment address, so a code
++        // target is the same record with the code label as its base. Both forms
++        // preserve the record's own low bits verbatim: Gkernel pair pointers are
++        // tagged +2 in data, and code targets carry the function entry tag +4.
++        const bool code = target < seg.text;
++        if (code) {
++          if (target % 4 || target + 4 > seg.text)
++            throw std::runtime_error("pointer code target outside signed text");
++        } else if (target >= seg.size) {
+           throw std::runtime_error("pointer target outside static data");
+-        seg.pointers.push_back({patch, target});
++        }
++        seg.pointers.push_back({patch, target, code});
+       } else {
+         throw std::runtime_error("unsupported relocation kind " + std::to_string(kind));
+       }
+@@ -227,13 +252,16 @@
+   std::string label_name = name;
+   std::replace(label_name.begin(), label_name.end(), '-', '_');
+   auto label = [&](size_t seg, bool data) { return "_ottsel_module_" + label_name + "_s" + std::to_string(seg) + (data ? "_data" : "_code"); };
+-  auto target_label = [&](const ModuleDistance& ref) {
+-    const auto& target = module.segments[ref.target_segment];
++  // The kept mutable linker writes one same-segment address from the segment's
++  // own base, so an absent or cross-segment reference resolves to the shared
++  // arena label and a loaded reference resolves to its code or data label.
++  auto segment_label = [&](size_t segment_index, uint32_t target_value) {
++    const auto& target = module.segments[segment_index];
+     // The mutable release linker discards the source offset entirely for an
+     // absent segment. The native address of GOAL0 is the shared arena base.
+     if (!target.loaded) return std::string("_ottsel_module_arena");
+-    bool data = ref.target >= target.text;
+-    return label(ref.target_segment, data) + " + " + std::to_string(ref.target - (data ? target.text : 0));
++    const bool data = target_value >= target.text;
++    return label(segment_index, data) + " + " + std::to_string(target_value - (data ? target.text : 0));
+   };
+   manifest << "{\n\"schema\":" << (module.debug_policy == ModuleDebugPolicy::ReleaseOmit ? 2 : 1)
+            << ",\"debug_policy\":" << module_json(module.debug_policy == ModuleDebugPolicy::ReleaseOmit ? "release-omit" : "reject-nonempty")
+@@ -273,7 +301,10 @@
+     for (size_t i = 0; seg.loaded && i < seg.pointers.size(); ++i) {
+       const auto& ref = seg.pointers[i]; if (i) manifest << ',';
+       manifest << "{\"patch\":" << ref.patch << ",\"target\":" << ref.target
+-               << ",\"goal_offset\":" << data_offsets[s] + ref.target - seg.text << '}';
++               << ",\"kind\":" << module_json(ref.code ? "code" : "data");
++      if (ref.code) manifest << ",\"target_offset\":" << ref.target;
++      else manifest << ",\"goal_offset\":" << data_offsets[s] + ref.target - seg.text;
++      manifest << '}';
+     }
+     manifest << "]}";
+     assembly << ".section __GOAL,__text,regular,pure_instructions\n.balign 4\n.globl " << label(s, false) << '\n' << label(s, false) << ":\n";
+@@ -283,11 +314,14 @@
+       if (ri < seg.distances.size() && seg.distances[ri].patch == off) {
+         const auto& r = seg.distances[ri++];
+         uint32_t add = module_word(module.bytes, seg.base + off + 4);
+-        assembly << "adrp x" << (word & 31) << ", " << target_label(r) << "@PAGE\n";
+-        if ((add & 0xffc00000) == 0xbd400000)
+-          assembly << "ldr s" << (add & 31) << ", [x" << ((add >> 5) & 31) << ", " << target_label(r) << "@PAGEOFF]\n";
++        const std::string ref = segment_label(r.target_segment, r.target);
++        assembly << "adrp x" << (word & 31) << ", " << ref << "@PAGE\n";
++        if ((add & 0xffc00000) == 0x3dc00000)
++          assembly << "ldr q" << (add & 31) << ", [x" << ((add >> 5) & 31) << ", " << ref << "@PAGEOFF]\n";
++        else if ((add & 0xffc00000) == 0xbd400000)
++          assembly << "ldr s" << (add & 31) << ", [x" << ((add >> 5) & 31) << ", " << ref << "@PAGEOFF]\n";
+         else
+-          assembly << "add x" << (add & 31) << ", x" << ((add >> 5) & 31) << ", " << target_label(r) << "@PAGEOFF\n";
++          assembly << "add x" << (add & 31) << ", x" << ((add >> 5) & 31) << ", " << ref << "@PAGEOFF\n";
+         off += 4;
+       } else {
+         for (const auto& slot : seg.slots)
+diff --git a/game/kernel/common/ottsel_signed_gstate.h b/game/kernel/common/ottsel_signed_gstate.h
+--- a/game/kernel/common/ottsel_signed_gstate.h
++++ b/game/kernel/common/ottsel_signed_gstate.h
+@@ -4,7 +4,11 @@
+ namespace ottsel::signed_gstate {
+ enum class SlotKind : uint8_t { SymbolOffset, SymbolAddress, TypePointer, FunctionTag };
+ struct Slot { uint32_t offset; SlotKind kind; const char* name; uint8_t methods; };
+-struct Pointer { uint32_t patch, target, goal_offset; };
++// One kind-5 record. The kept mutable linker writes one same-segment address
++// from the segment's own base, so the value the runtime stores is either the
++// recorded arena offset (data target, base already folded in) or the signed code
++// base plus the raw target (code target, which no static initializer can hold).
++struct Pointer { uint32_t patch, value; bool code; };
+ struct Segment {
+   uint8_t* code; uint8_t* data;
+   uint32_t text_size, data_size, data_offset;
+diff --git a/game/kernel/common/ottsel_signed_gstate.cpp b/game/kernel/common/ottsel_signed_gstate.cpp
+--- a/game/kernel/common/ottsel_signed_gstate.cpp
++++ b/game/kernel/common/ottsel_signed_gstate.cpp
+@@ -118,9 +118,18 @@
+               pointer.patch - segment.text_size <= segment.data_size - 4, "pointer slot outside RW data");
+       for (auto prior : occupied) require(prior != pointer.patch, "overlapping pointer slot");
+       occupied.push_back(pointer.patch);
+-      require(pointer.target >= segment.text_size && pointer.target < segment.source_size &&
+-              uint64_t(segment.data_offset) + pointer.target - segment.text_size == pointer.goal_offset &&
+-              pointer.goal_offset < manifest.arena_size, "pointer target/tag outside declared data");
++      // Both forms keep the record's own low bits: Gkernel pair pointers are
++      // tagged +2, GOAL code targets carry the function entry tag +4. A data
++      // record already carries the target folded onto this segment's arena
++      // span, so its value is the arena offset to store; a code record carries
++      // the raw target because no static initializer can hold the signed code
++      // base the runtime adds at activation.
++      if (pointer.code)
++        require(!(pointer.value & 3) && pointer.value + 4 <= segment.source_text_size &&
++                uint64_t(code) + pointer.value <= UINT32_MAX, "pointer code target outside signed text");
++      else
++        require(pointer.value >= segment.data_offset && pointer.value < segment.data_offset + segment.data_size &&
++                pointer.value < manifest.arena_size, "pointer target/tag outside declared data");
+     }
+   }
+ }
+@@ -258,7 +267,8 @@
+     }
+     for (size_t i = 0; i < segment.pointer_count; ++i) {
+       const auto& pointer = segment.pointers[i];
+-      writes.push_back({segment.data + pointer.patch - segment.text_size, pointer.goal_offset});
++      const uint32_t value = pointer.code ? offset(segment.code) + pointer.value : pointer.value;
++      writes.push_back({segment.data + pointer.patch - segment.text_size, value});
+     }
+   }
+   for (const auto& segment : manifest.segments)

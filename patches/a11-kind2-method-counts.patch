@@ -1,0 +1,39 @@
+diff --git a/tools/ottsel_a1_1/a11_module_emitter.h b/tools/ottsel_a1_1/a11_module_emitter.h
+--- a/tools/ottsel_a1_1/a11_module_emitter.h
++++ b/tools/ottsel_a1_1/a11_module_emitter.h
+@@ -125,7 +125,13 @@
+         if (kind == 2) {
+           if (p == end) throw std::runtime_error("truncated method count");
+           methods = b[p++];
+-          if ((name != "function" && name != "string" && name != "kernel-context" && name != "state") || methods != 9)
++          // A type record is resolved by a load-time (name, methods) lookup,
++          // not a fixed tag index: the loader's intern_type_from_c accepts any
++          // count. Only the four bootstrap types that the runtime registers at
++          // exactly nine methods stay pinned; every other name carries the
++          // object's own count. Text-side slots still require function/9 in the
++          // slot loop below.
++          if ((name == "function" || name == "string" || name == "kernel-context" || name == "state") && methods != 9)
+             throw std::runtime_error("unsupported type/method count");
+         }
+         if (!module_fits(p, 4, end)) throw std::runtime_error("truncated slot count");
+diff --git a/game/kernel/common/ottsel_signed_gstate.cpp b/game/kernel/common/ottsel_signed_gstate.cpp
+--- a/game/kernel/common/ottsel_signed_gstate.cpp
++++ b/game/kernel/common/ottsel_signed_gstate.cpp
+@@ -107,9 +107,14 @@
+                 slot.offset - segment.text_size <= segment.data_size - 4 && slot.name && *slot.name,
+                 "slot outside writable data");
+         require(slot.kind == SlotKind::SymbolOffset || slot.kind == SlotKind::SymbolAddress ||
+-                (slot.kind == SlotKind::TypePointer && (!std::strcmp(slot.name, "string") ||
+-                 !std::strcmp(slot.name, "kernel-context") || !std::strcmp(slot.name, "state")) && slot.methods == 9),
+-                "unsupported writable slot");
++                slot.kind == SlotKind::TypePointer, "unsupported writable slot");
++        // A Type slot is interned by (name, methods) at load time, so any
++        // data-side type resolves. The runtime registers the bootstrap types at
++        // exactly nine methods, so those three names keep their pinned count.
++        // Text-side Type slots are function tags, checked separately above.
++        if (slot.kind == SlotKind::TypePointer && (!std::strcmp(slot.name, "string") ||
++            !std::strcmp(slot.name, "kernel-context") || !std::strcmp(slot.name, "state")))
++          require(slot.methods == 9, "unsupported bootstrap writable type");
+       }
+     }
+     for (size_t i = 0; i < segment.pointer_count; ++i) {

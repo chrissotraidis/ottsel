@@ -1,7 +1,8 @@
 # Ottsel iPadOS/iOS goal loop — active mobile queue
 
 The current macOS build is the accepted behavioral reference. iPadOS is now
-the active product gate. `docs/BOT36_PROMPT.md` is authoritative.
+the active product gate. `docs/RECOVERY_GOAL_LOOP.md` is the current execution
+authority; this document retains the detailed gate definitions.
 
 ## Gate M0 — accepted macOS reference
 

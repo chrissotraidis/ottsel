@@ -1,0 +1,302 @@
+--- /dev/null
++++ b/game/kernel/common/ottsel_signed_exports.cpp
+@@ -0,0 +1,105 @@
++#include "ottsel_signed_exports.h"
++#ifdef OTTSEL_SIGNED_EXPORT_BANKS
++#include <TargetConditionals.h>
++#if TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR
++#error Signed export banks are an experiment; complete signed runtime is not ready for device
++#endif
++#include <mach/mach.h>
++#include <mach/vm_map.h>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include "common/goal_constants.h"
++#include "common/log/log.h"
++#include "common/symbols.h"
++#include "game/kernel/common/kscheme.h"
++extern "C" uint8_t ottsel_export_bank_begin[],ottsel_export_bank_end[];
++extern "C" uintptr_t ottsel_export_bank_targets[279][2];
++namespace ottsel::signed_exports {
++namespace {
++bool started=false;
++uint8_t* generation_base=nullptr;
++std::array<uint32_t,6> used{};
++[[noreturn]] void fail(const char* reason) {
++  std::fprintf(stderr,"SIGNED EXPORT BANKS rejected: %s\n",reason);std::abort();
++}
++void require(bool condition,const char* reason) { if(!condition)fail(reason); }
++void permissions(void* pointer,size_t size,vm_prot_t expected) {
++  uintptr_t cursor=reinterpret_cast<uintptr_t>(pointer),end=cursor+size;
++  require(end>=cursor,"VM range overflow");
++  while(cursor<end) {
++    vm_address_t begin=cursor;vm_size_t length=0;
++    vm_region_basic_info_data_64_t info{};
++    mach_msg_type_number_t n=VM_REGION_BASIC_INFO_COUNT_64;mach_port_t object=MACH_PORT_NULL;
++    auto result=vm_region_64(mach_task_self(),&begin,&length,VM_REGION_BASIC_INFO_64,
++                            reinterpret_cast<vm_region_info_t>(&info),&n,&object);
++    if(object!=MACH_PORT_NULL)mach_port_deallocate(mach_task_self(),object);
++    require(result==KERN_SUCCESS && begin<=cursor && begin+length>cursor &&
++            info.protection==expected && !(expected&VM_PROT_EXECUTE && info.max_protection!=expected),
++            "bank VM protection mismatch");
++    cursor=begin+length;
++  }
++}
++uint32_t bank_begin(Kind kind) {
++  uint32_t index=0;for(uint32_t k=0;k<uint32_t(kind);++k)index+=capacities[k];return index;
++}
++uint32_t goal_pointer(uint32_t slot) {
++  uintptr_t entry=reinterpret_cast<uintptr_t>(ottsel_export_bank_begin)+slot*stride+4;
++  uintptr_t base=reinterpret_cast<uintptr_t>(generation_base);
++  require(entry>=base && entry-base<=UINT32_MAX,"entry outside common pointer window");
++  return uint32_t(entry-base);
++}
++}
++void begin_generation() {
++  require(!started,"generation already active; live slot reuse forbidden");
++  require(g_ee_main_mem,"arena absent");
++  const uintptr_t first=reinterpret_cast<uintptr_t>(ottsel_export_bank_begin);
++  const uintptr_t last=reinterpret_cast<uintptr_t>(ottsel_export_bank_end);
++  const uintptr_t base=reinterpret_cast<uintptr_t>(g_ee_main_mem);
++  require(first%8==0 && last-first==count*stride && first>=base+EE_MAIN_MEM_SIZE &&
++          last>=first && last-base<=UINT32_MAX,"invalid signed bank layout");
++  permissions(ottsel_export_bank_begin,count*stride,VM_PROT_READ|VM_PROT_EXECUTE);
++  permissions(ottsel_export_bank_targets,sizeof(ottsel_export_bank_targets),VM_PROT_READ|VM_PROT_WRITE);
++  for(uint32_t i=0;i<count;++i) {
++    uint32_t tag;std::memcpy(&tag,ottsel_export_bank_begin+i*stride,4);
++    require(tag==function_type,"immutable bank Type mismatch");
++    require(!ottsel_export_bank_targets[i][0] && !ottsel_export_bank_targets[i][1],"nonempty new generation descriptor");
++  }
++  generation_base=g_ee_main_mem;started=true;
++  lg::info("SIGNED EXPORT BANKS: generation ready slots={} bytes={} first=0x{:x}", count, count*stride, goal_pointer(0));
++}
++uint32_t bind(Kind kind,uintptr_t target,uint32_t stack_size) {
++  require(started && generation_base==g_ee_main_mem,"inactive or changed arena generation");
++  const uint32_t k=uint32_t(kind);
++  require(k<capacities.size(),"unknown bridge kind");
++  require(s7.offset && *(s7+jak1_symbols::FIX_SYM_FUNCTION_TYPE)==function_type,"bootstrap function Type mismatch");
++  const bool leaf=kind==Kind::Nothing || kind==Kind::Zero;
++  require(leaf?!target:bool(target),"invalid bridge target");
++  require(kind==Kind::Mips2C ? (stack_size%16==0 && stack_size<=4096) : stack_size==0,
++          "invalid bridge stack contract");
++  require(used[k]<capacities[k],"bank exhausted");
++  const uint32_t slot=bank_begin(kind)+used[k];
++  const uint32_t entry=goal_pointer(slot);
++  // Publish exactly once, after every rejection check; instruction bytes never change.
++  ottsel_export_bank_targets[slot][0]=target;
++  ottsel_export_bank_targets[slot][1]=stack_size;
++  ++used[k];
++  if(used[k]==capacities[k]) lg::info("SIGNED EXPORT BANKS: kind={} bound={}/{}", k, used[k], capacities[k]);
++  return entry;
++}
++bool valid_function(uint32_t pointer) {
++  if(!started || generation_base!=g_ee_main_mem || !s7.offset ||
++     *(s7+jak1_symbols::FIX_SYM_FUNCTION_TYPE)!=function_type)return false;
++  uintptr_t address=reinterpret_cast<uintptr_t>(generation_base)+pointer;
++  uintptr_t first=reinterpret_cast<uintptr_t>(ottsel_export_bank_begin)+4;
++  if(address<first || address-first>=count*stride || (address-first)%stride)return false;
++  uint32_t index=uint32_t((address-first)/stride),start=0;
++  for(size_t k=0;k<capacities.size();++k) {
++    if(index<start+capacities[k])return index-start<used[k];
++    start+=capacities[k];
++  }
++  return false;
++}
++std::array<uint32_t,6> usage() { return used; }
++}
++#endif
+--- /dev/null
++++ b/game/kernel/common/ottsel_signed_exports.h
+@@ -0,0 +1,17 @@
++#pragma once
++#include <array>
++#include <cstdint>
++namespace ottsel::signed_exports {
++enum class Kind : uint32_t { Normal, Process, Stack, Mips2C, Nothing, Zero };
++inline constexpr std::array<uint32_t,6> capacities{177,3,4,93,1,1};
++inline constexpr uint32_t count=279, stride=64, function_type=0x1bfec4;
++#ifdef OTTSEL_SIGNED_EXPORT_BANKS
++// One cold boot, on the GOAL thread. No live rebinding/recycling is supported.
++void begin_generation();
++uint32_t bind(Kind kind, uintptr_t target=0, uint32_t stack_size=0);
++bool valid_function(uint32_t pointer);
++std::array<uint32_t,6> usage();
++#else
++inline bool valid_function(uint32_t) { return false; }
++#endif
++}
+--- a/game/kernel/jak1/kscheme.cpp
++++ b/game/kernel/jak1/kscheme.cpp
+@@ -1,3 +1,4 @@
++#include "game/kernel/common/ottsel_signed_exports.h"
+ #include "game/kernel/common/ottsel_signed_gstate.h"
+ #include "kscheme.h"
+ 
+@@ -385,6 +386,9 @@
+ u32 g_ottsel_stub_last_off = 0;
+ 
+ u32 ottsel_stub_alloc(u32 size) {
++#ifdef OTTSEL_SIGNED_EXPORT_BANKS
++  std::abort(); // Signed-bank mode must never emit or re-protect runtime stubs.
++#endif
+   u32 base = ottsel_stub_arena_base();
+   u32 off = base + g_ottsel_stub_next * OTTSEL_STUB_SLOT;
+   ASSERT_MSG(size <= OTTSEL_STUB_SLOT, "stub too large for arena slot");
+@@ -403,6 +407,9 @@
+ }
+ 
+ void ottsel_stub_seal_last() {
++#ifdef OTTSEL_SIGNED_EXPORT_BANKS
++  std::abort(); // Signed-bank mode must never emit or re-protect runtime stubs.
++#endif
+   const uintptr_t page = (uintptr_t)sysconf(_SC_PAGESIZE);
+   u32 off = g_ottsel_stub_last_off;
+   uintptr_t lo = (uintptr_t)(::g_ee_main_mem + off) & ~(page - 1);
+@@ -419,6 +426,9 @@
+ }
+ 
+ void ottsel_stub_flip_phase_a() {
++#ifdef OTTSEL_SIGNED_EXPORT_BANKS
++  return; // All bank text is immutable RX from link time.
++#endif
+   if (g_ottsel_stub_use_b) {
+     return;  // already flipped
+   }
+@@ -430,6 +440,9 @@
+ }
+ 
+ void ottsel_stub_flip_phase_b() {
++#ifdef OTTSEL_SIGNED_EXPORT_BANKS
++  return; // All bank text is immutable RX from link time.
++#endif
+   if (g_ottsel_stub_b_flipped) {
+     return;
+   }
+@@ -445,7 +458,9 @@
+  * But calling this function is fast. It used to be really fast but wrong.
+  */
+ Ptr<Function> make_function_from_c_systemv(void* func, bool arg3_is_pp) {
+-#if defined(OTTSEL_NO_EMIT) && defined(__aarch64__)
++#ifdef OTTSEL_SIGNED_EXPORT_BANKS
++  return Ptr<Function>(ottsel::signed_exports::bind(arg3_is_pp ? ottsel::signed_exports::Kind::Process : ottsel::signed_exports::Kind::Normal, reinterpret_cast<uintptr_t>(func)));
++#elif defined(OTTSEL_NO_EMIT) && defined(__aarch64__)
+   // Ottsel H3 no-emit: write the stub into the executable stub arena, not the
+   // RW-only GOAL heap.  The arena pages are flipped RX before GOAL runs.
+   const u32 slot = ottsel_stub_alloc(0x40);
+@@ -658,7 +673,9 @@
+ }
+ 
+ Ptr<Function> make_stack_arg_function_from_c_systemv(void* func) {
+-#if defined(OTTSEL_NO_EMIT) && defined(__aarch64__)
++#ifdef OTTSEL_SIGNED_EXPORT_BANKS
++  return Ptr<Function>(ottsel::signed_exports::bind(ottsel::signed_exports::Kind::Stack, reinterpret_cast<uintptr_t>(func)));
++#elif defined(OTTSEL_NO_EMIT) && defined(__aarch64__)
+   // Ottsel H3 no-emit: same static-stub pattern as make_function_from_c, but
+   // the trampoline is _stack_call_arm64 (GOAL args are copied into a stack
+   // array and the array pointer is passed as the first argument).
+@@ -805,7 +822,9 @@
+  * Create a GOAL function which does nothing and immediately returns.
+  */
+ Ptr<Function> make_nothing_func() {
+-#if defined(OTTSEL_NO_EMIT) && defined(__aarch64__)
++#ifdef OTTSEL_SIGNED_EXPORT_BANKS
++  return Ptr<Function>(ottsel::signed_exports::bind(ottsel::signed_exports::Kind::Nothing));
++#elif defined(OTTSEL_NO_EMIT) && defined(__aarch64__)
+   const u32 slot = ottsel_stub_alloc(0x10);
+   auto mem = Ptr<u8>(slot + 4);
+   *Ptr<u32>(slot).c() = *(s7 + FIX_SYM_FUNCTION_TYPE);
+@@ -831,7 +850,9 @@
+  * Create a GOAL function which returns 0.
+  */
+ Ptr<Function> make_zero_func() {
+-#if defined(OTTSEL_NO_EMIT) && defined(__aarch64__)
++#ifdef OTTSEL_SIGNED_EXPORT_BANKS
++  return Ptr<Function>(ottsel::signed_exports::bind(ottsel::signed_exports::Kind::Zero));
++#elif defined(OTTSEL_NO_EMIT) && defined(__aarch64__)
+   const u32 slot = ottsel_stub_alloc(0x10);
+   auto mem = Ptr<u8>(slot + 4);
+   *Ptr<u32>(slot).c() = *(s7 + FIX_SYM_FUNCTION_TYPE);
+@@ -1566,7 +1587,7 @@
+ }
+ 
+ u64 ottsel_signed_function_valid(u64 obj) {
+-  return s7.offset + (obj <= UINT32_MAX && ottsel::signed_gstate::valid_function(u32(obj)) ? jak1_symbols::FIX_SYM_TRUE : 0);
++  return s7.offset + (obj <= UINT32_MAX && (ottsel::signed_gstate::valid_function(u32(obj)) || ottsel::signed_exports::valid_function(u32(obj))) ? jak1_symbols::FIX_SYM_TRUE : 0);
+ }
+ 
+ u64 print_object(u32 obj);
+@@ -1590,7 +1611,7 @@
+   if ((obj & OFFSET_MASK) == BINTEGER_OFFSET) {
+     return print_binteger(s64(s32(obj)));
+   } else {
+-    if (((obj < SymbolTable2.offset || 0x7ffffff < obj) && !ottsel::signed_gstate::valid_function(obj)) &&  // not in normal memory
++    if (((obj < SymbolTable2.offset || 0x7ffffff < obj) && !(ottsel::signed_gstate::valid_function(obj) || ottsel::signed_exports::valid_function(obj))) &&  // not in normal memory
+         (obj < 0x84000 || 0x100000 <= obj)) {              // not in kernel memory
+       cprintf("#<invalid object #x%x>", obj);
+     } else if ((obj & OFFSET_MASK) == PAIR_OFFSET) {
+@@ -1609,7 +1630,7 @@
+  * Confirms basic is valid and prints the type name.
+  */
+ u64 print_basic(u32 obj) {
+-  if ((((obj < SymbolTable2.offset || 0x7ffffff < obj) && !ottsel::signed_gstate::valid_function(obj)) &&  // not in normal memory
++  if ((((obj < SymbolTable2.offset || 0x7ffffff < obj) && !(ottsel::signed_gstate::valid_function(obj) || ottsel::signed_exports::valid_function(obj))) &&  // not in normal memory
+        (obj < 0x84000 || 0x100000 <= obj))                // not in kernel memory
+       || ((obj & OFFSET_MASK) != BASIC_OFFSET)) {
+     cprintf("#<invalid basic #x%x>", obj);
+@@ -1750,7 +1771,7 @@
+   if ((obj & OFFSET_MASK) == BINTEGER_OFFSET) {
+     return inspect_binteger(obj);
+   } else {
+-    if (((obj < SymbolTable2.offset || 0x7ffffff < obj) && !ottsel::signed_gstate::valid_function(obj)) &&  // not in normal memory
++    if (((obj < SymbolTable2.offset || 0x7ffffff < obj) && !(ottsel::signed_gstate::valid_function(obj) || ottsel::signed_exports::valid_function(obj))) &&  // not in normal memory
+         (obj < 0x84000 || 0x100000 <= obj)) {              // not in kernel memory
+       cprintf("#<invalid object #x%x>", obj);
+     } else if ((obj & OFFSET_MASK) == PAIR_OFFSET) {
+@@ -1841,7 +1862,7 @@
+  * We just use print_object.
+  */
+ u64 inspect_basic(u32 obj) {
+-  if ((((obj < SymbolTable2.offset || 0x7ffffff < obj) && !ottsel::signed_gstate::valid_function(obj)) &&  // not in normal memory
++  if ((((obj < SymbolTable2.offset || 0x7ffffff < obj) && !(ottsel::signed_gstate::valid_function(obj) || ottsel::signed_exports::valid_function(obj))) &&  // not in normal memory
+        (obj < 0x84000 || 0x100000 <= obj))                // not in kernel memory
+       || ((obj & OFFSET_MASK) != BASIC_OFFSET)) {
+     cprintf("#<invalid basic #x%x>\n", obj);
+@@ -1891,6 +1912,9 @@
+  * This takes care of all initialization that isn't for the hardware itself.
+  */
+ s32 InitHeapAndSymbol() {
++#ifdef OTTSEL_SIGNED_EXPORT_BANKS
++  ottsel::signed_exports::begin_generation(); // Reject re-entry before registry/heap mutation.
++#endif
+   Timer heap_init_timer;
+   // reset all mips2c functions
+   Mips2C::gLinkedFunctionTable = {};
+--- a/game/mips2c/mips2c_table.cpp
++++ b/game/mips2c/mips2c_table.cpp
+@@ -1,3 +1,4 @@
++#include "game/kernel/common/ottsel_signed_exports.h"
+ #include "mips2c_table.h"
+ 
+ #include "common/log/log.h"
+@@ -213,6 +214,12 @@
+ void _mips2c_call_arm64() asm("_mips2c_call_arm64");
+ 
+ void LinkedFunctionTable::reg(const std::string& name, u64 (*exec)(void*), u32 stack_size) {
++#ifdef OTTSEL_SIGNED_EXPORT_BANKS
++  if (m_executes.find(name) != m_executes.end()) return;
++  const auto entry = ottsel::signed_exports::bind(ottsel::signed_exports::Kind::Mips2C,
++                                                reinterpret_cast<uintptr_t>(exec), stack_size);
++  m_executes.insert({name, {exec, Ptr<u8>(entry)}});
++#else
+   const auto& it = m_executes.insert({name, {exec, Ptr<u8>()}});
+   if (!it.second) {
+     // Already registered (pre-registered before the arena RX flip; the
+@@ -310,6 +317,7 @@
+     *ptr = 0xe0;
+   }
+   it.first->second.goal_trampoline = mem;
++#endif
+ #endif
+ }
+ 

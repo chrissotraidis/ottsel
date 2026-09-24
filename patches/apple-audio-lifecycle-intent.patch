@@ -1,0 +1,82 @@
+--- a/game/sound/989snd/player.cpp
++++ b/game/sound/989snd/player.cpp
+@@ -40,6 +40,7 @@
+   SDL_AudioStream* stream = nullptr;
+   bool opening = false;
+   bool shutting_down = false;
++  bool pause_requested = false;  // Persists while asynchronous device open is pending.
+   std::thread opening_thread;
+   std::chrono::steady_clock::time_point retry_not_before{};
+ };
+@@ -141,29 +142,36 @@
+       return;
+     }
+     const auto opened_device = SDL_GetAudioStreamDevice(stream);
+-    if (!SDL_ResumeAudioDevice(opened_device)) {
+-      lg::error("OTTSEL AUDIO: SDL playback stream start failed: {}", SDL_GetError());
+-      SDL_DestroyAudioStream(stream);
+-      SDL_QuitSubSystem(SDL_INIT_AUDIO);
+-      failed();
+-      return;
+-    }
++    bool start_failed = false;
++    bool opened_paused = false;
+     {
+       std::scoped_lock lock(g_apple_playback.player_mutex);
+       if (g_apple_playback.shutting_down || !g_apple_playback.player) {
+         g_apple_playback.opening = false;
+       } else {
+-        g_apple_playback.stream = stream;
+-        g_apple_playback.opening = false;
+-        stream = nullptr;
++        // OpenAudioDeviceStream starts paused. Decide whether to resume under
++        // the same lock that changes lifecycle intent and publishes the stream.
++        opened_paused = g_apple_playback.pause_requested;
++        if (!opened_paused && !SDL_ResumeAudioDevice(opened_device)) {
++          start_failed = true;
++        } else {
++          g_apple_playback.stream = stream;
++          g_apple_playback.opening = false;
++          stream = nullptr;
++        }
+       }
++    }
++    if (start_failed) {
++      lg::error("OTTSEL AUDIO: SDL playback stream start failed: {}", SDL_GetError());
++      failed();
+     }
+     if (stream) {
+       SDL_DestroyAudioStream(stream);
+       SDL_QuitSubSystem(SDL_INIT_AUDIO);
+       return;
+     }
+-    lg::info("OTTSEL AUDIO: SDL output-only playback stream started device={}", opened_device);
++    lg::info("OTTSEL AUDIO: SDL output-only playback stream opened device={} paused={}",
++             opened_device, opened_paused);
+     const char* opened_name = SDL_GetAudioDeviceName(opened_device);
+     lg::info("OTTSEL AUDIO: opened playback route='{}'", opened_name ? opened_name : "");
+     });
+@@ -182,6 +190,7 @@
+     if (g_apple_playback.player == this) {
+       g_apple_playback.player = nullptr;
+       g_apple_playback.shutting_down = true;
++      g_apple_playback.pause_requested = false;
+       stream = g_apple_playback.stream;
+       g_apple_playback.stream = nullptr;
+       if (g_apple_playback.opening_thread.joinable()) {
+@@ -204,6 +213,7 @@
+ void Player::PauseOutput() {
+ #ifdef __APPLE__
+   std::scoped_lock lock(g_apple_playback.player_mutex);
++  g_apple_playback.pause_requested = true;
+   if (g_apple_playback.stream) {
+     if (!SDL_PauseAudioStreamDevice(g_apple_playback.stream)) {
+       lg::warn("OTTSEL AUDIO: output pause failed: {}", SDL_GetError());
+@@ -217,6 +227,7 @@
+ void Player::ResumeOutput() {
+ #ifdef __APPLE__
+   std::scoped_lock lock(g_apple_playback.player_mutex);
++  g_apple_playback.pause_requested = false;
+   if (g_apple_playback.stream) {
+     if (!SDL_ResumeAudioStreamDevice(g_apple_playback.stream)) {
+       lg::warn("OTTSEL AUDIO: output resume failed: {}", SDL_GetError());
