@@ -25,7 +25,6 @@ Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
 
 ## Log (last eight lines)
 
-2026-09-24 G1.2: Misty signed (372); streamed levels exempt from list order; art twins declined; route runs no unsigned code.
 2026-09-24 G1.3: real IOP on iOS; fake-IOP GOAL workarounds reverted; streamed reload; the full intro plays to Geyser Rock.
 2026-09-24 G1 met: 518/518 signed, strict exec on, intro to Geyser Rock with 0 aborts; fake IOP and overlays deleted.
 2026-09-24 Renderer: upstream OpenGL renderer on GLES 3.0 (shaders cross-compiled); title matches macOS, 0 GL errors.
@@ -33,3 +32,4 @@ Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
 2026-09-24 G2 prep: install-ios-device.sh (sign/provision/install/pack/launch); last GL ES error fixed; load -> Training, 0 GL errors.
 2026-09-24 Touch: SunPad-style UIKit controller replaces the GL-drawn regions; XCUITest plays to Training by touch.
 2026-09-24 ANGLE: GLES on Metal; Simulator Training 1-2 -> 23-25 fps full-res; unsigned vertex inputs fixed for Metal.
+2026-09-24 Title streaks: Sprite3 strip+restart joined sprites on ANGLE/Metal; quads now drawn as triangles. Clean title/menu.

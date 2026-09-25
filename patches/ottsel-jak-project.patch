@@ -706,7 +706,7 @@ index 4d31fae4e..b303f4a5d 100644
    struct TestState {
      void from_register(GsTest reg);
 diff --git a/game/graphics/opengl_renderer/OpenGLRenderer.cpp b/game/graphics/opengl_renderer/OpenGLRenderer.cpp
-index cc19099d4..7a1cfb33b 100644
+index cc19099d4..94418cda7 100644
 --- a/game/graphics/opengl_renderer/OpenGLRenderer.cpp
 +++ b/game/graphics/opengl_renderer/OpenGLRenderer.cpp
 @@ -1,8 +1,11 @@
@@ -871,7 +871,36 @@ index cc19099d4..7a1cfb33b 100644
    // The first thing the DMA chain should be a call to a common default-registers chain.
    // this chain resets the state of the GS. After this is buckets
    m_category_times.fill(0);
-@@ -1326,12 +1409,23 @@ void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
+@@ -1323,15 +1406,61 @@ void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
+   ASSERT(dma.current_tag_offset() == m_render_state.next_bucket);
+   m_render_state.next_bucket += 16;
+ 
++#ifdef OTTSEL_GLES
++  // Diagnostic: <app Documents>/ottsel-buckets-off lists substrings of bucket names (one per line) whose
++  // renderers are skipped, so an artifact can be pinned to a renderer without relaunching.
++  static std::vector<std::string> ottsel_off;
++  static int ottsel_off_poll = 0;
++  if (ottsel_off_poll++ % 30 == 0) {
++    std::vector<std::string> names;
++    if (const char* home = std::getenv("HOME")) {
++      if (FILE* f = std::fopen((std::string(home) + "/Documents/ottsel-buckets-off").c_str(), "r")) {
++        char line[128];
++        while (std::fgets(line, sizeof(line), f)) {
++          std::string n(line);
++          while (!n.empty() && (n.back() == '\n' || n.back() == '\r' || n.back() == ' ')) n.pop_back();
++          if (!n.empty()) names.push_back(n);
++        }
++        std::fclose(f);
++      }
++    }
++    if (names != ottsel_off) {
++      ottsel_off = names;
++      std::string list;
++      for (auto& n : names) list += n + " ";
++      lg::info("OTTSEL BUCKETS OFF: [{}]", list);
++    }
++  }
++#endif
    // loop over the buckets!
    for (size_t bucket_id = 0; bucket_id < m_bucket_renderers.size(); bucket_id++) {
      auto& renderer = m_bucket_renderers[bucket_id];
@@ -879,6 +908,15 @@ index cc19099d4..7a1cfb33b 100644
      auto bucket_prof = prof.make_scoped_child(renderer->name_and_id());
      g_current_renderer = renderer->name_and_id();
      // lg::info("Render: {} start", g_current_renderer);
++#ifdef OTTSEL_GLES
++    bool ottsel_skip = false;
++    for (auto& n : ottsel_off) {
++      if (renderer->name_and_id().find(n) != std::string::npos) ottsel_skip = true;
++    }
++    if (ottsel_skip) {
++      while (dma.current_tag_offset() != m_render_state.next_bucket) dma.read_and_advance();
++    } else
++#endif
      renderer->render(dma, &m_render_state, bucket_prof);
 +    OTTSEL_GL_CHECK();
 +    if (ottsel_trace_active) {
@@ -895,7 +933,7 @@ index cc19099d4..7a1cfb33b 100644
        glFinish();
      }
  
-@@ -1349,6 +1443,11 @@ void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
+@@ -1349,6 +1478,11 @@ void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
      }
    }
  
@@ -907,7 +945,7 @@ index cc19099d4..7a1cfb33b 100644
    // TODO ending data.
  }
  
-@@ -1370,6 +1469,7 @@ void OpenGLRenderer::dispatch_buckets_jak2(DmaFollower dma,
+@@ -1370,6 +1504,7 @@ void OpenGLRenderer::dispatch_buckets_jak2(DmaFollower dma,
      g_current_renderer = renderer->name_and_id();
      // lg::info("Render: {} start", g_current_renderer);
      renderer->render(dma, &m_render_state, bucket_prof);
@@ -915,7 +953,7 @@ index cc19099d4..7a1cfb33b 100644
      if (sync_after_buckets) {
        auto pp = scoped_prof("finish");
        glFinish();
-@@ -1412,6 +1512,7 @@ void OpenGLRenderer::dispatch_buckets_jak3(DmaFollower dma,
+@@ -1412,6 +1547,7 @@ void OpenGLRenderer::dispatch_buckets_jak3(DmaFollower dma,
      g_current_renderer = renderer->name_and_id();
      // lg::info("Render: {} start", g_current_renderer);
      renderer->render(dma, &m_render_state, bucket_prof);
@@ -2481,7 +2519,7 @@ index e576bc0d5..89b9aed93 100644
      auto status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
      if (status != GL_FRAMEBUFFER_COMPLETE) {
 diff --git a/game/graphics/opengl_renderer/sprite/Sprite3.cpp b/game/graphics/opengl_renderer/sprite/Sprite3.cpp
-index 9918d76d3..c7a3ec6d2 100644
+index 9918d76d3..a8b91914f 100644
 --- a/game/graphics/opengl_renderer/sprite/Sprite3.cpp
 +++ b/game/graphics/opengl_renderer/sprite/Sprite3.cpp
 @@ -1,5 +1,9 @@
@@ -2722,7 +2760,57 @@ index 9918d76d3..c7a3ec6d2 100644
  }
  
  void Sprite3::draw_debug_window() {
-@@ -622,9 +774,23 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
+@@ -594,11 +746,30 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
+ 
+   // two passes through the buckets. first to build the index buffer
+   u32 idx_offset = 0;
++#ifdef OTTSEL_GLES
++  // Each sprite is a 4-vertex strip followed by a restart index. On ANGLE/Metal the strips were not
++  // restarted, so every sprite was joined to the next by long thin triangles (streaks across the
++  // screen). Draw each quad as two independent triangles instead: identical coverage, no restart.
++  std::vector<u32> ottsel_tri_counts;
++  if (m_index_buffer_data.size() < (size_t)m_sprite_idx * 6 + 6) {
++    m_index_buffer_data.resize((size_t)m_sprite_idx * 6 + 6);
++  }
++  for (const auto bucket : m_bucket_list) {
++    bucket->offset_in_idx_buffer = idx_offset;
++    for (size_t i = 0; i + 4 < bucket->ids.size() + 1 && i + 3 < bucket->ids.size(); i += 5) {
++      const u32 a = bucket->ids[i], b = bucket->ids[i + 1], c = bucket->ids[i + 2],
++                d = bucket->ids[i + 3];
++      for (u32 v : {a, b, c, c, b, d}) m_index_buffer_data[idx_offset++] = v;
++    }
++    ottsel_tri_counts.push_back(idx_offset - bucket->offset_in_idx_buffer);
++  }
++#else
+   for (const auto bucket : m_bucket_list) {
+     memcpy(&m_index_buffer_data[idx_offset], bucket->ids.data(), bucket->ids.size() * sizeof(u32));
+     bucket->offset_in_idx_buffer = idx_offset;
+     idx_offset += bucket->ids.size();
+   }
++#endif
+ 
+   // now upload it
+   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ogl.index_buffer);
+@@ -606,7 +777,18 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
+                GL_STREAM_DRAW);
+ 
+   // now do draws!
++#ifdef OTTSEL_GLES
++  size_t ottsel_bucket_index = 0;
++  const GLenum ottsel_prim = GL_TRIANGLES;
++#else
++  const GLenum ottsel_prim = GL_TRIANGLE_STRIP;
++#endif
+   for (const auto bucket : m_bucket_list) {
++#ifdef OTTSEL_GLES
++    const GLsizei ottsel_count = (GLsizei)ottsel_tri_counts[ottsel_bucket_index++];
++#else
++    const GLsizei ottsel_count = (GLsizei)bucket->ids.size();
++#endif
+     u32 tbp = bucket->key >> 32;
+     DrawMode mode;
+     mode.as_int() = bucket->key & 0xffffffff;
+@@ -622,9 +804,23 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
  
      glActiveTexture(GL_TEXTURE0);
      glBindTexture(GL_TEXTURE_2D, *tex);
@@ -2746,7 +2834,25 @@ index 9918d76d3..c7a3ec6d2 100644
      glUniform1f(glGetUniformLocation(render_state->shaders[ShaderId::SPRITE3].id(), "alpha_min"),
                  double_draw ? settings.aref_first : 0.016);
      glUniform1f(glGetUniformLocation(render_state->shaders[ShaderId::SPRITE3].id(), "alpha_max"),
-@@ -815,6 +981,25 @@ void Sprite3::do_block_common(SpriteMode mode,
+@@ -634,7 +830,7 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
+     prof.add_draw_call();
+     prof.add_tri(2 * (bucket->ids.size() / 5));
+ 
+-    glDrawElements(GL_TRIANGLE_STRIP, bucket->ids.size(), GL_UNSIGNED_INT,
++    glDrawElements(ottsel_prim, ottsel_count, GL_UNSIGNED_INT,
+                    (void*)(bucket->offset_in_idx_buffer * sizeof(u32)));
+ 
+     if (double_draw) {
+@@ -651,7 +847,7 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
+               glGetUniformLocation(render_state->shaders[ShaderId::SPRITE3].id(), "alpha_max"),
+               settings.aref_second);
+           glDepthMask(GL_FALSE);
+-          glDrawElements(GL_TRIANGLE_STRIP, bucket->ids.size(), GL_UNSIGNED_INT,
++          glDrawElements(ottsel_prim, ottsel_count, GL_UNSIGNED_INT,
+                          (void*)(bucket->offset_in_idx_buffer * sizeof(u32)));
+           break;
+         default:
+@@ -815,6 +1011,25 @@ void Sprite3::do_block_common(SpriteMode mode,
      }
      handle_alpha(adgif.alpha_data, render_state, prof);
  
