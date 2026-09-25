@@ -706,7 +706,7 @@ index 4d31fae4e..b303f4a5d 100644
    struct TestState {
      void from_register(GsTest reg);
 diff --git a/game/graphics/opengl_renderer/OpenGLRenderer.cpp b/game/graphics/opengl_renderer/OpenGLRenderer.cpp
-index cc19099d4..b62aa9864 100644
+index cc19099d4..7a1cfb33b 100644
 --- a/game/graphics/opengl_renderer/OpenGLRenderer.cpp
 +++ b/game/graphics/opengl_renderer/OpenGLRenderer.cpp
 @@ -1,8 +1,11 @@
@@ -729,7 +729,7 @@ index cc19099d4..b62aa9864 100644
  
  #include "third-party/imgui/imgui.h"
  #include "third-party/imgui/imgui_stdlib.h"
-@@ -41,6 +45,20 @@
+@@ -41,6 +45,21 @@
  
  namespace {
  std::string g_current_renderer;
@@ -738,7 +738,8 @@ index cc19099d4..b62aa9864 100644
 +// Only during the first frames: glGetError synchronizes with the GPU on hardware.
 +static void ottsel_gl_check() {
 +  static int reported = 0, calls = 0;
-+  if (++calls > 50000) return;
++  static const bool always = std::getenv("OTTSEL_GPU_SYNC") != nullptr;
++  if (++calls > 50000 && !always) return;
 +  for (GLenum e = glGetError(); e != GL_NO_ERROR; e = glGetError()) {
 +    if (reported++ < 80) lg::error("OTTSEL GL ERROR 0x{:x} after {}", e, g_current_renderer);
 +  }
@@ -750,7 +751,7 @@ index cc19099d4..b62aa9864 100644
  }
  
  /*!
-@@ -982,6 +1000,45 @@ void OpenGLRenderer::blit_display(ScopedProfilerNode& prof) {
+@@ -982,6 +1001,45 @@ void OpenGLRenderer::blit_display(ScopedProfilerNode& prof) {
   * Main render function. This is called from the gfx loop with the chain passed from the game.
   */
  void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
@@ -796,7 +797,7 @@ index cc19099d4..b62aa9864 100644
    m_profiler.clear();
    m_render_state.reset();
    m_render_state.ee_main_memory = g_ee_main_mem;
-@@ -994,6 +1051,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+@@ -994,6 +1052,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
      if (settings.gpu_sync) {
        glFinish();
      }
@@ -804,7 +805,7 @@ index cc19099d4..b62aa9864 100644
    }
  
    {
-@@ -1006,6 +1064,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+@@ -1006,6 +1065,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
      } else {
        m_render_state.loader->update(*m_render_state.texture_pool);
      }
@@ -812,7 +813,7 @@ index cc19099d4..b62aa9864 100644
    }
  
    // render the buckets!
-@@ -1024,6 +1083,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+@@ -1024,6 +1084,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
      g_current_renderer = "blit-display";
      auto prof = m_profiler.root()->make_scoped_child("blit-display");
      blit_display(prof);
@@ -820,7 +821,7 @@ index cc19099d4..b62aa9864 100644
    }
  
    // apply effects done with PCRTC registers, as well as blit the framebuffer to the window and
-@@ -1036,6 +1096,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+@@ -1036,6 +1097,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
      if (settings.gpu_sync) {
        glFinish();
      }
@@ -828,7 +829,7 @@ index cc19099d4..b62aa9864 100644
    }
  
    m_last_pmode_alp = settings.pmode_alp_register;
-@@ -1111,6 +1172,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+@@ -1111,6 +1173,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
      m_small_profiler.draw(m_render_state.load_status_debug, stats);
    }
  
@@ -836,7 +837,7 @@ index cc19099d4..b62aa9864 100644
    if (settings.draw_subtitle_editor_window) {
      g_current_renderer = "subtitle-editor-window";
      if (m_subtitle_editor == nullptr) {
-@@ -1118,6 +1180,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+@@ -1118,6 +1181,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
      }
      m_subtitle_editor->draw_window();
    }
@@ -844,7 +845,7 @@ index cc19099d4..b62aa9864 100644
  
    if (settings.draw_filters_window) {
      g_current_renderer = "filters-window";
-@@ -1291,6 +1354,25 @@ void OpenGLRenderer::setup_frame(const RenderOptions& settings) {
+@@ -1291,6 +1355,25 @@ void OpenGLRenderer::setup_frame(const RenderOptions& settings) {
  void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
                                             ScopedProfilerNode& prof,
                                             bool sync_after_buckets) {
@@ -870,7 +871,7 @@ index cc19099d4..b62aa9864 100644
    // The first thing the DMA chain should be a call to a common default-registers chain.
    // this chain resets the state of the GS. After this is buckets
    m_category_times.fill(0);
-@@ -1326,10 +1408,17 @@ void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
+@@ -1326,12 +1409,23 @@ void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
    // loop over the buckets!
    for (size_t bucket_id = 0; bucket_id < m_bucket_renderers.size(); bucket_id++) {
      auto& renderer = m_bucket_renderers[bucket_id];
@@ -887,8 +888,14 @@ index cc19099d4..b62aa9864 100644
 +    }
      if (sync_after_buckets) {
        auto pp = scoped_prof("finish");
++#ifdef OTTSEL_GLES
++      std::fprintf(stderr, "OTTSEL GPU SYNC: %s\n", g_current_renderer.c_str());
++      std::fflush(stderr);
++#endif
        glFinish();
-@@ -1349,6 +1438,11 @@ void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
+     }
+ 
+@@ -1349,6 +1443,11 @@ void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
      }
    }
  
@@ -900,7 +907,7 @@ index cc19099d4..b62aa9864 100644
    // TODO ending data.
  }
  
-@@ -1370,6 +1464,7 @@ void OpenGLRenderer::dispatch_buckets_jak2(DmaFollower dma,
+@@ -1370,6 +1469,7 @@ void OpenGLRenderer::dispatch_buckets_jak2(DmaFollower dma,
      g_current_renderer = renderer->name_and_id();
      // lg::info("Render: {} start", g_current_renderer);
      renderer->render(dma, &m_render_state, bucket_prof);
@@ -908,7 +915,7 @@ index cc19099d4..b62aa9864 100644
      if (sync_after_buckets) {
        auto pp = scoped_prof("finish");
        glFinish();
-@@ -1412,6 +1507,7 @@ void OpenGLRenderer::dispatch_buckets_jak3(DmaFollower dma,
+@@ -1412,6 +1512,7 @@ void OpenGLRenderer::dispatch_buckets_jak3(DmaFollower dma,
      g_current_renderer = renderer->name_and_id();
      // lg::info("Render: {} start", g_current_renderer);
      renderer->render(dma, &m_render_state, bucket_prof);
@@ -2793,10 +2800,10 @@ index a128a8617..c4513d54f 100644
  };
 diff --git a/game/graphics/ottsel_gles.cpp b/game/graphics/ottsel_gles.cpp
 new file mode 100644
-index 000000000..be0105475
+index 000000000..ade925ada
 --- /dev/null
 +++ b/game/graphics/ottsel_gles.cpp
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,111 @@
 +// Ottsel iOS: ES 3.0 glue for OpenGOAL's OpenGL renderer (see ottsel_gles_compat.h).
 +#ifdef OTTSEL_GLES
 +#include "game/graphics/ottsel_gles_compat.h"
@@ -2829,7 +2836,6 @@ index 000000000..be0105475
 +
 +GLuint g_ottsel_gles_window_fbo = 0;
 +
-+GLuint g_ottsel_gles_window_renderbuffer = 0;
 +
 +void ottsel_gles_bind_framebuffer(GLenum target, GLuint fbo) {
 +  glad_glBindFramebuffer(target, fbo == 0 ? g_ottsel_gles_window_fbo : fbo);
@@ -2911,10 +2917,10 @@ index 000000000..be0105475
 +#endif
 diff --git a/game/graphics/ottsel_gles_compat.h b/game/graphics/ottsel_gles_compat.h
 new file mode 100644
-index 000000000..0d32c5b75
+index 000000000..b41f30bc8
 --- /dev/null
 +++ b/game/graphics/ottsel_gles_compat.h
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,82 @@
 +#pragma once
 +// Ottsel iOS: run OpenGOAL's desktop OpenGL renderer on an OpenGL ES 3.0 context.
 +// Force-included (clang -include) into the renderer sources when OTTSEL_GLES is defined; it maps the
@@ -2965,7 +2971,7 @@ index 000000000..0d32c5b75
 +#define glBindTexture ottsel_gles_bind_texture
 +#undef glActiveTexture
 +#define glActiveTexture ottsel_gles_active_texture
-+// Framebuffer 0 means "the window" on desktop; on iOS the window is SDL's UIKit view framebuffer.
++// Framebuffer 0 is the window (the EGL surface); kept as a remap point for the window framebuffer.
 +#undef glBindFramebuffer
 +#define glBindFramebuffer ottsel_gles_bind_framebuffer
 +// Debug-only desktop features.
@@ -2993,13 +2999,12 @@ index 000000000..0d32c5b75
 +void ottsel_gles_tex_sub_image_1d(GLint level, GLint x, GLsizei w, GLenum fmt, GLenum type,
 +                                  const void* data);
 +extern GLuint g_ottsel_gles_window_fbo;
-+extern GLuint g_ottsel_gles_window_renderbuffer;
 +
 +// Load the ES 3.0 entry points glad skips (it only loads desktop GL <= 3.0 for an ES 3.0 context).
 +void ottsel_gles_load_missing(void* (*get_proc)(const char*));
 +#endif
 diff --git a/game/graphics/pipelines/opengl.cpp b/game/graphics/pipelines/opengl.cpp
-index d8d15c873..e1d090c57 100644
+index d8d15c873..f3509931c 100644
 --- a/game/graphics/pipelines/opengl.cpp
 +++ b/game/graphics/pipelines/opengl.cpp
 @@ -5,6 +5,8 @@
@@ -3054,7 +3059,19 @@ index d8d15c873..e1d090c57 100644
    // render that chain.
    if (got_chain) {
      g_gfx_data->frame_idx_of_input_data = g_gfx_data->frame_idx;
-@@ -587,6 +603,11 @@ void GLDisplay::process_sdl_events() {
+@@ -506,6 +522,11 @@ void render_game_frame(int game_width,
+     options.quick_screenshot = false;
+     options.internal_res_screenshot = false;
+     options.gpu_sync = g_gfx_data->debug_gui.should_gl_finish();
++#ifdef OTTSEL_GLES
++    // Diagnostic: finish the GPU after every bucket so a Metal validation failure names its renderer.
++    static const bool ottsel_gpu_sync = std::getenv("OTTSEL_GPU_SYNC") != nullptr;
++    options.gpu_sync = options.gpu_sync || ottsel_gpu_sync;
++#endif
+ 
+     if (take_screenshot) {
+       options.save_screenshot = true;
+@@ -587,6 +608,11 @@ void GLDisplay::process_sdl_events() {
   * Main function called to render graphics frames. This is called in a loop.
   */
  void GLDisplay::render() {
@@ -3066,7 +3083,7 @@ index d8d15c873..e1d090c57 100644
    // Before we process the current frames SDL events we for keyboard/mouse button inputs.
    //
    // This technically means that keyboard/mouse button inputs will be a frame behind but the
-@@ -742,15 +763,30 @@ void GLDisplay::render() {
+@@ -742,15 +768,30 @@ void GLDisplay::render() {
   * Wait for the next vsync. Returns 0 or 1 depending on if frame is even or odd.
   * Called from the game thread, on a GOAL stack.
   */
@@ -3097,7 +3114,7 @@ index d8d15c873..e1d090c57 100644
    return g_gfx_data->frame_idx & 1;
  }
  
-@@ -772,6 +808,12 @@ u32 gl_sync_path() {
+@@ -772,6 +813,12 @@ u32 gl_sync_path() {
   * Called from the game thread, on a GOAL stack.
   */
  void gl_send_chain(const void* data, u32 offset) {
@@ -3110,20 +3127,22 @@ index d8d15c873..e1d090c57 100644
    if (g_gfx_data) {
      std::unique_lock<std::mutex> lock(g_gfx_data->dma_mutex);
      if (g_gfx_data->has_data_to_render) {
-@@ -868,3 +910,240 @@ const GfxRendererModule gRendererOpenGL = {
+@@ -868,3 +915,283 @@ const GfxRendererModule gRendererOpenGL = {
      GfxPipeline::OpenGL,     // pipeline
      "OpenGL 4.3"             // name
  };
 +
 +#ifdef OTTSEL_GLES
 +// Ottsel iOS glue: the pieces of GLDisplay that apply to an iOS window (see ottsel_gl_view.h).
-+#include <TargetConditionals.h>
-+
 +#include <algorithm>
 +#include <atomic>
 +#include <chrono>
 +
 +#include "game/graphics/pipelines/ottsel_gl_view.h"
++
++#include <EGL/egl.h>
++#include <EGL/eglext.h>
++#include <EGL/eglext_angle.h>
 +
 +void ottsel_set_gfx_renderer(const GfxRendererModule* module);  // game/ios_stubs.cpp
 +
@@ -3134,6 +3153,11 @@ index d8d15c873..e1d090c57 100644
 +bool g_status_dirty = false;
 +int g_render_scale = 100;
 +std::atomic<bool> g_live_scene{false};
++
++// ANGLE's OpenGL ES on Metal, presenting into the window's CAMetalLayer.
++EGLDisplay g_egl_display = EGL_NO_DISPLAY;
++EGLSurface g_egl_surface = EGL_NO_SURFACE;
++EGLContext g_egl_context = EGL_NO_CONTEXT;
 +
 +GLuint g_view_program = 0, g_view_vao = 0, g_view_vbo = 0, g_status_tex = 0;
 +
@@ -3229,29 +3253,72 @@ index d8d15c873..e1d090c57 100644
 +}  // namespace
 +
 +bool ottsel_gl_attach(SDL_Window* window) {
-+  SDL_GLContext context = SDL_GL_CreateContext(window);
-+  if (!context || !SDL_GL_MakeCurrent(window, context)) {
-+    lg::error("OTTSEL GL: context creation failed: {}", SDL_GetError());
++  SDL_MetalView view = SDL_Metal_CreateView(window);
++  void* layer = view ? SDL_Metal_GetLayer(view) : nullptr;
++  if (!layer) {
++    lg::error("OTTSEL GL: no Metal layer: {}", SDL_GetError());
 +    return false;
 +  }
-+  if (!gladLoadGLLoader((GLADloadproc)SDL_GL_GetProcAddress)) {
++  const EGLAttrib display_attribs[] = {EGL_PLATFORM_ANGLE_TYPE_ANGLE,
++                                       EGL_PLATFORM_ANGLE_TYPE_METAL_ANGLE, EGL_NONE};
++  g_egl_display = eglGetPlatformDisplay(EGL_PLATFORM_ANGLE_ANGLE,
++                                        reinterpret_cast<void*>(EGL_DEFAULT_DISPLAY), display_attribs);
++  EGLint major = 0, minor = 0;
++  if (g_egl_display == EGL_NO_DISPLAY || !eglInitialize(g_egl_display, &major, &minor)) {
++    lg::error("OTTSEL GL: ANGLE Metal display failed: 0x{:x}", eglGetError());
++    return false;
++  }
++  eglBindAPI(EGL_OPENGL_ES_API);
++  const EGLint config_attribs[] = {EGL_RED_SIZE,        8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
++                                   EGL_ALPHA_SIZE,      8, EGL_DEPTH_SIZE, 24, EGL_STENCIL_SIZE, 8,
++                                   EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT, EGL_SURFACE_TYPE,
++                                   EGL_WINDOW_BIT,      EGL_NONE};
++  EGLConfig config = nullptr;
++  EGLint configs = 0;
++  if (!eglChooseConfig(g_egl_display, config_attribs, &config, 1, &configs) || configs < 1) {
++    lg::error("OTTSEL GL: no RGBA8/D24S8 ES3 config: 0x{:x}", eglGetError());
++    return false;
++  }
++  g_egl_surface = eglCreateWindowSurface(g_egl_display, config, layer, nullptr);
++  const EGLint context_attribs[] = {EGL_CONTEXT_MAJOR_VERSION, 3, EGL_CONTEXT_MINOR_VERSION, 0,
++                                    EGL_NONE};
++  g_egl_context = eglCreateContext(g_egl_display, config, EGL_NO_CONTEXT, context_attribs);
++  if (g_egl_surface == EGL_NO_SURFACE || g_egl_context == EGL_NO_CONTEXT ||
++      !eglMakeCurrent(g_egl_display, g_egl_surface, g_egl_surface, g_egl_context)) {
++    lg::error("OTTSEL GL: surface/context failed: 0x{:x}", eglGetError());
++    return false;
++  }
++  eglSwapInterval(g_egl_display, 1);
++  const auto proc = [](const char* name) { return (void*)eglGetProcAddress(name); };
++  if (!gladLoadGLLoader((GLADloadproc)+proc)) {
 +    lg::error("OTTSEL GL: glad could not load the GL API");
 +    return false;
 +  }
-+  ottsel_gles_load_missing([](const char* name) { return (void*)SDL_GL_GetProcAddress(name); });
-+  // Framebuffer 0 and the presented renderbuffer are SDL's UIKit view objects on iOS.
-+  const SDL_PropertiesID props = SDL_GetWindowProperties(window);
-+  g_ottsel_gles_window_fbo =
-+      (GLuint)SDL_GetNumberProperty(props, SDL_PROP_WINDOW_UIKIT_OPENGL_FRAMEBUFFER_NUMBER, 0);
-+  g_ottsel_gles_window_renderbuffer =
-+      (GLuint)SDL_GetNumberProperty(props, SDL_PROP_WINDOW_UIKIT_OPENGL_RENDERBUFFER_NUMBER, 0);
++  ottsel_gles_load_missing(+proc);
++  // ANGLE explains skipped or failed work through KHR_debug; route it to the log.
++  using DebugProc = void (*)(GLenum, GLenum, GLuint, GLenum, GLsizei, const GLchar*, const void*);
++  using SetCallback = void (*)(DebugProc, const void*);
++  if (auto set_callback = (SetCallback)eglGetProcAddress("glDebugMessageCallbackKHR")) {
++    glad_glEnable(0x92E0 /* GL_DEBUG_OUTPUT_KHR */);
++    set_callback(
++        [](GLenum, GLenum type, GLuint id, GLenum severity, GLsizei, const GLchar* message,
++           const void*) {
++          static int count = 0;
++          if (severity != 0x826B /* NOTIFICATION */ && count++ < 200) {
++            lg::warn("OTTSEL ANGLE: type=0x{:x} id={} severity=0x{:x} {}", type, id, severity,
++                     message);
++          }
++        },
++        nullptr);
++  }
++  // The EGL window surface is framebuffer 0.
++  g_ottsel_gles_window_fbo = 0;
 +  g_gfx_data = std::make_unique<GraphicsData>(GameVersion::Jak1);
 +  check_view_gl("renderer-init");
 +  gl_inited = true;
 +  ottsel_set_gfx_renderer(&gRendererOpenGL);
-+  check_view_gl("attach");
-+  lg::info("OTTSEL GL: {} | {} | window fbo {}", (const char*)glGetString(GL_VERSION),
-+           (const char*)glGetString(GL_RENDERER), g_ottsel_gles_window_fbo);
++  lg::info("OTTSEL GL: EGL {}.{} | {} | {}", major, minor, (const char*)glGetString(GL_VERSION),
++           (const char*)glGetString(GL_RENDERER));
 +  return true;
 +}
 +
@@ -3283,18 +3350,13 @@ index d8d15c873..e1d090c57 100644
 +
 +void ottsel_gl_render(SDL_Window* window) {
 +  // Mirrors GLDisplay::render() without the desktop window and imgui handling.
-+  int fb_w = 0, fb_h = 0;
-+  SDL_GetWindowSizeInPixels(window, &fb_w, &fb_h);
++  (void)window;
++  EGLint fb_w = 0, fb_h = 0;
++  eglQuerySurface(g_egl_display, g_egl_surface, EGL_WIDTH, &fb_w);
++  eglQuerySurface(g_egl_display, g_egl_surface, EGL_HEIGHT, &fb_h);
 +  auto& s = Gfx::g_global_settings;
 +  int game_w = std::max(320, fb_w * g_render_scale / 100);
 +  int game_h = std::max(240, fb_h * g_render_scale / 100);
-+#if TARGET_OS_SIMULATOR
-+  // The Simulator's OpenGL ES is a CPU rasterizer; keep its game resolution small enough to iterate.
-+  if (game_w > 512) {
-+    game_h = game_h * 512 / game_w;
-+    game_w = 512;
-+  }
-+#endif
 +  static int frames = 0;
 +  const auto start = std::chrono::steady_clock::now();
 +  const u64 frame_before = g_gfx_data->frame_idx;
@@ -3312,9 +3374,7 @@ index d8d15c873..e1d090c57 100644
 +  }
 +  draw_view_layers(fb_w, fb_h);
 +  if (frames <= 600) check_view_gl("view-layers");
-+  // UIKit presents whichever renderbuffer is bound; the renderer leaves its own depth buffers bound.
-+  glBindRenderbuffer(GL_RENDERBUFFER, g_ottsel_gles_window_renderbuffer);
-+  SDL_GL_SwapWindow(window);
++  eglSwapBuffers(g_egl_display, g_egl_surface);
 +  if (frames <= 600) check_view_gl("swap");
 +  // Where a frame's time goes, averaged over ~2 s: waiting for the game thread's DMA, drawing it, the
 +  // limiter/overlay/swap, the shell's own loop, and on the game thread its work vs its vsync wait.

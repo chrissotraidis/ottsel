@@ -7,7 +7,9 @@ Authority: [GOAL_LOOP.md](GOAL_LOOP.md). Full log before 2026-09-23:
 
 Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
 
-- Renderer: OpenGOAL's own OpenGL renderer is the only renderer (GLES 3.0). Title matches macOS, 0 GL
+- Renderer: OpenGOAL's own OpenGL renderer on OpenGL ES 3.0 from ANGLE on Metal (kivy/angle-builder
+  chromium-7151, fetched by build-ios.sh). Simulator: title 57 fps, Training 23-25 fps at full 2420x1668
+  (was 1-2 fps on Apple's CPU GLES). `OTTSEL PERF` logs the frame split. Title matches macOS, 0 GL
   errors, and the whole intro plays to Geyser Rock with the touch overlay drawn over it
   ([evidence](evidence/G3/upstream-gl-renderer-title-2026-09-24.md)). The Metal renderer is deleted (last: `df31425`).
 - G1: all 518 code modules signed; `OTTSEL_STRICT_EXEC` makes runtime code loading fatal; the whole intro
@@ -23,7 +25,6 @@ Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
 
 ## Log (last eight lines)
 
-2026-09-24 G1.1: Training signed (350); packs carry compiled DGOs; next MIS.DGO (22 modules now linked at runtime).
 2026-09-24 G1.2: Misty signed (372); streamed levels exempt from list order; art twins declined; route runs no unsigned code.
 2026-09-24 G1.3: real IOP on iOS; fake-IOP GOAL workarounds reverted; streamed reload; the full intro plays to Geyser Rock.
 2026-09-24 G1 met: 518/518 signed, strict exec on, intro to Geyser Rock with 0 aborts; fake IOP and overlays deleted.
@@ -31,3 +32,4 @@ Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
 2026-09-24 Metal renderer deleted (71 files); GL is the only path; intro plays to Geyser Rock on it, 0-byte fault log.
 2026-09-24 G2 prep: install-ios-device.sh (sign/provision/install/pack/launch); last GL ES error fixed; load -> Training, 0 GL errors.
 2026-09-24 Touch: SunPad-style UIKit controller replaces the GL-drawn regions; XCUITest plays to Training by touch.
+2026-09-24 ANGLE: GLES on Metal; Simulator Training 1-2 -> 23-25 fps full-res; unsigned vertex inputs fixed for Metal.

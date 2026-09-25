@@ -32,10 +32,28 @@ def wrap_first_arg(src, fn, name, open_, close):
     return "".join(out) + src[pos:]
 
 
+# Signed integer vertex inputs that the renderer feeds with unsigned data (glVertexAttribIPointer with
+# GL_UNSIGNED_SHORT/BYTE/INT). Desktop GL converts; Metal (ANGLE) refuses the pipeline ("attribute of type
+# int cannot be read using MTLAttributeFormatUShort"). Declare them unsigned and convert in the shader;
+# the values are small indices, so the result is identical.
+UNSIGNED_FED = {"time_of_day_index", "uv", "vi"}
+
+
+def unsigned_inputs(src):
+    def fix(m):
+        layout, kind, name = m.group(1), m.group(2), m.group(3)
+        if name not in UNSIGNED_FED:
+            return m.group(0)
+        utype = {"int": "uint", "ivec2": "uvec2", "ivec3": "uvec3", "ivec4": "uvec4"}[kind]
+        return f"{layout}in {utype} ottsel_u_{name};\n#define {name} {kind}(ottsel_u_{name})"
+    return re.sub(r"(layout\s*\(\s*location\s*=\s*\d+\s*\)\s*)in\s+(int|ivec[234])\s+(\w+)\s*;", fix, src)
+
+
 def desktop_prepare(src):
     for key, value in JAK1.items():  # Shader.cpp substitutes these at load time on desktop
         src = src.replace(key, value)
     src = re.sub(r"\bnoperspective\s+", "", src)
+    src = unsigned_inputs(src)
     one_d = re.findall(r"uniform\s+[iu]?sampler1D\s+(\w+)", src)
     src = re.sub(r"\b([iu]?)sampler1D\b", r"\1sampler2D", src)
     if one_d:  # palettes wider than ROW texels are folded into rows (ottsel_gles_tex_image_1d)

@@ -27,8 +27,8 @@ cross-compiled at build time by
 `game/graphics/ottsel_gles_compat.h` maps the few desktop-only GL calls. The title screen matches the
 macOS build and the whole intro plays to Geyser Rock on it ([evidence](evidence/G3/upstream-gl-renderer-title-2026-09-24.md)).
 The custom Metal renderer (~25k lines, CPU VU1 emulation, broken particles) was deleted on 2026-09-24; its
-last state is commit `df31425`. The Simulator's GL is a CPU rasterizer (1-10 fps, game resolution capped
-at 800 px wide there), so frame rate is measured only on the device.
+last state is commit `df31425`. OpenGL ES comes from ANGLE on Metal, on the Simulator and the device alike; the Simulator runs
+Training at 23-25 fps, and the product frame rate is still measured on the device (G3).
 
 ## One round
 

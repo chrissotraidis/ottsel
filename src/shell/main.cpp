@@ -698,19 +698,8 @@ int main(int argc, char** argv) {
   SDL_AddEventWatch(on_event_watch, nullptr);
   select_mobile_gamepad();
 
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-  SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-  SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-  SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-  SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
-#if TARGET_OS_SIMULATOR
-  // The Simulator's OpenGL ES is a CPU rasterizer: a 1x window keeps the final blit affordable.
-  g_win = SDL_CreateWindow("Ottsel Shell", 1024, 768, SDL_WINDOW_OPENGL);
-#else
-  g_win = SDL_CreateWindow("Ottsel Shell", 1024, 768,
-                           SDL_WINDOW_OPENGL | SDL_WINDOW_HIGH_PIXEL_DENSITY);
-#endif
+  // The game renders with OpenGL ES (ANGLE on Metal) into this window's Metal layer (ottsel_gl_attach).
+  g_win = SDL_CreateWindow("Ottsel Shell", 1024, 768, SDL_WINDOW_METAL | SDL_WINDOW_HIGH_PIXEL_DENSITY);
   if (!g_win) {
     fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
     return 1;

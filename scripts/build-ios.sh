@@ -48,7 +48,8 @@ case "$PLATFORM" in
   *) echo "OTTSEL_PLATFORM must be simulator or device" >&2; exit 2 ;;
 esac
 export OTTSEL_IOS_OUT="$IOS_OUT"
-SDL_BUILD="$IOS_OUT/sdl"
+# SDL without its UIKit OpenGL ES (EAGL) backend: ANGLE provides OpenGL ES (ottsel_gl_attach).
+SDL_BUILD="$IOS_OUT/sdl-angle"
 ZSTD_PROJECT="$WORKTREE/out/ios/zstd-project"
 ZSTD_BUILD="$IOS_OUT/zstd-build"
 ZSTD_LIB="$ZSTD_BUILD/zstd/liblibzstd_static.a"
@@ -111,6 +112,18 @@ if [ "$PLATFORM" = device ]; then
 fi
 SDKROOT="$(xcrun --sdk "$SDK" --show-sdk-path)"
 
+# OpenGL ES comes from ANGLE (OpenGL ES on Metal): Apple's own OpenGL ES is deprecated and, in the
+# Simulator, a CPU rasterizer. Prebuilt frameworks from kivy/angle-builder, fetched once per platform.
+ANGLE_VERSION=chromium-7151_rev1
+ANGLE_PLATFORM=iphonesimulator-arm64
+if [ "$PLATFORM" = device ]; then ANGLE_PLATFORM=iphoneos-arm64; fi
+ANGLE_DIR="$WORKTREE/out/angle/$ANGLE_VERSION/$ANGLE_PLATFORM"
+if [ ! -f "$ANGLE_DIR/libGLESv2.framework/libGLESv2" ]; then
+  mkdir -p "$ANGLE_DIR"
+  curl -fsSL "https://github.com/kivy/angle-builder/releases/download/$ANGLE_VERSION/angle-$ANGLE_PLATFORM.tar.gz" |
+    tar xz -C "$ANGLE_DIR"
+fi
+
 COMMON_FLAGS=(-std=c++20 -O2 -fno-omit-frame-pointer -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE \
   -DOTTSEL_NO_EMIT -DOTTSEL_IOS \
   -target "$TARGET" -isysroot "$SDKROOT" -mios-version-min="$DEPLOY")
@@ -143,13 +156,14 @@ INCS=(-I"$WORKTREE" \
   -I"$WORKTREE/third-party/cubeb/cubeb/include" \
   -I"$WORKTREE/third-party/cubeb/include" \
   -I"$SDL_SRC/include" \
-  -I"$WORKTREE/third-party/glad/include")
+  -I"$WORKTREE/third-party/glad/include" \
+  -I"$ANGLE_DIR/include")
 FRAMEWORKS=(-framework UIKit -framework Foundation -framework CoreGraphics \
   -framework QuartzCore -framework Metal -framework AudioToolbox \
   -framework CoreHaptics -framework CoreMotion -framework AVFoundation \
   -framework GameController -framework CoreText -framework ImageIO \
   -framework UniformTypeIdentifiers -framework CoreBluetooth \
-  -framework CoreMedia -framework CoreVideo -framework OpenGLES \
+  -framework CoreMedia -framework CoreVideo \
   -framework VideoToolbox -framework CoreImage -framework Vision \
   -framework MetalKit)
 
@@ -177,6 +191,7 @@ if [ ! -f "$SDL_BUILD/libSDL3.a" ]; then
     -DCMAKE_OSX_DEPLOYMENT_TARGET="$DEPLOY" \
     -DCMAKE_BUILD_TYPE=Release \
     -DSDL_SHARED=OFF -DSDL_STATIC=ON \
+    -DSDL_OPENGL=OFF -DSDL_OPENGLES=OFF \
     -DSDL_TEST_LIBRARY=OFF -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF -DSDL_INSTALL=OFF
 fi
 ninja -C "$SDL_BUILD" 2>&1 | tail -1
@@ -475,7 +490,8 @@ xcrun --sdk "$SDK" clang++ "${COMMON_FLAGS[@]}" \
   ${SIGNED_OBJECTS[@]+"${SIGNED_OBJECTS[@]}"} \
   "$OBJ/shell_main.o" "$OBJ/ios_boot.o" "$OBJ/touch_controls.o" \
   "$APP_BUILD/libottsel-runtime.a" "$ZSTD_LIB" "$SDL_BUILD/libSDL3.a" \
-  "${FRAMEWORKS[@]}" -lobjc \
+  "${FRAMEWORKS[@]}" -F"$ANGLE_DIR" -framework libEGL -framework libGLESv2 \
+  -Wl,-rpath,@executable_path/Frameworks -lobjc \
   -o "$APP_BUILD/OttselShell"
 
 echo "== [4/4] assemble + sign bundle =="
@@ -486,6 +502,9 @@ mkdir -p "$APP"
 rm -f "$APP"/*.CGO
 cp "$APP_BUILD/OttselShell" "$APP/"
 cp "$REPO_DIR/src/shell/Info.plist" "$APP/"
+rm -rf "$APP/Frameworks"
+mkdir -p "$APP/Frameworks"
+cp -R "$ANGLE_DIR/libEGL.framework" "$ANGLE_DIR/libGLESv2.framework" "$APP/Frameworks/"
 # The renderer's GLSL 4.10 shaders, cross-compiled to GLSL ES 3.00 (brew install glslang spirv-cross).
 mkdir -p "$APP/game/graphics/opengl_renderer"
 rm -rf "$APP/game/graphics/opengl_renderer/shaders"
@@ -524,9 +543,15 @@ if [ "$PLATFORM" = device ] && [ -n "${OTTSEL_SIGN_IDENTITY:-}" ] && [ -n "${OTT
   /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$APP/Info.plist"
   /usr/libexec/PlistBuddy -c 'Add :CFBundleSupportedPlatforms array' \
     -c 'Add :CFBundleSupportedPlatforms:0 string iPhoneOS' "$APP/Info.plist"
+  for framework in "$APP"/Frameworks/*.framework; do
+    codesign --force --sign "$OTTSEL_SIGN_IDENTITY" "$framework"
+  done
   codesign --force --sign "$OTTSEL_SIGN_IDENTITY" --entitlements "$APP_BUILD/entitlements.plist" "$APP"
   echo "signed for device: $BUNDLE_ID with $OTTSEL_SIGN_IDENTITY"
 else
+  for framework in "$APP"/Frameworks/*.framework; do
+    codesign --force --sign - "$framework"
+  done
   codesign --force --sign - "$APP"
   if [ "$PLATFORM" = device ]; then
     echo "NOTE: ad-hoc signed; set OTTSEL_SIGN_IDENTITY and OTTSEL_PROVISIONING_PROFILE to install on a device" >&2
