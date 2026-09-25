@@ -17,8 +17,9 @@ namespace pi = ottsel::platform_input;
 namespace {
 OttselTouchHooks g_hooks{};
 
-NSString* const kCentersKey = @"OttselTouchControlCenters";  // ident -> normalized center in the safe area
-NSString* const kSizesKey = @"OttselTouchControlSizes";      // ident -> size multiplier
+// Versioned: a layout saved against older default positions starts over from the current defaults.
+NSString* const kCentersKey = @"OttselTouchControlCenters.v2";  // ident -> normalized center in the safe area
+NSString* const kSizesKey = @"OttselTouchControlSizes.v2";      // ident -> size multiplier
 NSString* const kOpacityKey = @"OttselTouchOpacity";
 NSString* const kSizeScaleKey = @"OttselTouchSizeScale";
 NSString* const kShowFPSKey = @"OttselShowFPS";
@@ -29,15 +30,16 @@ struct ControlDefault {
   NSString* label;
   CGFloat x, y, w, h;
 };
-// iPad landscape: thumbs rest on the lower corners, shoulders above them, START top centre.
+// Two columns on the screen edges, one per thumb, so the middle of the screen stays clear:
+// left edge L1 / D-pad / move stick, right edge R1 / face buttons / camera stick, START bottom centre.
 const ControlDefault kDefaults[] = {
-    {@"move", @"Move stick", 0.125, 0.74, 172, 172},
-    {@"dpad", @"D-pad", 0.300, 0.86, 138, 138},
-    {@"face", @"Face buttons", 0.855, 0.56, 236, 236},
-    {@"camera", @"Camera stick", 0.690, 0.86, 116, 116},
-    {@"L1", @"L1", 0.125, 0.30, 132, 54},
-    {@"R1", @"R1", 0.860, 0.22, 132, 54},
-    {@"start", @"START", 0.500, 0.09, 108, 46},
+    {@"L1", @"L1", 0.120, 0.13, 128, 52},
+    {@"dpad", @"D-pad", 0.120, 0.44, 136, 136},
+    {@"move", @"Move stick", 0.120, 0.78, 180, 180},
+    {@"R1", @"R1", 0.880, 0.13, 128, 52},
+    {@"face", @"Face buttons", 0.880, 0.49, 232, 232},
+    {@"camera", @"Camera stick", 0.855, 0.86, 124, 124},
+    {@"start", @"START", 0.500, 0.95, 96, 40},
 };
 
 int setting(const char* key) {
