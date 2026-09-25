@@ -2999,10 +2999,19 @@ index 000000000..0d32c5b75
 +void ottsel_gles_load_missing(void* (*get_proc)(const char*));
 +#endif
 diff --git a/game/graphics/pipelines/opengl.cpp b/game/graphics/pipelines/opengl.cpp
-index d8d15c873..9680d25bc 100644
+index d8d15c873..e1d090c57 100644
 --- a/game/graphics/pipelines/opengl.cpp
 +++ b/game/graphics/pipelines/opengl.cpp
-@@ -27,6 +27,8 @@
+@@ -5,6 +5,8 @@
+ 
+ #include "opengl.h"
+ 
++#include <atomic>
++#include <chrono>
+ #include <condition_variable>
+ #include <memory>
+ #include <mutex>
+@@ -27,6 +29,8 @@
  #include "game/graphics/texture/TexturePool.h"
  #include "game/runtime.h"
  #include "game/sce/libscf.h"
@@ -3011,7 +3020,7 @@ index d8d15c873..9680d25bc 100644
  #include "game/system/hid/input_manager.h"
  #include "game/system/hid/sdl_util.h"
  
-@@ -87,7 +89,11 @@ struct GraphicsData {
+@@ -87,7 +91,11 @@ struct GraphicsData {
        : dma_copier(EE_MAIN_MEM_SIZE),
          texture_pool(std::make_shared<TexturePool>(version)),
          loader(std::make_shared<Loader>(
@@ -3023,7 +3032,29 @@ index d8d15c873..9680d25bc 100644
              fr3_level_count[version])),
          ogl_renderer(texture_pool, loader, version),
          debug_gui(),
-@@ -587,6 +593,11 @@ void GLDisplay::process_sdl_events() {
+@@ -477,6 +485,9 @@ void render_game_frame(int game_width,
+                        bool take_screenshot) {
+   // wait for a copied chain.
+   bool got_chain = false;
++#ifdef OTTSEL_GLES
++  const auto ottsel_wait_start = std::chrono::steady_clock::now();
++#endif
+   {
+     auto p = scoped_prof("wait-for-dma");
+     std::unique_lock<std::mutex> lock(g_gfx_data->dma_mutex);
+@@ -484,6 +495,11 @@ void render_game_frame(int game_width,
+     got_chain = g_gfx_data->dma_cv.wait_for(lock, std::chrono::milliseconds(40),
+                                             [=] { return g_gfx_data->has_data_to_render; });
+   }
++#ifdef OTTSEL_GLES
++  extern double g_ottsel_wait_dma_ms;
++  g_ottsel_wait_dma_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
++                                                                   ottsel_wait_start).count();
++#endif
+   // render that chain.
+   if (got_chain) {
+     g_gfx_data->frame_idx_of_input_data = g_gfx_data->frame_idx;
+@@ -587,6 +603,11 @@ void GLDisplay::process_sdl_events() {
   * Main function called to render graphics frames. This is called in a loop.
   */
  void GLDisplay::render() {
@@ -3035,7 +3066,51 @@ index d8d15c873..9680d25bc 100644
    // Before we process the current frames SDL events we for keyboard/mouse button inputs.
    //
    // This technically means that keyboard/mouse button inputs will be a frame behind but the
-@@ -868,3 +879,215 @@ const GfxRendererModule gRendererOpenGL = {
+@@ -742,15 +763,30 @@ void GLDisplay::render() {
+  * Wait for the next vsync. Returns 0 or 1 depending on if frame is even or odd.
+  * Called from the game thread, on a GOAL stack.
+  */
++#ifdef OTTSEL_GLES
++// Frame timing (logged by ottsel_gl_render): the game thread's time between frames and its wait in vsync.
++double g_ottsel_wait_dma_ms = 0;
++std::atomic<double> g_ottsel_ee_work_ms{0}, g_ottsel_ee_vsync_ms{0};
++std::chrono::steady_clock::time_point g_ottsel_ee_vsync_return;
++#endif
++
+ u32 gl_vsync() {
+   if (!g_gfx_data) {
+     return 0;
+   }
++#ifdef OTTSEL_GLES
++  const auto vsync_start = std::chrono::steady_clock::now();
++#endif
+   std::unique_lock<std::mutex> lock(g_gfx_data->sync_mutex);
+   auto init_frame = g_gfx_data->frame_idx_of_input_data;
+   g_gfx_data->sync_cv.wait(lock, [=] {
+     return (MasterExit != RuntimeExitStatus::RUNNING) || g_gfx_data->frame_idx > init_frame;
+   });
++#ifdef OTTSEL_GLES
++  g_ottsel_ee_vsync_return = std::chrono::steady_clock::now();
++  g_ottsel_ee_vsync_ms = std::chrono::duration<double, std::milli>(g_ottsel_ee_vsync_return -
++                                                                   vsync_start).count();
++#endif
+   return g_gfx_data->frame_idx & 1;
+ }
+ 
+@@ -772,6 +808,12 @@ u32 gl_sync_path() {
+  * Called from the game thread, on a GOAL stack.
+  */
+ void gl_send_chain(const void* data, u32 offset) {
++#ifdef OTTSEL_GLES
++  if (g_ottsel_ee_vsync_return.time_since_epoch().count()) {
++    g_ottsel_ee_work_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
++                                                                    g_ottsel_ee_vsync_return).count();
++  }
++#endif
+   if (g_gfx_data) {
+     std::unique_lock<std::mutex> lock(g_gfx_data->dma_mutex);
+     if (g_gfx_data->has_data_to_render) {
+@@ -868,3 +910,240 @@ const GfxRendererModule gRendererOpenGL = {
      GfxPipeline::OpenGL,     // pipeline
      "OpenGL 4.3"             // name
  };
@@ -3229,12 +3304,8 @@ index d8d15c873..9680d25bc 100644
 +  if (g_gfx_data->frame_idx_of_input_data == frame_before && g_gfx_data->frame_idx == frame_before) {
 +    g_live_scene = true;  // render_game_frame received and drew a chain
 +  }
-+  if (++frames <= 3 || frames % 600 == 0) {
-+    const double ms =
-+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-+    lg::info("OTTSEL GL FRAME: {} game={}x{} window={}x{} render-ms={:.1f}", frames, game_w, game_h,
-+             fb_w, fb_h, ms);
-+  }
++  const auto rendered = std::chrono::steady_clock::now();
++  ++frames;
 +  if (s.framelimiter) {
 +    g_gfx_data->frame_limiter.run(s.target_fps, s.experimental_accurate_lag,
 +                                  s.sleep_in_frame_limiter, g_gfx_data->last_engine_time);
@@ -3245,6 +3316,35 @@ index d8d15c873..9680d25bc 100644
 +  glBindRenderbuffer(GL_RENDERBUFFER, g_ottsel_gles_window_renderbuffer);
 +  SDL_GL_SwapWindow(window);
 +  if (frames <= 600) check_view_gl("swap");
++  // Where a frame's time goes, averaged over ~2 s: waiting for the game thread's DMA, drawing it, the
++  // limiter/overlay/swap, the shell's own loop, and on the game thread its work vs its vsync wait.
++  {
++    using ms = std::chrono::duration<double, std::milli>;
++    static std::chrono::steady_clock::time_point prev_end, window_start;
++    static double sum_wait = 0, sum_draw = 0, sum_present = 0, sum_shell = 0, sum_ee = 0, sum_vs = 0;
++    static int n = 0;
++    const auto end = std::chrono::steady_clock::now();
++    const double total = ms(rendered - start).count();
++    sum_wait += g_ottsel_wait_dma_ms;
++    sum_draw += total - g_ottsel_wait_dma_ms;
++    sum_present += ms(end - rendered).count();
++    if (prev_end.time_since_epoch().count()) sum_shell += ms(start - prev_end).count();
++    sum_ee += g_ottsel_ee_work_ms.load();
++    sum_vs += g_ottsel_ee_vsync_ms.load();
++    prev_end = end;
++    if (!window_start.time_since_epoch().count()) window_start = end;
++    ++n;
++    const double span = ms(end - window_start).count();
++    if (span >= 2000.0) {
++      lg::info("OTTSEL PERF: fps={:.1f} game={}x{} | main: wait-dma={:.1f} draw={:.1f} present={:.1f} "
++               "shell={:.1f} ms | game thread: work={:.1f} vsync-wait={:.1f} ms",
++               n * 1000.0 / span, game_w, game_h, sum_wait / n, sum_draw / n, sum_present / n,
++               sum_shell / n, sum_ee / n, sum_vs / n);
++      sum_wait = sum_draw = sum_present = sum_shell = sum_ee = sum_vs = 0;
++      n = 0;
++      window_start = end;
++    }
++  }
 +  // Toggle even/odd and wake the engine waiting in gl_vsync.
 +  std::unique_lock<std::mutex> lock(g_gfx_data->sync_mutex);
 +  g_gfx_data->frame_idx++;

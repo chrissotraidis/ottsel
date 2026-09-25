@@ -264,9 +264,10 @@ struct ShellPadInput {
   }
 
   void mouse_motion(float x, float y, float xrel, float yrel) {
-    hide_touch_overlay_for_native_input();
-    if (g_win) {
-      SDL_SetWindowRelativeMouseMode(g_win, true);
+    // A pointer just passing over the screen is not a player choosing the mouse: it steers the camera only
+    // after a click has captured it (mouse_button), and it never hides the touch controls by itself.
+    if (!g_win || !SDL_GetWindowRelativeMouseMode(g_win)) {
+      return;
     }
     // Some SDL backends (notably Simulator pointer capture) report absolute
     // motion while leaving xrel/yrel at zero on the first captured event. Use
@@ -769,6 +770,9 @@ int main(int argc, char** argv) {
         case SDL_EVENT_KEY_UP:
           g_input.keyboard(ev.key.key, ev.key.scancode, ev.type == SDL_EVENT_KEY_DOWN);
           break;
+#if !TARGET_OS_SIMULATOR
+        // In the Simulator the Mac pointer stands in for a finger (its clicks arrive as touches); its hover and
+        // click mouse events are not a mouse the player plugged in.
         case SDL_EVENT_MOUSE_MOTION:
           if (ottsel::platform_input::routes_to_native_mouse(ev.motion.which,
                                                               SDL_TOUCH_MOUSEID)) {
@@ -782,6 +786,7 @@ int main(int argc, char** argv) {
             g_input.mouse_button(ev.button.button, ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
           }
           break;
+#endif
         case SDL_EVENT_WINDOW_FOCUS_LOST:
           g_input.neutralize();
           if (g_win) {
