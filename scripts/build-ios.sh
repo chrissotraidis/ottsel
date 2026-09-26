@@ -523,6 +523,11 @@ mkdir -p "$APP"
 rm -f "$APP"/*.CGO
 cp "$APP_BUILD/OttselShell" "$APP/"
 cp "$REPO_DIR/src/shell/Info.plist" "$APP/"
+# App icon: actool renders every size from the one 1024-pixel image and reports the icon keys.
+xcrun actool "$REPO_DIR/src/shell/Assets.xcassets" --compile "$APP" --platform "${SDK%%[0-9]*}" \
+  --minimum-deployment-target "$DEPLOY" --app-icon AppIcon --target-device iphone --target-device ipad \
+  --output-partial-info-plist "$APP_BUILD/assets-info.plist" >/dev/null
+/usr/libexec/PlistBuddy -c "Merge $APP_BUILD/assets-info.plist" "$APP/Info.plist" >/dev/null
 rm -rf "$APP/Frameworks"
 mkdir -p "$APP/Frameworks"
 cp -R "$ANGLE_DIR/libEGL.framework" "$ANGLE_DIR/libGLESv2.framework" "$APP/Frameworks/"

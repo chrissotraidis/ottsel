@@ -1,0 +1,68 @@
+name: Device report
+description: Tell us how Ottsel ran on a physical iPad or iPhone.
+title: "[Device] "
+labels: ["device report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for testing on real hardware. Never attach game data, extracted files, a built app, or saves.
+  - type: input
+    id: device
+    attributes:
+      label: Device
+      description: Model and storage, for example "iPad Pro 11-inch (M4), 256 GB".
+    validations:
+      required: true
+  - type: input
+    id: ios
+    attributes:
+      label: iOS or iPadOS version
+      placeholder: "26.0"
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Ottsel commit
+      description: Output of `git rev-parse --short HEAD`.
+    validations:
+      required: true
+  - type: dropdown
+    id: reached
+    attributes:
+      label: How far did it get?
+      options:
+        - Did not install
+        - Crashed at launch
+        - Title screen
+        - Intro cutscene
+        - Geyser Rock / training course
+        - Sandover Village or later
+    validations:
+      required: true
+  - type: input
+    id: fps
+    attributes:
+      label: Frame rate
+      description: From ••• → Show FPS Counter, during play. Say where you measured it.
+  - type: dropdown
+    id: input
+    attributes:
+      label: Input used
+      multiple: true
+      options:
+        - Touch controls
+        - Game controller
+        - Hardware keyboard
+  - type: textarea
+    id: notes
+    attributes:
+      label: What happened
+      description: Anything that looked, sounded or felt wrong. Screenshots are welcome.
+  - type: textarea
+    id: log
+    attributes:
+      label: Log excerpt
+      description: From ••• → Diagnostics → Share Logs…, only the lines around the problem.
+      render: text
