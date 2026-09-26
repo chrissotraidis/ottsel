@@ -1,7 +1,7 @@
 # Ottsel goal loop
 
 This is the only execution authority. It replaces the numbered BOT prompts, `RECOVERY_GOAL_LOOP.md` and
-`PROJECT_COMPLETION_PLAN.md`, which now live in [history/](history/). `AGENTS.md` and the user's
+`PROJECT_COMPLETION_PLAN.md` from the project's earlier phases. `AGENTS.md` and the user's
 current instructions still govern. Read this file and [STATUS.md](STATUS.md); open older material only
 when a specific question needs it.
 

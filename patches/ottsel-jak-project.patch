@@ -4047,7 +4047,7 @@ index 000000000..6db54d581
 +
 +#endif
 diff --git a/game/kernel/asm_funcs_arm64.s b/game/kernel/asm_funcs_arm64.s
-index 9244ee84a..209d34107 100644
+index 9244ee84a..29b3b3ba2 100644
 --- a/game/kernel/asm_funcs_arm64.s
 +++ b/game/kernel/asm_funcs_arm64.s
 @@ -16,11 +16,35 @@
@@ -4497,7 +4497,7 @@ index 9244ee84a..209d34107 100644
    ;; retore registers.
    ldr x22, [sp], #16
    ldp x20, x21, [sp], #16
-@@ -247,34 +433,62 @@ _call_goal8_asm_arm64:
+@@ -247,34 +433,82 @@ _call_goal8_asm_arm64:
  .align 4
  _call_goal_on_stack_asm_arm64:
    stp	x29, x30, [sp, #-16]!
@@ -4573,6 +4573,26 @@ index 9244ee84a..209d34107 100644
 +  ldp x19, x20, [sp], #16
 +  ldp x29, x30, [sp], #16
    ret
++
++;; Ottsel A1.7b diagnostic counters, written by the GOAL->C++ trampolines above and read by the
++;; iOS fault log (src/shell/ios_boot.cpp). They live here so every program that links this file -
++;; the app, the macOS reference build and the standalone regressions - gets exactly one copy.
++.globl _ottsel_cbridge_calls
++.zerofill __DATA,__bss,_ottsel_cbridge_calls,8,3
++.globl _ottsel_cbridge_in
++.zerofill __DATA,__bss,_ottsel_cbridge_in,8,3
++.globl _ottsel_cbridge_out
++.zerofill __DATA,__bss,_ottsel_cbridge_out,8,3
++.globl _ottsel_cbridge_target
++.zerofill __DATA,__bss,_ottsel_cbridge_target,8,3
++.globl _ottsel_cbridge_leaks
++.zerofill __DATA,__bss,_ottsel_cbridge_leaks,8,3
++.globl _ottsel_cbridge_leak_in
++.zerofill __DATA,__bss,_ottsel_cbridge_leak_in,8,3
++.globl _ottsel_cbridge_leak_out
++.zerofill __DATA,__bss,_ottsel_cbridge_leak_out,8,3
++.globl _ottsel_cbridge_leak_target
++.zerofill __DATA,__bss,_ottsel_cbridge_leak_target,8,3
 diff --git a/game/kernel/common/klink.cpp b/game/kernel/common/klink.cpp
 index b8a96e57b..127b45327 100644
 --- a/game/kernel/common/klink.cpp
@@ -6677,7 +6697,7 @@ index 459a21562..c66c9198e 100644
    if (DiskBoot) {
      intern_from_c("*kernel-boot-message*")->value = intern_from_c(DebugBootMessage).offset;
 diff --git a/game/kernel/jak1/kscheme.cpp b/game/kernel/jak1/kscheme.cpp
-index c8287de5a..fd96c1dc7 100644
+index c8287de5a..40d39f922 100644
 --- a/game/kernel/jak1/kscheme.cpp
 +++ b/game/kernel/jak1/kscheme.cpp
 @@ -1,6 +1,17 @@
@@ -6698,30 +6718,11 @@ index c8287de5a..fd96c1dc7 100644
  
  #include "common/common_types.h"
  #include "common/log/log.h"
-@@ -25,7 +36,47 @@
+@@ -25,7 +36,28 @@
  
  using namespace jak1_symbols;
  
-+// Ottsel A1.7b diagnostic storage: game/kernel/asm_funcs_arm64.s writes these eight
-+// counters around every GOAL->C++ call to name the C++ target that fails to preserve
-+// GOAL's register file.  The iOS product shell (src/shell/ios_boot.cpp) and the
-+// assembly-only test harness define them for their builds; every other build (the
-+// macOS `gk` reference lane) needs them here or the ARM64 assembly fails to link.
-+#ifndef OTTSEL_IOS
-+extern "C" {
-+volatile unsigned long long ottsel_cbridge_calls;
-+volatile unsigned long long ottsel_cbridge_in;
-+volatile unsigned long long ottsel_cbridge_out;
-+volatile unsigned long long ottsel_cbridge_target;
-+volatile unsigned long long ottsel_cbridge_leaks;
-+volatile unsigned long long ottsel_cbridge_leak_in;
-+volatile unsigned long long ottsel_cbridge_leak_out;
-+volatile unsigned long long ottsel_cbridge_leak_target;
-+}
-+#endif
-+
-+// Ottsel A1.0 bounded call trace (TEMPORARY diagnostic; preserved as
-+// docs/evidence/A1/a1-bounded-call-trace-probe.patch).
++// Ottsel A1.0 bounded call trace (diagnostic).
 +extern "C" {
 +constexpr int OTTSEL_CALL_TRACE_N = 256;
 +volatile u64 g_ottsel_call_trace[OTTSEL_CALL_TRACE_N];
@@ -6746,7 +6747,7 @@ index c8287de5a..fd96c1dc7 100644
  // where to put a new symbol for the most recently searched for symbol that wasn't found
  u32 symbol_slot;
  
-@@ -150,6 +201,20 @@ u64 alloc_heap_object(u32 heap, u32 type, u32 size, u32 pp) {
+@@ -150,6 +182,20 @@ u64 alloc_heap_object(u32 heap, u32 type, u32 size, u32 pp) {
      return 0;
    }
  
@@ -6767,7 +6768,7 @@ index c8287de5a..fd96c1dc7 100644
    *Ptr<u32>(mem) = type;
    return mem + BASIC_OFFSET;
  }
-@@ -279,11 +344,183 @@ void _arg_call_arm64();
+@@ -279,11 +325,183 @@ void _arg_call_arm64();
  #endif
  }
  
@@ -6951,7 +6952,7 @@ index c8287de5a..fd96c1dc7 100644
    auto mem = Ptr<u8>(alloc_heap_object(s7.offset + FIX_SYM_GLOBAL_HEAP,
                                         *(s7 + FIX_SYM_FUNCTION_TYPE), 0x40, UNKNOWN_PP));
    auto f = (uint64_t)func;
-@@ -294,10 +531,45 @@ Ptr<Function> make_function_from_c_systemv(void* func, bool arg3_is_pp) {
+@@ -294,10 +512,45 @@ Ptr<Function> make_function_from_c_systemv(void* func, bool arg3_is_pp) {
    auto trampoline_function_addr = _arg_call_arm64;
  #endif
    auto trampoline = (u8*)&trampoline_function_addr;
@@ -7000,7 +7001,7 @@ index c8287de5a..fd96c1dc7 100644
    mem.c()[offset++] = 0x48;
    mem.c()[offset++] = 0xb8;
    for (int i = 0; i < 8; i++) {
-@@ -327,8 +599,10 @@ Ptr<Function> make_function_from_c_systemv(void* func, bool arg3_is_pp) {
+@@ -327,8 +580,10 @@ Ptr<Function> make_function_from_c_systemv(void* func, bool arg3_is_pp) {
    // the asm function's ret will return to the caller of this (GOAL code) directlyz.
  
    // CacheFlush(mem, 0x34);
@@ -7011,7 +7012,7 @@ index c8287de5a..fd96c1dc7 100644
  }
  
  /*!
-@@ -417,6 +691,42 @@ void _stack_call_arm64();
+@@ -417,6 +672,42 @@ void _stack_call_arm64();
  }
  
  Ptr<Function> make_stack_arg_function_from_c_systemv(void* func) {
@@ -7054,7 +7055,7 @@ index c8287de5a..fd96c1dc7 100644
    // allocate a function object on the global heap
    auto mem = Ptr<u8>(alloc_heap_object(s7.offset + FIX_SYM_GLOBAL_HEAP,
                                         *(s7 + FIX_SYM_FUNCTION_TYPE), 0x40, UNKNOWN_PP));
-@@ -454,6 +764,7 @@ Ptr<Function> make_stack_arg_function_from_c_systemv(void* func) {
+@@ -454,6 +745,7 @@ Ptr<Function> make_stack_arg_function_from_c_systemv(void* func) {
    // CacheFlush(mem, 0x34);
  
    return mem.cast<Function>();
@@ -7062,7 +7063,7 @@ index c8287de5a..fd96c1dc7 100644
  }
  
  #ifdef _WIN32
-@@ -529,6 +840,20 @@ Ptr<Function> make_stack_arg_function_from_c(void* func) {
+@@ -529,6 +821,20 @@ Ptr<Function> make_stack_arg_function_from_c(void* func) {
   * Create a GOAL function which does nothing and immediately returns.
   */
  Ptr<Function> make_nothing_func() {
@@ -7083,7 +7084,7 @@ index c8287de5a..fd96c1dc7 100644
    auto mem = Ptr<u8>(alloc_heap_object(s7.offset + FIX_SYM_GLOBAL_HEAP,
                                         *(s7 + FIX_SYM_FUNCTION_TYPE), 0x14, UNKNOWN_PP));
  
-@@ -536,12 +861,32 @@ Ptr<Function> make_nothing_func() {
+@@ -536,12 +842,32 @@ Ptr<Function> make_nothing_func() {
    mem.c()[0] = 0xc3;
    // CacheFlush(mem, 8);
    return mem.cast<Function>();
@@ -7116,7 +7117,7 @@ index c8287de5a..fd96c1dc7 100644
    auto mem = Ptr<u8>(alloc_heap_object(s7.offset + FIX_SYM_GLOBAL_HEAP,
                                         *(s7 + FIX_SYM_FUNCTION_TYPE), 0x14, UNKNOWN_PP));
    // xor eax, eax
-@@ -551,6 +896,7 @@ Ptr<Function> make_zero_func() {
+@@ -551,6 +877,7 @@ Ptr<Function> make_zero_func() {
    mem.c()[2] = 0xc3;
    // CacheFlush(mem, 8);
    return mem.cast<Function>();
@@ -7124,7 +7125,7 @@ index c8287de5a..fd96c1dc7 100644
  }
  
  /*!
-@@ -564,6 +910,12 @@ Ptr<Function> make_zero_func() {
+@@ -564,6 +891,12 @@ Ptr<Function> make_zero_func() {
  Ptr<Function> make_function_symbol_from_c(const char* name, void* f) {
    auto sym = intern_from_c(name);
    auto func = make_function_from_c(f);
@@ -7137,7 +7138,7 @@ index c8287de5a..fd96c1dc7 100644
    sym->value = func.offset;
    return func;
  }
-@@ -575,6 +927,12 @@ Ptr<Function> make_function_symbol_from_c(const char* name, void* f) {
+@@ -575,6 +908,12 @@ Ptr<Function> make_function_symbol_from_c(const char* name, void* f) {
  Ptr<Function> make_stack_arg_function_symbol_from_c(const char* name, void* f) {
    auto sym = intern_from_c(name);
    auto func = make_stack_arg_function_from_c(f);
@@ -7150,7 +7151,7 @@ index c8287de5a..fd96c1dc7 100644
    sym->value = func.offset;
    return func;
  }
-@@ -719,6 +1077,28 @@ Ptr<Symbol> find_symbol_from_c(const char* name) {
+@@ -719,6 +1058,28 @@ Ptr<Symbol> find_symbol_from_c(const char* name) {
        return probe;
      }
    }
@@ -7179,7 +7180,7 @@ index c8287de5a..fd96c1dc7 100644
  }
  
  /*!
-@@ -733,6 +1113,10 @@ Ptr<Symbol> intern_from_c(const char* name) {
+@@ -733,6 +1094,10 @@ Ptr<Symbol> intern_from_c(const char* name) {
    }
  
    // otherwise, a new symbol!
@@ -7190,7 +7191,7 @@ index c8287de5a..fd96c1dc7 100644
    symbol = Ptr<Symbol>(symbol_slot);
    // set type tag
    symbol.cast<u32>().c()[-1] = *(s7 + FIX_SYM_SYMBOL_TYPE);
-@@ -969,6 +1353,22 @@ u64 type_typep(Ptr<Type> t1, Ptr<Type> t2) {
+@@ -969,6 +1334,22 @@ u64 type_typep(Ptr<Type> t1, Ptr<Type> t2) {
   */
  u64 method_set(u32 type_, u32 method_id, u32 method) {
    Ptr<Type> type(type_);
@@ -7213,7 +7214,7 @@ index c8287de5a..fd96c1dc7 100644
    if (method_id > 127)
      printf("[METHOD SET ERROR] tried to set method %d\n", method_id);
  
-@@ -1117,7 +1517,100 @@ u64 call_method_of_type_arg2(u32 arg, Ptr<Type> type, u32 method_id, u32 a1, u32
+@@ -1117,7 +1498,100 @@ u64 call_method_of_type_arg2(u32 arg, Ptr<Type> type, u32 method_id, u32 a1, u32
      auto type_tag = Ptr<Ptr<Type>>(type.offset - 4);
      if ((*type_tag).offset == *(s7 + FIX_SYM_TYPE_TYPE)) {
        // return type->get_method(method_id).cast<u64 (u32,u32,u32)>().c()(arg,a1,a2);
@@ -7315,7 +7316,7 @@ index c8287de5a..fd96c1dc7 100644
      } else {
        cprintf("#<#x%x has invalid type ptr #x%x, bad type #x%x>\n", arg, type.offset,
                (*type_tag).offset);
-@@ -1127,6 +1620,10 @@ u64 call_method_of_type_arg2(u32 arg, Ptr<Type> type, u32 method_id, u32 a1, u32
+@@ -1127,6 +1601,10 @@ u64 call_method_of_type_arg2(u32 arg, Ptr<Type> type, u32 method_id, u32 a1, u32
    return arg;
  }
  
@@ -7326,7 +7327,7 @@ index c8287de5a..fd96c1dc7 100644
  u64 print_object(u32 obj);
  u64 print_pair(u32 obj);
  
-@@ -1148,7 +1645,7 @@ u64 print_object(u32 obj) {
+@@ -1148,7 +1626,7 @@ u64 print_object(u32 obj) {
    if ((obj & OFFSET_MASK) == BINTEGER_OFFSET) {
      return print_binteger(s64(s32(obj)));
    } else {
@@ -7335,7 +7336,7 @@ index c8287de5a..fd96c1dc7 100644
          (obj < 0x84000 || 0x100000 <= obj)) {              // not in kernel memory
        cprintf("#<invalid object #x%x>", obj);
      } else if ((obj & OFFSET_MASK) == PAIR_OFFSET) {
-@@ -1167,7 +1664,7 @@ u64 print_object(u32 obj) {
+@@ -1167,7 +1645,7 @@ u64 print_object(u32 obj) {
   * Confirms basic is valid and prints the type name.
   */
  u64 print_basic(u32 obj) {
@@ -7344,7 +7345,7 @@ index c8287de5a..fd96c1dc7 100644
         (obj < 0x84000 || 0x100000 <= obj))                // not in kernel memory
        || ((obj & OFFSET_MASK) != BASIC_OFFSET)) {
      cprintf("#<invalid basic #x%x>", obj);
-@@ -1308,7 +1805,7 @@ u64 inspect_object(u32 obj) {
+@@ -1308,7 +1786,7 @@ u64 inspect_object(u32 obj) {
    if ((obj & OFFSET_MASK) == BINTEGER_OFFSET) {
      return inspect_binteger(obj);
    } else {
@@ -7353,7 +7354,7 @@ index c8287de5a..fd96c1dc7 100644
          (obj < 0x84000 || 0x100000 <= obj)) {              // not in kernel memory
        cprintf("#<invalid object #x%x>", obj);
      } else if ((obj & OFFSET_MASK) == PAIR_OFFSET) {
-@@ -1399,7 +1896,7 @@ u64 inspect_type(u32 obj) {
+@@ -1399,7 +1877,7 @@ u64 inspect_type(u32 obj) {
   * We just use print_object.
   */
  u64 inspect_basic(u32 obj) {
@@ -7362,7 +7363,7 @@ index c8287de5a..fd96c1dc7 100644
         (obj < 0x84000 || 0x100000 <= obj))                // not in kernel memory
        || ((obj & OFFSET_MASK) != BASIC_OFFSET)) {
      cprintf("#<invalid basic #x%x>\n", obj);
-@@ -1449,6 +1946,9 @@ s32 test_function(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
+@@ -1449,6 +1927,9 @@ s32 test_function(s32 arg0, s32 arg1, s32 arg2, s32 arg3) {
   * This takes care of all initialization that isn't for the hardware itself.
   */
  s32 InitHeapAndSymbol() {
@@ -7372,7 +7373,7 @@ index c8287de5a..fd96c1dc7 100644
    Timer heap_init_timer;
    // reset all mips2c functions
    Mips2C::gLinkedFunctionTable = {};
-@@ -1702,6 +2202,7 @@ s32 InitHeapAndSymbol() {
+@@ -1702,6 +2183,7 @@ s32 InitHeapAndSymbol() {
  
    // type system
    make_function_symbol_from_c("method-set!", (void*)method_set);
@@ -7380,7 +7381,7 @@ index c8287de5a..fd96c1dc7 100644
  
    // dgo
    make_stack_arg_function_symbol_from_c("link", (void*)link_and_exec_wrapper);
-@@ -1744,13 +2245,29 @@ s32 InitHeapAndSymbol() {
+@@ -1744,13 +2226,29 @@ s32 InitHeapAndSymbol() {
    intern_from_c("*boot-video-mode*")->value = 0;  // (u32)BootVideoMode;
  
    lg::info("Initialized GOAL heap in {:.2} ms", heap_init_timer.getMs());
@@ -7410,7 +7411,7 @@ index c8287de5a..fd96c1dc7 100644
      method_set_symbol->value--;
  
      // check the kernel version!
-@@ -1768,6 +2285,7 @@ s32 InitHeapAndSymbol() {
+@@ -1768,6 +2266,7 @@ s32 InitHeapAndSymbol() {
      }
    }
  
@@ -7418,7 +7419,7 @@ index c8287de5a..fd96c1dc7 100644
    // setup deci2count for message counter.
    protoBlock.deci2count = intern_from_c("*deci-count*").cast<s32>();
  
-@@ -1779,6 +2297,7 @@ s32 InitHeapAndSymbol() {
+@@ -1779,6 +2278,7 @@ s32 InitHeapAndSymbol() {
  
    // testing stuff:
    make_function_symbol_from_c("test-function", (void*)test_function);
@@ -7426,7 +7427,7 @@ index c8287de5a..fd96c1dc7 100644
  
    return 0;
  }
-@@ -1840,13 +2359,26 @@ u64 loadc(const char* file_name, kheapinfo* heap, u32 flags) {
+@@ -1840,13 +2340,26 @@ u64 loadc(const char* file_name, kheapinfo* heap, u32 flags) {
   * This is used in some debug code to load art-groups directly.
   */
  u64 loado(u32 file_name_in, u32 heap_in) {
@@ -7667,10 +7668,10 @@ index 1c4de4397..819642df2 100644
    // #x30000000 = STROW
    // #x4d000000 ROW x
 diff --git a/game/mips2c/jak1_functions/draw_string.cpp b/game/mips2c/jak1_functions/draw_string.cpp
-index a24034277..3e6a768d6 100644
+index a24034277..11ee27cae 100644
 --- a/game/mips2c/jak1_functions/draw_string.cpp
 +++ b/game/mips2c/jak1_functions/draw_string.cpp
-@@ -2,7 +2,15 @@
+@@ -2,7 +2,16 @@
  // clang-format off
  #include "game/mips2c/mips2c_private.h"
  #include "game/kernel/jak1/kscheme.h"
@@ -7679,6 +7680,7 @@ index a24034277..3e6a768d6 100644
 +#include <string>
 +#ifdef OTTSEL_IOS
 +#include <unistd.h>
++#include "game/ottsel_trigger_poll.h"
 +extern std::string ottsel_ios_writable_dir();
 +#endif
  using namespace jak1;
@@ -7686,7 +7688,7 @@ index a24034277..3e6a768d6 100644
  namespace Mips2C::jak1 {
  namespace draw_string {
  struct Cache {
-@@ -15,6 +23,33 @@ struct Cache {
+@@ -15,6 +24,33 @@ struct Cache {
  
  u64 execute(void* ctxt) {
    auto* c = (ExecutionContext*)ctxt;
@@ -7696,7 +7698,7 @@ index a24034277..3e6a768d6 100644
 +  // actual source rather than an inferred Direct transfer.
 +  static bool trace_requested = std::getenv("OTTSEL_TRACE_DRAW_STRING") != nullptr;
 +#ifdef OTTSEL_IOS
-+  if (!trace_requested) {
++  if (!trace_requested && OTTSEL_TRIGGER_POLL_DUE()) {
 +    const std::string trigger = ottsel_ios_writable_dir() + "ottsel-trace-draw-string";
 +    if (access(trigger.c_str(), F_OK) == 0) {
 +      unlink(trigger.c_str());
@@ -7720,7 +7722,7 @@ index a24034277..3e6a768d6 100644
    bool bc = false;  c->load_symbol(v1, cache.math_camera);            // lw v1, *math-camera*(s7)
    c->lqc2(vf26, 732, v1);                           // lqc2 vf26, 732(v1)
    c->lqc2(vf27, 732, v1);                           // lqc2 vf27, 732(v1)
-@@ -1620,4 +1655,4 @@ void link() {
+@@ -1620,4 +1656,4 @@ void link() {
  
  } // namespace draw_string
  } // namespace Mips2C
@@ -10759,10 +10761,10 @@ index 4355cb922..c1034ba72 100644
    void load_settings();
    void save_settings();
 diff --git a/game/sound/989snd/player.cpp b/game/sound/989snd/player.cpp
-index 75187366e..c677524af 100644
+index 75187366e..7a0367d86 100644
 --- a/game/sound/989snd/player.cpp
 +++ b/game/sound/989snd/player.cpp
-@@ -2,12 +2,25 @@
+@@ -2,12 +2,27 @@
  // SPDX-License-Identifier: ISC
  #include "player.h"
  
@@ -10781,6 +10783,8 @@ index 75187366e..c677524af 100644
  
 +#ifdef __APPLE__
 +#include <SDL3/SDL.h>
++#endif
++#ifdef OTTSEL_IOS
 +// Defined by the iOS product shell; declared at file scope so it keeps external linkage.
 +extern std::string ottsel_ios_writable_dir();
 +#endif
@@ -10788,7 +10792,7 @@ index 75187366e..c677524af 100644
  #ifdef _WIN32
  #define WIN32_LEAN_AND_MEAN
  #include <combaseapi.h>
-@@ -19,15 +32,335 @@ namespace snd {
+@@ -19,15 +34,339 @@ namespace snd {
  
  u8 g_global_excite = 0;
  
@@ -10837,8 +10841,8 @@ index 75187366e..c677524af 100644
 +  p[1] = (v >> 8) & 0xff;
 +  p[2] = (v >> 16) & 0xff;
 +  p[3] = (v >> 24) & 0xff;
-+}
-+
+ }
+ 
 +void audio_dump_put_u16(u8* p, u16 v) {
 +  p[0] = v & 0xff;
 +  p[1] = (v >> 8) & 0xff;
@@ -10879,7 +10883,11 @@ index 75187366e..c677524af 100644
 +    const double seconds = env ? std::atof(env) : 0.0;
 +    if (seconds > 0.0) {
 +      g_audio_dump.frames_target = static_cast<u64>(seconds * 48000.0);
++#ifdef OTTSEL_IOS
 +      const std::string path = ottsel_ios_writable_dir() + "ottsel-audio-dump.wav";
++#else
++      const std::string path = "ottsel-audio-dump.wav";  // the working directory on the Mac
++#endif
 +      g_audio_dump.file = std::fopen(path.c_str(), "wb");
 +      lg::info("OTTSEL AUDIO PCM: dump path='{}' target-frames={}", path,
 +               g_audio_dump.frames_target);
@@ -10923,12 +10931,12 @@ index 75187366e..c677524af 100644
 +    lg::info("OTTSEL AUDIO PCM: dump complete frames={} bytes={}", g_audio_dump.frames_total,
 +             data_bytes);
 +  }
- }
++}
 +}  // namespace
 +#endif
 +
 +Player::Player() : mVmanager(mSynth) {}
- 
++
  Player::~Player() {
 +  DestroyOutput();
 +}
@@ -11126,7 +11134,7 @@ index 75187366e..c677524af 100644
  #ifdef _WIN32
    HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
    m_coinitialized = SUCCEEDED(hr);
-@@ -38,7 +371,12 @@ void Player::InitCubeb() {
+@@ -38,7 +377,12 @@ void Player::InitCubeb() {
    }
  #endif
  
@@ -11140,7 +11148,7 @@ index 75187366e..c677524af 100644
  
    cubeb_stream_params outparam = {};
    outparam.channels = 2;
-@@ -49,30 +387,77 @@ void Player::InitCubeb() {
+@@ -49,30 +393,77 @@ void Player::InitCubeb() {
  
    s32 err = 0;
    u32 latency = 0;
@@ -11223,7 +11231,7 @@ index 75187366e..c677524af 100644
  #ifdef _WIN32
    if (m_coinitialized) {
      CoUninitialize();
-@@ -80,13 +465,52 @@ void Player::DestroyCubeb() {
+@@ -80,13 +471,52 @@ void Player::DestroyCubeb() {
    }
  #endif
  }
@@ -11277,7 +11285,7 @@ index 75187366e..c677524af 100644
    return nframes;
  }
  
-@@ -125,7 +549,17 @@ void Player::Tick(s16Output* stream, int samples) {
+@@ -125,7 +555,17 @@ void Player::Tick(s16Output* stream, int samples) {
  
      stick++;
      htick++;

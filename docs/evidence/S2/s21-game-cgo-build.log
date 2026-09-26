@@ -1,363 +1,0 @@
-Successfully found all 358 dependencies for target in 0.000s
-Building 358 targets...
-[  0%] [goalc   ]       goal_src/jak1/kernel/gcommon.gc                                       [  0%] [goalc   ] 0.017 goal_src/jak1/kernel/gcommon.gc                                       
-[  1%] [goalc   ]       goal_src/jak1/kernel/gstring-h.gc                                     [  1%] [goalc   ] 0.001 goal_src/jak1/kernel/gstring-h.gc                                     
-[  1%] [goalc   ]       goal_src/jak1/kernel/gkernel-h.gc                                     [  1%] [goalc   ] 0.005 goal_src/jak1/kernel/gkernel-h.gc                                     
-[  1%] [goalc   ]       goal_src/jak1/kernel/gkernel.gc                                       [  1%] [goalc   ] 0.024 goal_src/jak1/kernel/gkernel.gc                                       
-[  1%] [goalc   ]       goal_src/jak1/kernel/gstate.gc                                        [  1%] [goalc   ] 0.003 goal_src/jak1/kernel/gstate.gc                                        
-[  2%] [goalc   ]       goal_src/jak1/kernel/gstring.gc                                       [  2%] [goalc   ] 0.010 goal_src/jak1/kernel/gstring.gc                                       
-[  2%] [goalc   ]       goal_src/jak1/engine/util/types-h.gc                                  [  2%] [goalc   ] 0.001 goal_src/jak1/engine/util/types-h.gc                                  
-[  2%] [goalc   ]       goal_src/jak1/engine/ps2/vu1-macros.gc                                [  2%] [goalc   ] 0.001 goal_src/jak1/engine/ps2/vu1-macros.gc                                
-[  3%] [goalc   ]       goal_src/jak1/engine/math/math.gc                                     [  3%] [goalc   ] 0.003 goal_src/jak1/engine/math/math.gc                                     
-[  3%] [goalc   ]       goal_src/jak1/engine/math/vector-h.gc                                 [  3%] [goalc   ] 0.009 goal_src/jak1/engine/math/vector-h.gc                                 
-[  3%] [goalc   ]       goal_src/jak1/engine/physics/gravity-h.gc                             [  3%] [goalc   ] 0.001 goal_src/jak1/engine/physics/gravity-h.gc                             
-[  3%] [goalc   ]       goal_src/jak1/engine/geometry/bounding-box-h.gc                       [  3%] [goalc   ] 0.001 goal_src/jak1/engine/geometry/bounding-box-h.gc                       
-[  4%] [goalc   ]       goal_src/jak1/engine/math/matrix-h.gc                                 [  4%] [goalc   ] 0.001 goal_src/jak1/engine/math/matrix-h.gc                                 
-[  4%] [goalc   ]       goal_src/jak1/engine/math/quaternion-h.gc                             [  4%] [goalc   ] 0.001 goal_src/jak1/engine/math/quaternion-h.gc                             
-[  4%] [goalc   ]       goal_src/jak1/engine/math/euler-h.gc                                  [  4%] [goalc   ] 0.001 goal_src/jak1/engine/math/euler-h.gc                                  
-[  4%] [goalc   ]       goal_src/jak1/engine/math/transform-h.gc                              [  4%] [goalc   ] 0.001 goal_src/jak1/engine/math/transform-h.gc                              
-[  5%] [goalc   ]       goal_src/jak1/engine/geometry/geometry-h.gc                           [  5%] [goalc   ] 0.001 goal_src/jak1/engine/geometry/geometry-h.gc                           
-[  5%] [goalc   ]       goal_src/jak1/engine/math/trigonometry-h.gc                           [  5%] [goalc   ] 0.000 goal_src/jak1/engine/math/trigonometry-h.gc                           
-[  5%] [goalc   ]       goal_src/jak1/engine/math/transformq-h.gc                             [  5%] [goalc   ] 0.001 goal_src/jak1/engine/math/transformq-h.gc                             
-[  6%] [goalc   ]       goal_src/jak1/engine/geometry/bounding-box.gc                         [  6%] [goalc   ] 0.002 goal_src/jak1/engine/geometry/bounding-box.gc                         
-[  6%] [goalc   ]       goal_src/jak1/engine/math/matrix.gc                                   [  6%] [goalc   ] 0.017 goal_src/jak1/engine/math/matrix.gc                                   
-[  6%] [goalc   ]       goal_src/jak1/engine/math/transform.gc                                [  6%] [goalc   ] 0.002 goal_src/jak1/engine/math/transform.gc                                
-[  6%] [goalc   ]       goal_src/jak1/engine/math/quaternion.gc                               [  6%] [goalc   ] 0.011 goal_src/jak1/engine/math/quaternion.gc                               
-[  7%] [goalc   ]       goal_src/jak1/engine/math/euler.gc                                    [  7%] [goalc   ] 0.006 goal_src/jak1/engine/math/euler.gc                                    
-[  7%] [goalc   ]       goal_src/jak1/engine/geometry/geometry.gc                             [  7%] [goalc   ] 0.020 goal_src/jak1/engine/geometry/geometry.gc                             
-[  7%] [goalc   ]       goal_src/jak1/engine/math/trigonometry.gc                             [  7%] [goalc   ] 0.009 goal_src/jak1/engine/math/trigonometry.gc                             
-[  8%] [goalc   ]       goal_src/jak1/engine/sound/gsound-h.gc                                [  8%] [goalc   ] 0.009 goal_src/jak1/engine/sound/gsound-h.gc                                
-[  8%] [goalc   ]       goal_src/jak1/engine/ps2/timer-h.gc                                   [  8%] [goalc   ] 0.002 goal_src/jak1/engine/ps2/timer-h.gc                                   
-[  8%] [goalc   ]       goal_src/jak1/engine/ps2/timer.gc                                     [  8%] [goalc   ] 0.002 goal_src/jak1/engine/ps2/timer.gc                                     
-[  8%] [goalc   ]       goal_src/jak1/engine/ps2/vif-h.gc                                     [  8%] [goalc   ] 0.002 goal_src/jak1/engine/ps2/vif-h.gc                                     
-[  9%] [goalc   ]       goal_src/jak1/engine/dma/dma-h.gc                                     [  9%] [goalc   ] 0.005 goal_src/jak1/engine/dma/dma-h.gc                                     
-[  9%] [goalc   ]       goal_src/jak1/engine/gfx/hw/video-h.gc                                [  9%] [goalc   ] 0.001 goal_src/jak1/engine/gfx/hw/video-h.gc                                
-[  9%] [goalc   ]       goal_src/jak1/engine/gfx/vu1-user-h.gc                                [  9%] [goalc   ] 0.001 goal_src/jak1/engine/gfx/vu1-user-h.gc                                
-[  9%] [goalc   ]       goal_src/jak1/engine/dma/dma.gc                                       [  9%] [goalc   ] 0.003 goal_src/jak1/engine/dma/dma.gc                                       
-[ 10%] [goalc   ]       goal_src/jak1/engine/dma/dma-buffer.gc                                [ 10%] [goalc   ] 0.003 goal_src/jak1/engine/dma/dma-buffer.gc                                
-[ 10%] [goalc   ]       goal_src/jak1/engine/dma/dma-bucket.gc                                [ 10%] [goalc   ] 0.001 goal_src/jak1/engine/dma/dma-bucket.gc                                
-[ 10%] [goalc   ]       goal_src/jak1/engine/dma/dma-disasm.gc                                [ 10%] [goalc   ] 0.012 goal_src/jak1/engine/dma/dma-disasm.gc                                
-[ 11%] [goalc   ]       goal_src/jak1/pc/pc-cheats.gc                                         [ 11%] [goalc   ] 0.000 goal_src/jak1/pc/pc-cheats.gc                                         
-[ 11%] [goalc   ]       goal_src/jak1/pc/pckernel-h.gc                                        [ 11%] [goalc   ] 0.006 goal_src/jak1/pc/pckernel-h.gc                                        
-[ 11%] [goalc   ]       goal_src/jak1/pc/pckernel-impl.gc                                     [1m[38;2;255;255;000m[Warning] [0mConstant PC_KERNEL_VERSION has been redefined PC_KERNEL_INVALID_VERSION -> (static-pckernel-version 1 10 4 0)
-[ 11%] [goalc   ] 0.005 goal_src/jak1/pc/pckernel-impl.gc                                     
-[ 11%] [goalc   ]       goal_src/jak1/engine/ps2/pad.gc                                       [ 11%] [goalc   ] 0.007 goal_src/jak1/engine/ps2/pad.gc                                       
-[ 12%] [goalc   ]       goal_src/jak1/engine/gfx/hw/gs.gc                                     [ 12%] [goalc   ] 0.016 goal_src/jak1/engine/gfx/hw/gs.gc                                     
-[ 12%] [goalc   ]       goal_src/jak1/engine/gfx/hw/display-h.gc                              [ 12%] [goalc   ] 0.004 goal_src/jak1/engine/gfx/hw/display-h.gc                              
-[ 12%] [goalc   ]       goal_src/jak1/engine/math/vector.gc                                   [ 12%] [goalc   ] 0.010 goal_src/jak1/engine/math/vector.gc                                   
-[ 13%] [goalc   ]       goal_src/jak1/engine/load/file-io.gc                                  [ 13%] [goalc   ] 0.002 goal_src/jak1/engine/load/file-io.gc                                  
-[ 13%] [goalc   ]       goal_src/jak1/engine/load/loader-h.gc                                 [ 13%] [goalc   ] 0.003 goal_src/jak1/engine/load/loader-h.gc                                 
-[ 13%] [goalc   ]       goal_src/jak1/engine/gfx/texture/texture-h.gc                         [ 13%] [goalc   ] [38;2;255;255;000m0.106 [0mgoal_src/jak1/engine/gfx/texture/texture-h.gc                         
-[ 13%] [goalc   ]       goal_src/jak1/engine/level/level-h.gc                                 [ 13%] [goalc   ] 0.004 goal_src/jak1/engine/level/level-h.gc                                 
-[ 14%] [goalc   ]       goal_src/jak1/engine/gfx/math-camera-h.gc                             [ 14%] [goalc   ] 0.003 goal_src/jak1/engine/gfx/math-camera-h.gc                             
-[ 14%] [goalc   ]       goal_src/jak1/engine/gfx/math-camera.gc                               [ 14%] [goalc   ] 0.010 goal_src/jak1/engine/gfx/math-camera.gc                               
-[ 14%] [goalc   ]       goal_src/jak1/engine/gfx/font-h.gc                                    [ 14%] [goalc   ] 0.005 goal_src/jak1/engine/gfx/font-h.gc                                    
-[ 15%] [goalc   ]       goal_src/jak1/engine/load/decomp-h.gc                                 [ 15%] [goalc   ] 0.001 goal_src/jak1/engine/load/decomp-h.gc                                 
-[ 15%] [goalc   ]       goal_src/jak1/engine/gfx/hw/display.gc                                [ 15%] [goalc   ] 0.012 goal_src/jak1/engine/gfx/hw/display.gc                                
-[ 15%] [goalc   ]       goal_src/jak1/engine/engine/connect.gc                                [ 15%] [goalc   ] 0.006 goal_src/jak1/engine/engine/connect.gc                                
-[ 15%] [goalc   ]       goal_src/jak1/engine/ui/text-h.gc                                     [ 15%] [goalc   ] 0.032 goal_src/jak1/engine/ui/text-h.gc                                     
-[ 16%] [goalc   ]       goal_src/jak1/engine/game/settings-h.gc                               [ 16%] [goalc   ] 0.002 goal_src/jak1/engine/game/settings-h.gc                               
-[ 16%] [goalc   ]       goal_src/jak1/pc/features/speedruns-h.gc                              [ 16%] [goalc   ] 0.001 goal_src/jak1/pc/features/speedruns-h.gc                              
-[ 16%] [goalc   ]       goal_src/jak1/engine/util/capture.gc                                  [ 16%] [goalc   ] 0.002 goal_src/jak1/engine/util/capture.gc                                  
-[ 16%] [goalc   ]       goal_src/jak1/engine/debug/memory-usage-h.gc                          [ 16%] [goalc   ] 0.001 goal_src/jak1/engine/debug/memory-usage-h.gc                          
-[ 17%] [goalc   ]       goal_src/jak1/engine/gfx/texture/texture.gc                           [ 17%] [goalc   ] 0.035 goal_src/jak1/engine/gfx/texture/texture.gc                           
-[ 17%] [goalc   ]       goal_src/jak1/engine/game/main-h.gc                                   [ 17%] [goalc   ] 0.002 goal_src/jak1/engine/game/main-h.gc                                   
-[ 17%] [goalc   ]       goal_src/jak1/engine/anim/mspace-h.gc                                 [ 17%] [goalc   ] 0.002 goal_src/jak1/engine/anim/mspace-h.gc                                 
-[ 18%] [goalc   ]       goal_src/jak1/engine/draw/drawable-h.gc                               [ 18%] [goalc   ] 0.001 goal_src/jak1/engine/draw/drawable-h.gc                               
-[ 18%] [goalc   ]       goal_src/jak1/engine/draw/drawable-group-h.gc                         [ 18%] [goalc   ] 0.000 goal_src/jak1/engine/draw/drawable-group-h.gc                         
-[ 18%] [goalc   ]       goal_src/jak1/engine/draw/drawable-inline-array-h.gc                  [ 18%] [goalc   ] 0.000 goal_src/jak1/engine/draw/drawable-inline-array-h.gc                  
-[ 18%] [goalc   ]       goal_src/jak1/engine/draw/draw-node-h.gc                              [ 18%] [goalc   ] 0.001 goal_src/jak1/engine/draw/draw-node-h.gc                              
-[ 19%] [goalc   ]       goal_src/jak1/engine/draw/drawable-tree-h.gc                          [ 19%] [goalc   ] 0.001 goal_src/jak1/engine/draw/drawable-tree-h.gc                          
-[ 19%] [goalc   ]       goal_src/jak1/engine/draw/drawable-actor-h.gc                         [ 19%] [goalc   ] 0.001 goal_src/jak1/engine/draw/drawable-actor-h.gc                         
-[ 19%] [goalc   ]       goal_src/jak1/engine/draw/drawable-ambient-h.gc                       [ 19%] [goalc   ] 0.001 goal_src/jak1/engine/draw/drawable-ambient-h.gc                       
-[ 20%] [goalc   ]       goal_src/jak1/engine/game/task/game-task-h.gc                         [ 20%] [goalc   ] 0.000 goal_src/jak1/engine/game/task/game-task-h.gc                         
-[ 20%] [goalc   ]       goal_src/jak1/engine/game/task/hint-control-h.gc                      [ 20%] [goalc   ] 0.001 goal_src/jak1/engine/game/task/hint-control-h.gc                      
-[ 20%] [goalc   ]       goal_src/jak1/engine/gfx/generic/generic-h.gc                         [ 20%] [goalc   ] 0.005 goal_src/jak1/engine/gfx/generic/generic-h.gc                         
-[ 20%] [goalc   ]       goal_src/jak1/engine/gfx/lights-h.gc                                  [ 20%] [goalc   ] 0.002 goal_src/jak1/engine/gfx/lights-h.gc                                  
-[ 21%] [goalc   ]       goal_src/jak1/engine/gfx/ocean/ocean-h.gc                             [ 21%] [goalc   ] 0.008 goal_src/jak1/engine/gfx/ocean/ocean-h.gc                             
-[ 21%] [goalc   ]       goal_src/jak1/engine/gfx/ocean/ocean-trans-tables.gc                  [ 21%] [goalc   ] 0.001 goal_src/jak1/engine/gfx/ocean/ocean-trans-tables.gc                  
-[ 21%] [goalc   ]       goal_src/jak1/engine/gfx/ocean/ocean-tables.gc                        [ 21%] [goalc   ] 0.035 goal_src/jak1/engine/gfx/ocean/ocean-tables.gc                        
-[ 22%] [goalc   ]       goal_src/jak1/engine/gfx/ocean/ocean-frames.gc                        [ 22%] [goalc   ] 0.010 goal_src/jak1/engine/gfx/ocean/ocean-frames.gc                        
-[ 22%] [goalc   ]       goal_src/jak1/engine/gfx/sky/sky-h.gc                                 [ 22%] [goalc   ] 0.003 goal_src/jak1/engine/gfx/sky/sky-h.gc                                 
-[ 22%] [goalc   ]       goal_src/jak1/engine/gfx/mood/mood-h.gc                               [ 22%] [goalc   ] 0.003 goal_src/jak1/engine/gfx/mood/mood-h.gc                               
-[ 22%] [goalc   ]       goal_src/jak1/engine/gfx/mood/time-of-day-h.gc                        [ 22%] [goalc   ] 0.002 goal_src/jak1/engine/gfx/mood/time-of-day-h.gc                        
-[ 23%] [goalc   ]       goal_src/jak1/engine/data/art-h.gc                                    [ 23%] [goalc   ] [38;2;255;255;000m0.179 [0mgoal_src/jak1/engine/data/art-h.gc                                    
-[ 23%] [goalc   ]       goal_src/jak1/engine/gfx/generic/generic-vu1-h.gc                     [ 23%] [goalc   ] 0.001 goal_src/jak1/engine/gfx/generic/generic-vu1-h.gc                     
-[ 23%] [goalc   ]       goal_src/jak1/engine/gfx/merc/merc-h.gc                               [ 23%] [goalc   ] 0.007 goal_src/jak1/engine/gfx/merc/merc-h.gc                               
-[ 23%] [goalc   ]       goal_src/jak1/engine/gfx/merc/generic-merc-h.gc                       [ 23%] [goalc   ] 0.003 goal_src/jak1/engine/gfx/merc/generic-merc-h.gc                       
-[ 24%] [goalc   ]       goal_src/jak1/engine/gfx/tie/generic-tie-h.gc                         [ 24%] [goalc   ] 0.004 goal_src/jak1/engine/gfx/tie/generic-tie-h.gc                         
-[ 24%] [goalc   ]       goal_src/jak1/engine/gfx/generic/generic-work-h.gc                    [ 24%] [goalc   ] 0.002 goal_src/jak1/engine/gfx/generic/generic-work-h.gc                    
-[ 24%] [goalc   ]       goal_src/jak1/engine/gfx/shadow/shadow-cpu-h.gc                       [ 24%] [goalc   ] 0.004 goal_src/jak1/engine/gfx/shadow/shadow-cpu-h.gc                       
-[ 25%] [goalc   ]       goal_src/jak1/engine/gfx/shadow/shadow-vu1-h.gc                       [ 25%] [goalc   ] 0.000 goal_src/jak1/engine/gfx/shadow/shadow-vu1-h.gc                       
-[ 25%] [goalc   ]       goal_src/jak1/engine/ps2/memcard-h.gc                                 [ 25%] [goalc   ] 0.002 goal_src/jak1/engine/ps2/memcard-h.gc                                 
-[ 25%] [goalc   ]       goal_src/jak1/engine/game/game-info-h.gc                              [ 25%] [goalc   ] 0.003 goal_src/jak1/engine/game/game-info-h.gc                              
-[ 25%] [goalc   ]       goal_src/jak1/engine/gfx/background/wind-h.gc                         [ 25%] [goalc   ] 0.001 goal_src/jak1/engine/gfx/background/wind-h.gc                         
-[ 26%] [goalc   ]       goal_src/jak1/engine/gfx/background/prototype-h.gc                    [ 26%] [goalc   ] 0.004 goal_src/jak1/engine/gfx/background/prototype-h.gc                    
-[ 26%] [goalc   ]       goal_src/jak1/engine/anim/joint-h.gc                                  [ 26%] [goalc   ] 0.002 goal_src/jak1/engine/anim/joint-h.gc                                  
-[ 26%] [goalc   ]       goal_src/jak1/engine/gfx/foreground/bones-h.gc                        [ 26%] [goalc   ] 0.002 goal_src/jak1/engine/gfx/foreground/bones-h.gc                        
-[ 27%] [goalc   ]       goal_src/jak1/engine/engine/engines.gc                                [ 27%] [goalc   ] 0.001 goal_src/jak1/engine/engine/engines.gc                                
-[ 27%] [goalc   ]       goal_src/jak1/engine/entity/res-h.gc                                  [ 27%] [goalc   ] 0.001 goal_src/jak1/engine/entity/res-h.gc                                  
-[ 27%] [goalc   ]       goal_src/jak1/engine/entity/res.gc                                    [ 27%] [goalc   ] 0.014 goal_src/jak1/engine/entity/res.gc                                    
-[ 27%] [goalc   ]       goal_src/jak1/engine/gfx/lights.gc                                    [ 27%] [goalc   ] 0.001 goal_src/jak1/engine/gfx/lights.gc                                    
-[ 28%] [goalc   ]       goal_src/jak1/engine/physics/dynamics-h.gc                            [ 28%] [goalc   ] 0.001 goal_src/jak1/engine/physics/dynamics-h.gc                            
-[ 28%] [goalc   ]       goal_src/jak1/engine/collide/surface-h.gc                             [ 28%] [goalc   ] 0.006 goal_src/jak1/engine/collide/surface-h.gc                             
-[ 28%] [goalc   ]       goal_src/jak1/engine/collide/pat-h.gc                                 [ 28%] [goalc   ] 0.002 goal_src/jak1/engine/collide/pat-h.gc                                 
-[ 28%] [goalc   ]       goal_src/jak1/engine/game/fact-h.gc                                   [ 28%] [goalc   ] 0.004 goal_src/jak1/engine/game/fact-h.gc                                   
-[ 29%] [goalc   ]       goal_src/jak1/engine/anim/aligner-h.gc                                [ 29%] [goalc   ] 0.001 goal_src/jak1/engine/anim/aligner-h.gc                                
-[ 29%] [goalc   ]       goal_src/jak1/engine/game/game-h.gc                                   [ 29%] [goalc   ] 0.002 goal_src/jak1/engine/game/game-h.gc                                   
-[ 29%] [goalc   ]       goal_src/jak1/engine/common-obs/generic-obs-h.gc                      [ 29%] [goalc   ] 0.003 goal_src/jak1/engine/common-obs/generic-obs-h.gc                      
-[ 30%] [goalc   ]       goal_src/jak1/engine/camera/pov-camera-h.gc                           [ 30%] [goalc   ] 0.001 goal_src/jak1/engine/camera/pov-camera-h.gc                           
-[ 30%] [goalc   ]       goal_src/jak1/engine/util/sync-info-h.gc                              [ 30%] [goalc   ] 0.002 goal_src/jak1/engine/util/sync-info-h.gc                              
-[ 30%] [goalc   ]       goal_src/jak1/engine/util/smush-control-h.gc                          [ 30%] [goalc   ] 0.002 goal_src/jak1/engine/util/smush-control-h.gc                          
-[ 30%] [goalc   ]       goal_src/jak1/engine/physics/trajectory-h.gc                          [ 30%] [goalc   ] 0.000 goal_src/jak1/engine/physics/trajectory-h.gc                          
-[ 31%] [goalc   ]       goal_src/jak1/engine/debug/debug-h.gc                                 [ 31%] [goalc   ] 0.001 goal_src/jak1/engine/debug/debug-h.gc                                 
-[ 31%] [goalc   ]       goal_src/jak1/engine/anim/joint-mod-h.gc                              [ 31%] [goalc   ] 0.013 goal_src/jak1/engine/anim/joint-mod-h.gc                              
-[ 31%] [goalc   ]       goal_src/jak1/engine/collide/collide-func-h.gc                        [ 31%] [goalc   ] 0.000 goal_src/jak1/engine/collide/collide-func-h.gc                        
-[ 32%] [goalc   ]       goal_src/jak1/engine/collide/collide-mesh-h.gc                        [ 32%] [goalc   ] 0.002 goal_src/jak1/engine/collide/collide-mesh-h.gc                        
-[ 32%] [goalc   ]       goal_src/jak1/engine/collide/collide-shape-h.gc                       [ 32%] [goalc   ] 0.008 goal_src/jak1/engine/collide/collide-shape-h.gc                       
-[ 32%] [goalc   ]       goal_src/jak1/engine/collide/collide-target-h.gc                      [ 32%] [goalc   ] 0.019 goal_src/jak1/engine/collide/collide-target-h.gc                      
-[ 32%] [goalc   ]       goal_src/jak1/engine/collide/collide-touch-h.gc                       [ 32%] [goalc   ] 0.002 goal_src/jak1/engine/collide/collide-touch-h.gc                       
-[ 33%] [goalc   ]       goal_src/jak1/engine/collide/collide-edge-grab-h.gc                   [ 33%] [goalc   ] 0.002 goal_src/jak1/engine/collide/collide-edge-grab-h.gc                   
-[ 33%] [goalc   ]       goal_src/jak1/engine/common-obs/process-drawable-h.gc                 [ 33%] [goalc   ] 0.002 goal_src/jak1/engine/common-obs/process-drawable-h.gc                 
-[ 33%] [goalc   ]       goal_src/jak1/engine/game/effect-control-h.gc                         [ 33%] [goalc   ] 0.001 goal_src/jak1/engine/game/effect-control-h.gc                         
-[ 34%] [goalc   ]       goal_src/jak1/engine/collide/collide-frag-h.gc                        [ 34%] [goalc   ] 0.001 goal_src/jak1/engine/collide/collide-frag-h.gc                        
-[ 34%] [goalc   ]       goal_src/jak1/engine/game/projectiles-h.gc                            [ 34%] [goalc   ] 0.001 goal_src/jak1/engine/game/projectiles-h.gc                            
-[ 34%] [goalc   ]       goal_src/jak1/engine/target/target-h.gc                               [ 34%] [goalc   ] 0.002 goal_src/jak1/engine/target/target-h.gc                               
-[ 34%] [goalc   ]       goal_src/jak1/engine/gfx/depth-cue-h.gc                               [ 34%] [goalc   ] 0.001 goal_src/jak1/engine/gfx/depth-cue-h.gc                               
-[ 35%] [goalc   ]       goal_src/jak1/engine/debug/stats-h.gc                                 [ 35%] [goalc   ] 0.002 goal_src/jak1/engine/debug/stats-h.gc                                 
-[ 35%] [goalc   ]       goal_src/jak1/engine/level/bsp-h.gc                                   [ 35%] [goalc   ] 0.003 goal_src/jak1/engine/level/bsp-h.gc                                   
-[ 35%] [goalc   ]       goal_src/jak1/engine/collide/collide-cache-h.gc                       [ 35%] [goalc   ] 0.003 goal_src/jak1/engine/collide/collide-cache-h.gc                       
-[ 35%] [goalc   ]       goal_src/jak1/engine/collide/collide-h.gc                             [ 35%] [goalc   ] 0.000 goal_src/jak1/engine/collide/collide-h.gc                             
-[ 36%] [goalc   ]       goal_src/jak1/engine/gfx/shrub/shrubbery-h.gc                         [ 36%] [goalc   ] 0.006 goal_src/jak1/engine/gfx/shrub/shrubbery-h.gc                         
-[ 36%] [goalc   ]       goal_src/jak1/engine/gfx/tie/tie-h.gc                                 [ 36%] [goalc   ] 0.004 goal_src/jak1/engine/gfx/tie/tie-h.gc                                 
-[ 36%] [goalc   ]       goal_src/jak1/engine/gfx/tfrag/tfrag-h.gc                             [ 36%] [goalc   ] 0.006 goal_src/jak1/engine/gfx/tfrag/tfrag-h.gc                             
-[ 37%] [goalc   ]       goal_src/jak1/engine/gfx/background/background-h.gc                   [ 37%] [goalc   ] 0.001 goal_src/jak1/engine/gfx/background/background-h.gc                   
-[ 37%] [goalc   ]       goal_src/jak1/engine/gfx/background/subdivide-h.gc                    [ 37%] [goalc   ] 0.003 goal_src/jak1/engine/gfx/background/subdivide-h.gc                    
-[ 37%] [goalc   ]       goal_src/jak1/engine/entity/entity-h.gc                               [ 37%] [goalc   ] 0.005 goal_src/jak1/engine/entity/entity-h.gc                               
-[ 37%] [goalc   ]       goal_src/jak1/pc/util/pc-anim-util.gc                                 [ 37%] [goalc   ] 0.003 goal_src/jak1/pc/util/pc-anim-util.gc                                 
-[ 38%] [goalc   ]       goal_src/jak1/engine/gfx/sprite/sprite-h.gc                           [ 38%] [goalc   ] 0.002 goal_src/jak1/engine/gfx/sprite/sprite-h.gc                           
-[ 38%] [goalc   ]       goal_src/jak1/engine/gfx/shadow/shadow-h.gc                           [ 38%] [goalc   ] 0.001 goal_src/jak1/engine/gfx/shadow/shadow-h.gc                           
-[ 38%] [goalc   ]       goal_src/jak1/engine/gfx/foreground/eye-h.gc                          [ 38%] [goalc   ] 0.001 goal_src/jak1/engine/gfx/foreground/eye-h.gc                          
-[ 39%] [goalc   ]       goal_src/jak1/engine/gfx/sprite/sparticle/sparticle-launcher-h.gc     [ 39%] [goalc   ] 0.006 goal_src/jak1/engine/gfx/sprite/sparticle/sparticle-launcher-h.gc     
-[ 39%] [goalc   ]       goal_src/jak1/engine/gfx/sprite/sparticle/sparticle-h.gc              [ 39%] [goalc   ] 0.002 goal_src/jak1/engine/gfx/sprite/sparticle/sparticle-h.gc              
-[ 39%] [goalc   ]       goal_src/jak1/engine/entity/actor-link-h.gc                           [ 39%] [goalc   ] 0.004 goal_src/jak1/engine/entity/actor-link-h.gc                           
-[ 39%] [goalc   ]       goal_src/jak1/engine/camera/camera-h.gc                               [ 39%] [goalc   ] 0.008 goal_src/jak1/engine/camera/camera-h.gc                               
-[ 40%] [goalc   ]       goal_src/jak1/engine/camera/cam-debug-h.gc                            [ 40%] [goalc   ] 0.002 goal_src/jak1/engine/camera/cam-debug-h.gc                            
-[ 40%] [goalc   ]       goal_src/jak1/engine/camera/cam-interface-h.gc                        [ 40%] [goalc   ] 0.001 goal_src/jak1/engine/camera/cam-interface-h.gc                        
-[ 40%] [goalc   ]       goal_src/jak1/engine/camera/cam-update-h.gc                           [ 40%] [goalc   ] 0.001 goal_src/jak1/engine/camera/cam-update-h.gc                           
-[ 41%] [goalc   ]       goal_src/jak1/engine/debug/assert-h.gc                                [ 41%] [goalc   ] 0.001 goal_src/jak1/engine/debug/assert-h.gc                                
-[ 41%] [goalc   ]       goal_src/jak1/engine/ui/hud-h.gc                                      [ 41%] [goalc   ] 0.002 goal_src/jak1/engine/ui/hud-h.gc                                      
-[ 41%] [goalc   ]       goal_src/jak1/engine/ui/progress/progress-h.gc                        [ 41%] [goalc   ] 0.003 goal_src/jak1/engine/ui/progress/progress-h.gc                        
-[ 41%] [goalc   ]       goal_src/jak1/engine/ps2/rpc-h.gc                                     [ 41%] [goalc   ] 0.003 goal_src/jak1/engine/ps2/rpc-h.gc                                     
-[ 42%] [goalc   ]       goal_src/jak1/engine/geometry/path-h.gc                               [ 42%] [goalc   ] 0.002 goal_src/jak1/engine/geometry/path-h.gc                               
-[ 42%] [goalc   ]       goal_src/jak1/engine/nav/navigate-h.gc                                [ 42%] [goalc   ] 0.006 goal_src/jak1/engine/nav/navigate-h.gc                                
-[ 42%] [goalc   ]       goal_src/jak1/engine/load/load-dgo.gc                                 [ 42%] [goalc   ] 0.005 goal_src/jak1/engine/load/load-dgo.gc                                 
-[ 42%] [goalc   ]       goal_src/jak1/engine/load/ramdisk.gc                                  [ 42%] [goalc   ] 0.002 goal_src/jak1/engine/load/ramdisk.gc                                  
-[ 43%] [goalc   ]       goal_src/jak1/engine/sound/gsound.gc                                  [ 43%] [goalc   ] 0.019 goal_src/jak1/engine/sound/gsound.gc                                  
-[ 43%] [goalc   ]       goal_src/jak1/engine/math/transformq.gc                               [ 43%] [goalc   ] 0.006 goal_src/jak1/engine/math/transformq.gc                               
-[ 43%] [goalc   ]       goal_src/jak1/engine/collide/collide-func.gc                          [ 43%] [goalc   ] 0.004 goal_src/jak1/engine/collide/collide-func.gc                          
-[ 44%] [goalc   ]       goal_src/jak1/engine/anim/joint.gc                                    [ 44%] [goalc   ] 0.028 goal_src/jak1/engine/anim/joint.gc                                    
-[ 44%] [goalc   ]       goal_src/jak1/engine/geometry/cylinder.gc                             [ 44%] [goalc   ] 0.006 goal_src/jak1/engine/geometry/cylinder.gc                             
-[ 44%] [goalc   ]       goal_src/jak1/engine/gfx/background/wind.gc                           [ 44%] [goalc   ] 0.001 goal_src/jak1/engine/gfx/background/wind.gc                           
-[ 44%] [goalc   ]       goal_src/jak1/engine/level/bsp.gc                                     [ 44%] [goalc   ] 0.009 goal_src/jak1/engine/level/bsp.gc                                     
-[ 45%] [goalc   ]       goal_src/jak1/engine/gfx/background/subdivide.gc                      [ 45%] [goalc   ] 0.007 goal_src/jak1/engine/gfx/background/subdivide.gc                      
-[ 45%] [goalc   ]       goal_src/jak1/engine/gfx/sprite/sprite.gc                             [ 45%] [goalc   ] 0.013 goal_src/jak1/engine/gfx/sprite/sprite.gc                             
-[ 45%] [goalc   ]       goal_src/jak1/engine/gfx/sprite/sprite-distort.gc                     [ 45%] [goalc   ] 0.007 goal_src/jak1/engine/gfx/sprite/sprite-distort.gc                     
-[ 46%] [goalc   ]       goal_src/jak1/engine/debug/debug-sphere.gc                            [ 46%] [goalc   ] 0.003 goal_src/jak1/engine/debug/debug-sphere.gc                            
-[ 46%] [goalc   ]       goal_src/jak1/engine/debug/debug.gc                                   [ 46%] [goalc   ] 0.023 goal_src/jak1/engine/debug/debug.gc                                   
-[ 46%] [goalc   ]       goal_src/jak1/engine/gfx/merc/merc-vu1.gc                             [ 46%] [goalc   ] 0.000 goal_src/jak1/engine/gfx/merc/merc-vu1.gc                             
-[ 46%] [goalc   ]       goal_src/jak1/engine/gfx/merc/merc-blend-shape.gc                     [ 46%] [goalc   ] 0.004 goal_src/jak1/engine/gfx/merc/merc-blend-shape.gc                     
-[ 47%] [goalc   ]       goal_src/jak1/engine/gfx/merc/merc.gc                                 [ 47%] [goalc   ] 0.009 goal_src/jak1/engine/gfx/merc/merc.gc                                 
-[ 47%] [goalc   ]       goal_src/jak1/engine/gfx/foreground/ripple.gc                         [ 47%] [goalc   ] 0.004 goal_src/jak1/engine/gfx/foreground/ripple.gc                         
-[ 47%] [goalc   ]       goal_src/jak1/engine/gfx/foreground/bones.gc                          [ 47%] [goalc   ] 0.033 goal_src/jak1/engine/gfx/foreground/bones.gc                          
-[ 47%] [goalc   ]       goal_src/jak1/engine/gfx/generic/generic-vu0.gc                       [ 47%] [goalc   ] 0.000 goal_src/jak1/engine/gfx/generic/generic-vu0.gc                       
-[ 48%] [goalc   ]       goal_src/jak1/engine/gfx/generic/generic.gc                           [ 48%] [goalc   ] 0.002 goal_src/jak1/engine/gfx/generic/generic.gc                           
-[ 48%] [goalc   ]       goal_src/jak1/engine/gfx/generic/generic-vu1.gc                       [ 48%] [goalc   ] 0.002 goal_src/jak1/engine/gfx/generic/generic-vu1.gc                       
-[ 48%] [goalc   ]       goal_src/jak1/engine/gfx/generic/generic-effect.gc                    [ 48%] [goalc   ] 0.002 goal_src/jak1/engine/gfx/generic/generic-effect.gc                    
-[ 49%] [goalc   ]       goal_src/jak1/engine/gfx/generic/generic-merc.gc                      [ 49%] [goalc   ] 0.002 goal_src/jak1/engine/gfx/generic/generic-merc.gc                      
-[ 49%] [goalc   ]       goal_src/jak1/engine/gfx/generic/generic-tie.gc                       [ 49%] [goalc   ] 0.002 goal_src/jak1/engine/gfx/generic/generic-tie.gc                       
-[ 49%] [goalc   ]       goal_src/jak1/engine/gfx/shadow/shadow-cpu.gc                         [ 49%] [goalc   ] 0.007 goal_src/jak1/engine/gfx/shadow/shadow-cpu.gc                         
-[ 49%] [goalc   ]       goal_src/jak1/engine/gfx/shadow/shadow-vu1.gc                         [ 49%] [goalc   ] 0.002 goal_src/jak1/engine/gfx/shadow/shadow-vu1.gc                         
-[ 50%] [goalc   ]       goal_src/jak1/engine/gfx/depth-cue.gc                                 [ 50%] [goalc   ] 0.008 goal_src/jak1/engine/gfx/depth-cue.gc                                 
-[ 50%] [goalc   ]       goal_src/jak1/engine/gfx/font.gc                                      [ 50%] [goalc   ] [38;2;255;255;000m0.066 [0mgoal_src/jak1/engine/gfx/font.gc                                      
-[ 50%] [goalc   ]       goal_src/jak1/engine/load/decomp.gc                                   [ 50%] [goalc   ] 0.006 goal_src/jak1/engine/load/decomp.gc                                   
-[ 51%] [goalc   ]       goal_src/jak1/engine/gfx/background/background.gc                     [ 51%] [goalc   ] 0.009 goal_src/jak1/engine/gfx/background/background.gc                     
-[ 51%] [goalc   ]       goal_src/jak1/engine/draw/draw-node.gc                                [ 51%] [goalc   ] 0.002 goal_src/jak1/engine/draw/draw-node.gc                                
-[ 51%] [goalc   ]       goal_src/jak1/engine/gfx/shrub/shrubbery.gc                           [ 51%] [goalc   ] 0.009 goal_src/jak1/engine/gfx/shrub/shrubbery.gc                           
-[ 51%] [goalc   ]       goal_src/jak1/engine/gfx/shrub/shrub-work.gc                          [ 51%] [goalc   ] 0.002 goal_src/jak1/engine/gfx/shrub/shrub-work.gc                          
-[ 52%] [goalc   ]       goal_src/jak1/engine/gfx/tfrag/tfrag-near.gc                          [ 52%] [goalc   ] 0.001 goal_src/jak1/engine/gfx/tfrag/tfrag-near.gc                          
-[ 52%] [goalc   ]       goal_src/jak1/engine/gfx/tfrag/tfrag.gc                               [ 52%] [goalc   ] 0.008 goal_src/jak1/engine/gfx/tfrag/tfrag.gc                               
-[ 52%] [goalc   ]       goal_src/jak1/engine/gfx/tfrag/tfrag-methods.gc                       [ 52%] [goalc   ] 0.010 goal_src/jak1/engine/gfx/tfrag/tfrag-methods.gc                       
-[ 53%] [goalc   ]       goal_src/jak1/engine/gfx/tfrag/tfrag-work.gc                          [ 53%] [goalc   ] 0.001 goal_src/jak1/engine/gfx/tfrag/tfrag-work.gc                          
-[ 53%] [goalc   ]       goal_src/jak1/engine/gfx/tie/tie.gc                                   [ 53%] [goalc   ] 0.008 goal_src/jak1/engine/gfx/tie/tie.gc                                   
-[ 53%] [goalc   ]       goal_src/jak1/engine/gfx/tie/tie-near.gc                              [ 53%] [goalc   ] 0.002 goal_src/jak1/engine/gfx/tie/tie-near.gc                              
-[ 53%] [goalc   ]       goal_src/jak1/engine/gfx/tie/tie-work.gc                              [ 53%] [goalc   ] 0.001 goal_src/jak1/engine/gfx/tie/tie-work.gc                              
-[ 54%] [goalc   ]       goal_src/jak1/engine/gfx/tie/tie-methods.gc                           [ 54%] [goalc   ] 0.008 goal_src/jak1/engine/gfx/tie/tie-methods.gc                           
-[ 54%] [goalc   ]       goal_src/jak1/engine/util/sync-info.gc                                [ 54%] [goalc   ] 0.007 goal_src/jak1/engine/util/sync-info.gc                                
-[ 54%] [goalc   ]       goal_src/jak1/engine/physics/trajectory.gc                            [ 54%] [goalc   ] 0.002 goal_src/jak1/engine/physics/trajectory.gc                            
-[ 54%] [goalc   ]       goal_src/jak1/engine/gfx/sprite/sparticle/sparticle-launcher.gc       [ 54%] [goalc   ] 0.018 goal_src/jak1/engine/gfx/sprite/sparticle/sparticle-launcher.gc       
-[ 55%] [goalc   ]       goal_src/jak1/engine/gfx/sprite/sparticle/sparticle.gc                [ 55%] [goalc   ] 0.009 goal_src/jak1/engine/gfx/sprite/sparticle/sparticle.gc                
-[ 55%] [goalc   ]       goal_src/jak1/engine/entity/entity-table.gc                           [ 55%] [goalc   ] 0.001 goal_src/jak1/engine/entity/entity-table.gc                           
-[ 55%] [goalc   ]       goal_src/jak1/engine/load/loader.gc                                   [ 55%] [goalc   ] 0.023 goal_src/jak1/engine/load/loader.gc                                   
-[ 56%] [goalc   ]       goal_src/jak1/engine/game/task/task-control-h.gc                      [ 56%] [goalc   ] 0.002 goal_src/jak1/engine/game/task/task-control-h.gc                      
-[ 56%] [goalc   ]       goal_src/jak1/engine/game/game-info.gc                                [ 56%] [goalc   ] 0.022 goal_src/jak1/engine/game/game-info.gc                                
-[ 56%] [goalc   ]       goal_src/jak1/engine/game/game-save.gc                                [ 56%] [goalc   ] 0.035 goal_src/jak1/engine/game/game-save.gc                                
-[ 56%] [goalc   ]       goal_src/jak1/engine/game/settings.gc                                 [ 56%] [goalc   ] 0.007 goal_src/jak1/engine/game/settings.gc                                 
-[ 57%] [goalc   ]       goal_src/jak1/engine/gfx/mood/mood-tables.gc                          [ 57%] [goalc   ] 0.018 goal_src/jak1/engine/gfx/mood/mood-tables.gc                          
-[ 57%] [goalc   ]       goal_src/jak1/engine/gfx/mood/mood.gc                                 [ 57%] [goalc   ] 0.047 goal_src/jak1/engine/gfx/mood/mood.gc                                 
-[ 57%] [goalc   ]       goal_src/jak1/engine/gfx/mood/weather-part.gc                         [ 57%] [goalc   ] 0.018 goal_src/jak1/engine/gfx/mood/weather-part.gc                         
-[ 58%] [goalc   ]       goal_src/jak1/engine/gfx/mood/time-of-day.gc                          [ 58%] [goalc   ] 0.010 goal_src/jak1/engine/gfx/mood/time-of-day.gc                          
-[ 58%] [goalc   ]       goal_src/jak1/engine/gfx/sky/sky-utils.gc                             [ 58%] [goalc   ] 0.001 goal_src/jak1/engine/gfx/sky/sky-utils.gc                             
-[ 58%] [goalc   ]       goal_src/jak1/engine/gfx/sky/sky.gc                                   [ 58%] [goalc   ] 0.002 goal_src/jak1/engine/gfx/sky/sky.gc                                   
-[ 58%] [goalc   ]       goal_src/jak1/engine/gfx/sky/sky-tng.gc                               [ 58%] [goalc   ] 0.011 goal_src/jak1/engine/gfx/sky/sky-tng.gc                               
-[ 59%] [goalc   ]       goal_src/jak1/engine/level/load-boundary-h.gc                         [ 59%] [goalc   ] 0.002 goal_src/jak1/engine/level/load-boundary-h.gc                         
-[ 59%] [goalc   ]       goal_src/jak1/engine/level/load-boundary.gc                           [ 59%] [goalc   ] 0.033 goal_src/jak1/engine/level/load-boundary.gc                           
-[ 59%] [goalc   ]       goal_src/jak1/engine/level/load-boundary-data.gc                      [ 59%] [goalc   ] 0.010 goal_src/jak1/engine/level/load-boundary-data.gc                      
-[ 59%] [goalc   ]       goal_src/jak1/engine/level/level-info.gc                              [ 59%] [goalc   ] 0.006 goal_src/jak1/engine/level/level-info.gc                              
-[ 60%] [goalc   ]       goal_src/jak1/engine/level/level.gc                                   [ 60%] [goalc   ] 0.031 goal_src/jak1/engine/level/level.gc                                   
-[ 60%] [goalc   ]       goal_src/jak1/engine/ui/text.gc                                       [ 60%] [goalc   ] 0.013 goal_src/jak1/engine/ui/text.gc                                       
-[ 60%] [goalc   ]       goal_src/jak1/engine/collide/collide-probe.gc                         [ 60%] [goalc   ] 0.004 goal_src/jak1/engine/collide/collide-probe.gc                         
-[ 61%] [goalc   ]       goal_src/jak1/engine/collide/collide-frag.gc                          [ 61%] [goalc   ] 0.002 goal_src/jak1/engine/collide/collide-frag.gc                          
-[ 61%] [goalc   ]       goal_src/jak1/engine/collide/collide-mesh.gc                          [ 61%] [goalc   ] 0.005 goal_src/jak1/engine/collide/collide-mesh.gc                          
-[ 61%] [goalc   ]       goal_src/jak1/engine/collide/collide-touch.gc                         [ 61%] [goalc   ] 0.006 goal_src/jak1/engine/collide/collide-touch.gc                         
-[ 61%] [goalc   ]       goal_src/jak1/engine/collide/collide-edge-grab.gc                     [ 61%] [goalc   ] 0.009 goal_src/jak1/engine/collide/collide-edge-grab.gc                     
-[ 62%] [goalc   ]       goal_src/jak1/engine/collide/collide-shape.gc                         [ 62%] [goalc   ] [38;2;255;255;000m0.063 [0mgoal_src/jak1/engine/collide/collide-shape.gc                         
-[ 62%] [goalc   ]       goal_src/jak1/engine/collide/collide-shape-rider.gc                   [ 62%] [goalc   ] 0.010 goal_src/jak1/engine/collide/collide-shape-rider.gc                   
-[ 62%] [goalc   ]       goal_src/jak1/engine/collide/collide.gc                               [ 62%] [goalc   ] 0.000 goal_src/jak1/engine/collide/collide.gc                               
-[ 63%] [goalc   ]       goal_src/jak1/engine/gfx/merc/merc-death.gc                           [ 63%] [goalc   ] 0.002 goal_src/jak1/engine/gfx/merc/merc-death.gc                           
-[ 63%] [goalc   ]       goal_src/jak1/engine/common-obs/water-h.gc                            [ 63%] [goalc   ] 0.003 goal_src/jak1/engine/common-obs/water-h.gc                            
-[ 63%] [goalc   ]       goal_src/jak1/engine/camera/camera.gc                                 [ 63%] [goalc   ] 0.035 goal_src/jak1/engine/camera/camera.gc                                 
-[ 63%] [goalc   ]       goal_src/jak1/engine/camera/cam-interface.gc                          [ 63%] [goalc   ] 0.001 goal_src/jak1/engine/camera/cam-interface.gc                          
-[ 64%] [goalc   ]       goal_src/jak1/engine/camera/cam-master.gc                             [ 64%] [goalc   ] 0.040 goal_src/jak1/engine/camera/cam-master.gc                             
-[ 64%] [goalc   ]       goal_src/jak1/engine/camera/cam-states.gc                             [ 64%] [goalc   ] [38;2;255;255;000m0.070 [0mgoal_src/jak1/engine/camera/cam-states.gc                             
-[ 64%] [goalc   ]       goal_src/jak1/engine/camera/cam-states-dbg.gc                         [ 64%] [goalc   ] 0.014 goal_src/jak1/engine/camera/cam-states-dbg.gc                         
-[ 65%] [goalc   ]       goal_src/jak1/engine/camera/cam-combiner.gc                           [ 65%] [goalc   ] 0.014 goal_src/jak1/engine/camera/cam-combiner.gc                           
-[ 65%] [goalc   ]       goal_src/jak1/engine/camera/cam-update.gc                             [ 65%] [goalc   ] 0.010 goal_src/jak1/engine/camera/cam-update.gc                             
-[ 65%] [goalc   ]       goal_src/jak1/engine/geometry/vol-h.gc                                [ 65%] [goalc   ] 0.002 goal_src/jak1/engine/geometry/vol-h.gc                                
-[ 65%] [goalc   ]       goal_src/jak1/engine/camera/cam-layout.gc                             [ 65%] [goalc   ] [38;2;255;255;000m0.053 [0mgoal_src/jak1/engine/camera/cam-layout.gc                             
-[ 66%] [goalc   ]       goal_src/jak1/engine/camera/cam-debug.gc                              [ 66%] [goalc   ] 0.029 goal_src/jak1/engine/camera/cam-debug.gc                              
-[ 66%] [goalc   ]       goal_src/jak1/engine/camera/cam-start.gc                              [ 66%] [goalc   ] 0.001 goal_src/jak1/engine/camera/cam-start.gc                              
-[ 66%] [goalc   ]       goal_src/jak1/engine/common-obs/process-drawable.gc                   [ 66%] [goalc   ] 0.023 goal_src/jak1/engine/common-obs/process-drawable.gc                   
-[ 66%] [goalc   ]       goal_src/jak1/engine/game/task/hint-control.gc                        [ 66%] [goalc   ] 0.004 goal_src/jak1/engine/game/task/hint-control.gc                        
-[ 67%] [goalc   ]       goal_src/jak1/engine/entity/ambient.gc                                [ 67%] [goalc   ] 0.024 goal_src/jak1/engine/entity/ambient.gc                                
-[ 67%] [goalc   ]       goal_src/jak1/engine/debug/assert.gc                                  [ 67%] [goalc   ] 0.001 goal_src/jak1/engine/debug/assert.gc                                  
-[ 67%] [goalc   ]       goal_src/jak1/engine/common-obs/generic-obs.gc                        [ 67%] [goalc   ] [38;2;255;255;000m0.051 [0mgoal_src/jak1/engine/common-obs/generic-obs.gc                        
-[ 68%] [goalc   ]       goal_src/jak1/engine/target/target-util.gc                            [ 68%] [goalc   ] 0.021 goal_src/jak1/engine/target/target-util.gc                            
-[ 68%] [goalc   ]       goal_src/jak1/pc/debug/pc-debug-common.gc                             [ 68%] [goalc   ] 0.001 goal_src/jak1/pc/debug/pc-debug-common.gc                             
-[ 68%] [goalc   ]       goal_src/jak1/pc/debug/pc-debug-methods.gc                            [ 68%] [goalc   ] 0.009 goal_src/jak1/pc/debug/pc-debug-methods.gc                            
-[ 68%] [goalc   ]       goal_src/jak1/pc/util/knuth-rand.gc                                   [ 68%] [goalc   ] 0.001 goal_src/jak1/pc/util/knuth-rand.gc                                   
-[ 69%] [goalc   ]       goal_src/jak1/pc/features/autosplit-h.gc                              [ 69%] [goalc   ] 0.007 goal_src/jak1/pc/features/autosplit-h.gc                              
-[ 69%] [goalc   ]       goal_src/jak1/engine/target/target-part.gc                            [ 69%] [goalc   ] [38;2;255;255;000m0.066 [0mgoal_src/jak1/engine/target/target-part.gc                            
-[ 69%] [goalc   ]       goal_src/jak1/engine/target/collide-reaction-target.gc                [ 69%] [goalc   ] 0.014 goal_src/jak1/engine/target/collide-reaction-target.gc                
-[ 70%] [goalc   ]       goal_src/jak1/engine/target/logic-target.gc                           [ 70%] [goalc   ] 0.040 goal_src/jak1/engine/target/logic-target.gc                           
-[ 70%] [goalc   ]       goal_src/jak1/engine/target/sidekick.gc                               [ 70%] [goalc   ] 0.003 goal_src/jak1/engine/target/sidekick.gc                               
-[ 70%] [goalc   ]       goal_src/jak1/engine/common-obs/voicebox.gc                           [ 70%] [goalc   ] 0.006 goal_src/jak1/engine/common-obs/voicebox.gc                           
-[ 70%] [goalc   ]       goal_src/jak1/engine/target/target-handler.gc                         [ 70%] [goalc   ] 0.019 goal_src/jak1/engine/target/target-handler.gc                         
-[ 71%] [goalc   ]       goal_src/jak1/engine/target/target.gc                                 [ 71%] [goalc   ] [38;2;255;255;000m0.118 [0mgoal_src/jak1/engine/target/target.gc                                 
-[ 71%] [goalc   ]       goal_src/jak1/engine/target/target2.gc                                [ 71%] [goalc   ] [38;2;255;255;000m0.097 [0mgoal_src/jak1/engine/target/target2.gc                                
-[ 71%] [goalc   ]       goal_src/jak1/engine/target/target-death.gc                           [ 71%] [goalc   ] [38;2;255;255;000m0.052 [0mgoal_src/jak1/engine/target/target-death.gc                           
-[ 72%] [goalc   ]       goal_src/jak1/engine/debug/menu.gc                                    [ 72%] [goalc   ] 0.022 goal_src/jak1/engine/debug/menu.gc                                    
-[ 72%] [goalc   ]       goal_src/jak1/engine/draw/drawable.gc                                 [ 72%] [goalc   ] 0.030 goal_src/jak1/engine/draw/drawable.gc                                 
-[ 72%] [goalc   ]       goal_src/jak1/engine/draw/drawable-group.gc                           [ 72%] [goalc   ] 0.003 goal_src/jak1/engine/draw/drawable-group.gc                           
-[ 72%] [goalc   ]       goal_src/jak1/engine/draw/drawable-inline-array.gc                    [ 72%] [goalc   ] 0.001 goal_src/jak1/engine/draw/drawable-inline-array.gc                    
-[ 73%] [goalc   ]       goal_src/jak1/engine/draw/drawable-tree.gc                            [ 73%] [goalc   ] 0.002 goal_src/jak1/engine/draw/drawable-tree.gc                            
-[ 73%] [goalc   ]       goal_src/jak1/engine/gfx/background/prototype.gc                      [ 73%] [goalc   ] 0.003 goal_src/jak1/engine/gfx/background/prototype.gc                      
-[ 73%] [goalc   ]       goal_src/jak1/engine/collide/main-collide.gc                          [ 73%] [goalc   ] 0.002 goal_src/jak1/engine/collide/main-collide.gc                          
-[ 73%] [goalc   ]       goal_src/jak1/engine/gfx/hw/video.gc                                  [ 73%] [goalc   ] 0.002 goal_src/jak1/engine/gfx/hw/video.gc                                  
-[ 74%] [goalc   ]       goal_src/jak1/pc/pckernel-common.gc                                   [ 74%] [goalc   ] 0.018 goal_src/jak1/pc/pckernel-common.gc                                   
-[ 74%] [goalc   ]       goal_src/jak1/pc/pckernel.gc                                          [ 74%] [goalc   ] [38;2;255;255;000m0.087 [0mgoal_src/jak1/pc/pckernel.gc                                          
-[ 74%] [goalc   ]       goal_src/jak1/engine/game/main.gc                                     [ 74%] [goalc   ] 0.031 goal_src/jak1/engine/game/main.gc                                     
-[ 75%] [goalc   ]       goal_src/jak1/engine/collide/collide-cache.gc                         [ 75%] [goalc   ] 0.035 goal_src/jak1/engine/collide/collide-cache.gc                         
-[ 75%] [goalc   ]       goal_src/jak1/engine/entity/relocate.gc                               [ 75%] [goalc   ] 0.006 goal_src/jak1/engine/entity/relocate.gc                               
-[ 75%] [goalc   ]       goal_src/jak1/engine/debug/memory-usage.gc                            [ 75%] [goalc   ] 0.016 goal_src/jak1/engine/debug/memory-usage.gc                            
-[ 75%] [goalc   ]       goal_src/jak1/engine/entity/entity.gc                                 [ 75%] [goalc   ] 0.036 goal_src/jak1/engine/entity/entity.gc                                 
-[ 76%] [goalc   ]       goal_src/jak1/engine/geometry/path.gc                                 [ 76%] [goalc   ] 0.006 goal_src/jak1/engine/geometry/path.gc                                 
-[ 76%] [goalc   ]       goal_src/jak1/engine/geometry/vol.gc                                  [ 76%] [goalc   ] 0.010 goal_src/jak1/engine/geometry/vol.gc                                  
-[ 76%] [goalc   ]       goal_src/jak1/engine/nav/navigate.gc                                  [ 76%] [goalc   ] [38;2;255;255;000m0.060 [0mgoal_src/jak1/engine/nav/navigate.gc                                  
-[ 77%] [goalc   ]       goal_src/jak1/engine/anim/aligner.gc                                  [ 77%] [goalc   ] 0.004 goal_src/jak1/engine/anim/aligner.gc                                  
-[ 77%] [goalc   ]       goal_src/jak1/engine/game/effect-control.gc                           [ 77%] [goalc   ] 0.018 goal_src/jak1/engine/game/effect-control.gc                           
-[ 77%] [goalc   ]       goal_src/jak1/engine/common-obs/water.gc                              [ 77%] [goalc   ] 0.043 goal_src/jak1/engine/common-obs/water.gc                              
-[ 77%] [goalc   ]       goal_src/jak1/engine/common-obs/collectables-part.gc                  [ 77%] [goalc   ] [38;2;255;255;000m0.080 [0mgoal_src/jak1/engine/common-obs/collectables-part.gc                  
-[ 78%] [goalc   ]       goal_src/jak1/engine/common-obs/collectables.gc                       [ 78%] [goalc   ] [38;2;255;255;000m0.069 [0mgoal_src/jak1/engine/common-obs/collectables.gc                       
-[ 78%] [goalc   ]       goal_src/jak1/engine/game/task/task-control.gc                        [ 78%] [goalc   ] 0.031 goal_src/jak1/engine/game/task/task-control.gc                        
-[ 78%] [goalc   ]       goal_src/jak1/engine/common-obs/process-taskable.gc                   [ 78%] [goalc   ] 0.029 goal_src/jak1/engine/common-obs/process-taskable.gc                   
-[ 78%] [goalc   ]       goal_src/jak1/engine/camera/pov-camera.gc                             [ 78%] [goalc   ] 0.008 goal_src/jak1/engine/camera/pov-camera.gc                             
-[ 79%] [goalc   ]       goal_src/jak1/engine/game/powerups.gc                                 [ 79%] [goalc   ] 0.027 goal_src/jak1/engine/game/powerups.gc                                 
-[ 79%] [goalc   ]       goal_src/jak1/engine/common-obs/crates.gc                             [ 79%] [goalc   ] 0.040 goal_src/jak1/engine/common-obs/crates.gc                             
-[ 79%] [goalc   ]       goal_src/jak1/engine/ui/hud.gc                                        [ 79%] [goalc   ] 0.012 goal_src/jak1/engine/ui/hud.gc                                        
-[ 80%] [goalc   ]       goal_src/jak1/engine/ui/hud-classes.gc                                [ 80%] [goalc   ] 0.046 goal_src/jak1/engine/ui/hud-classes.gc                                
-[ 80%] [goalc   ]       goal_src/jak1/engine/ui/progress/progress-static.gc                   [ 80%] [goalc   ] 0.003 goal_src/jak1/engine/ui/progress/progress-static.gc                   
-[ 80%] [goalc   ]       goal_src/jak1/pc/features/autosplit.gc                                [ 80%] [goalc   ] 0.011 goal_src/jak1/pc/features/autosplit.gc                                
-[ 80%] [goalc   ]       goal_src/jak1/pc/features/speedruns.gc                                [ 80%] [goalc   ] 0.014 goal_src/jak1/pc/features/speedruns.gc                                
-[ 81%] [goalc   ]       goal_src/jak1/engine/ui/progress/progress-part.gc                     [ 81%] [goalc   ] 0.033 goal_src/jak1/engine/ui/progress/progress-part.gc                     
-[ 81%] [goalc   ]       goal_src/jak1/engine/ui/progress/progress-draw.gc                     [ 81%] [goalc   ] 0.041 goal_src/jak1/engine/ui/progress/progress-draw.gc                     
-[ 81%] [goalc   ]       goal_src/jak1/engine/ui/progress/progress.gc                          [ 81%] [goalc   ] [38;2;255;255;000m0.063 [0mgoal_src/jak1/engine/ui/progress/progress.gc                          
-[ 82%] [goalc   ]       goal_src/jak1/pc/progress-pc.gc                                       [ 82%] [goalc   ] [38;2;255;255;000m0.141 [0mgoal_src/jak1/pc/progress-pc.gc                                       
-[ 82%] [goalc   ]       goal_src/jak1/engine/ui/credits.gc                                    [ 82%] [goalc   ] 0.003 goal_src/jak1/engine/ui/credits.gc                                    
-[ 82%] [goalc   ]       goal_src/jak1/engine/game/projectiles.gc                              [ 82%] [goalc   ] 0.032 goal_src/jak1/engine/game/projectiles.gc                              
-[ 82%] [goalc   ]       goal_src/jak1/engine/gfx/ocean/ocean.gc                               [ 82%] [goalc   ] 0.011 goal_src/jak1/engine/gfx/ocean/ocean.gc                               
-[ 83%] [goalc   ]       goal_src/jak1/engine/gfx/ocean/ocean-vu0.gc                           [ 83%] [goalc   ] 0.000 goal_src/jak1/engine/gfx/ocean/ocean-vu0.gc                           
-[ 83%] [goalc   ]       goal_src/jak1/engine/gfx/ocean/ocean-texture.gc                       [ 83%] [goalc   ] 0.003 goal_src/jak1/engine/gfx/ocean/ocean-texture.gc                       
-[ 83%] [goalc   ]       goal_src/jak1/engine/gfx/ocean/ocean-mid.gc                           [ 83%] [goalc   ] 0.018 goal_src/jak1/engine/gfx/ocean/ocean-mid.gc                           
-[ 84%] [goalc   ]       goal_src/jak1/engine/gfx/ocean/ocean-transition.gc                    [ 84%] [goalc   ] 0.015 goal_src/jak1/engine/gfx/ocean/ocean-transition.gc                    
-[ 84%] [goalc   ]       goal_src/jak1/engine/gfx/ocean/ocean-near.gc                          [ 84%] [goalc   ] 0.009 goal_src/jak1/engine/gfx/ocean/ocean-near.gc                          
-[ 84%] [goalc   ]       goal_src/jak1/engine/gfx/shadow/shadow.gc                             [ 84%] [goalc   ] 0.004 goal_src/jak1/engine/gfx/shadow/shadow.gc                             
-[ 84%] [goalc   ]       goal_src/jak1/engine/gfx/foreground/eye.gc                            [ 84%] [goalc   ] 0.021 goal_src/jak1/engine/gfx/foreground/eye.gc                            
-[ 85%] [goalc   ]       goal_src/jak1/engine/util/glist-h.gc                                  [ 85%] [goalc   ] 0.002 goal_src/jak1/engine/util/glist-h.gc                                  
-[ 85%] [goalc   ]       goal_src/jak1/engine/util/glist.gc                                    [ 85%] [goalc   ] 0.003 goal_src/jak1/engine/util/glist.gc                                    
-[ 85%] [goalc   ]       goal_src/jak1/engine/debug/anim-tester.gc                             [ 85%] [goalc   ] 0.045 goal_src/jak1/engine/debug/anim-tester.gc                             
-[ 85%] [goalc   ]       goal_src/jak1/engine/debug/viewer.gc                                  [ 85%] [goalc   ] 0.005 goal_src/jak1/engine/debug/viewer.gc                                  
-[ 86%] [goalc   ]       goal_src/jak1/engine/debug/part-tester.gc                             [ 86%] [goalc   ] 0.002 goal_src/jak1/engine/debug/part-tester.gc                             
-[ 86%] [goalc   ]       goal_src/jak1/engine/debug/default-menu.gc                            [ 86%] [goalc   ] 0.047 goal_src/jak1/engine/debug/default-menu.gc                            
-[ 86%] [goalc   ]       goal_src/jak1/pc/debug/anim-tester-x.gc                               [ 86%] [goalc   ] 0.014 goal_src/jak1/pc/debug/anim-tester-x.gc                               
-[ 87%] [goalc   ]       goal_src/jak1/pc/debug/entity-debug.gc                                [ 87%] [goalc   ] 0.039 goal_src/jak1/pc/debug/entity-debug.gc                                
-[ 87%] [goalc   ]       goal_src/jak1/pc/subtitle.gc                                          [ 87%] [goalc   ] 0.026 goal_src/jak1/pc/subtitle.gc                                          
-[ 87%] [goalc   ]       goal_src/jak1/pc/debug/default-menu-pc.gc                             [ 87%] [goalc   ] 0.038 goal_src/jak1/pc/debug/default-menu-pc.gc                             
-[ 87%] [tpage-dir]       decompiler_out/jak1/textures/tpage-dir.txt                            [ 87%] [tpage-dir] 0.001 decompiler_out/jak1/textures/tpage-dir.txt                            
-[ 88%] [copy    ]       decompiler_out/jak1/raw_obj/tpage-463.go                              [ 88%] [copy    ] 0.001 decompiler_out/jak1/raw_obj/tpage-463.go                              
-[ 88%] [copy    ]       decompiler_out/jak1/raw_obj/tpage-2.go                                [ 88%] [copy    ] 0.001 decompiler_out/jak1/raw_obj/tpage-2.go                                
-[ 88%] [copy    ]       decompiler_out/jak1/raw_obj/tpage-880.go                              [ 88%] [copy    ] 0.001 decompiler_out/jak1/raw_obj/tpage-880.go                              
-[ 89%] [copy    ]       decompiler_out/jak1/raw_obj/tpage-256.go                              [ 89%] [copy    ] 0.001 decompiler_out/jak1/raw_obj/tpage-256.go                              
-[ 89%] [copy    ]       decompiler_out/jak1/raw_obj/tpage-1278.go                             [ 89%] [copy    ] 0.001 decompiler_out/jak1/raw_obj/tpage-1278.go                             
-[ 89%] [goalc   ]       goal_src/jak1/engine/gfx/texture/texture-upload.gc                    [ 89%] [goalc   ] 0.001 goal_src/jak1/engine/gfx/texture/texture-upload.gc                    
-[ 89%] [copy    ]       decompiler_out/jak1/raw_obj/tpage-1032.go                             [ 89%] [copy    ] 0.002 decompiler_out/jak1/raw_obj/tpage-1032.go                             
-[ 90%] [copy    ]       decompiler_out/jak1/raw_obj/tpage-62.go                               [ 90%] [copy    ] 0.001 decompiler_out/jak1/raw_obj/tpage-62.go                               
-[ 90%] [copy    ]       decompiler_out/jak1/raw_obj/tpage-1532.go                             [ 90%] [copy    ] 0.001 decompiler_out/jak1/raw_obj/tpage-1532.go                             
-[ 90%] [copy    ]       decompiler_out/jak1/raw_obj/fuel-cell-ag.go                           [ 90%] [copy    ] 0.000 decompiler_out/jak1/raw_obj/fuel-cell-ag.go                           
-[ 91%] [copy    ]       decompiler_out/jak1/raw_obj/money-ag.go                               [ 91%] [copy    ] 0.000 decompiler_out/jak1/raw_obj/money-ag.go                               
-[ 91%] [copy    ]       decompiler_out/jak1/raw_obj/buzzer-ag.go                              [ 91%] [copy    ] 0.000 decompiler_out/jak1/raw_obj/buzzer-ag.go                              
-[ 91%] [copy    ]       decompiler_out/jak1/raw_obj/ecovalve-ag.go                            [ 91%] [copy    ] 0.000 decompiler_out/jak1/raw_obj/ecovalve-ag.go                            
-[ 91%] [copy    ]       decompiler_out/jak1/raw_obj/crate-ag.go                               [ 91%] [copy    ] 0.001 decompiler_out/jak1/raw_obj/crate-ag.go                               
-[ 92%] [copy    ]       decompiler_out/jak1/raw_obj/speaker-ag.go                             [ 92%] [copy    ] 0.000 decompiler_out/jak1/raw_obj/speaker-ag.go                             
-[ 92%] [copy    ]       decompiler_out/jak1/raw_obj/fuelcell-naked-ag.go                      [ 92%] [copy    ] 0.001 decompiler_out/jak1/raw_obj/fuelcell-naked-ag.go                      
-[ 92%] [copy    ]       decompiler_out/jak1/raw_obj/eichar-ag.go                              [ 92%] [copy    ] 0.002 decompiler_out/jak1/raw_obj/eichar-ag.go                              
-[ 92%] [copy    ]       decompiler_out/jak1/raw_obj/sidekick-ag.go                            [ 92%] [copy    ] 0.002 decompiler_out/jak1/raw_obj/sidekick-ag.go                            
-[ 93%] [copy    ]       decompiler_out/jak1/raw_obj/deathcam-ag.go                            [ 93%] [copy    ] 0.000 decompiler_out/jak1/raw_obj/deathcam-ag.go                            
-[ 93%] [game-cnt]       decompiler_out/jak1/assets/game_count.txt                             [ 93%] [game-cnt] 0.000 decompiler_out/jak1/assets/game_count.txt                             
-[ 93%] [goalc   ]       goal_src/jak1/engine/common-obs/rigid-body-h.gc                       [ 93%] [goalc   ] 0.001 goal_src/jak1/engine/common-obs/rigid-body-h.gc                       
-[ 94%] [goalc   ]       goal_src/jak1/engine/common-obs/water-anim.gc                         [ 94%] [goalc   ] 0.013 goal_src/jak1/engine/common-obs/water-anim.gc                         
-[ 94%] [goalc   ]       goal_src/jak1/engine/common-obs/dark-eco-pool.gc                      [ 94%] [goalc   ] 0.010 goal_src/jak1/engine/common-obs/dark-eco-pool.gc                      
-[ 94%] [goalc   ]       goal_src/jak1/engine/common-obs/rigid-body.gc                         [ 94%] [goalc   ] 0.015 goal_src/jak1/engine/common-obs/rigid-body.gc                         
-[ 94%] [goalc   ]       goal_src/jak1/engine/common-obs/nav-enemy-h.gc                        [ 94%] [goalc   ] 0.004 goal_src/jak1/engine/common-obs/nav-enemy-h.gc                        
-[ 95%] [goalc   ]       goal_src/jak1/engine/common-obs/nav-enemy.gc                          [ 95%] [goalc   ] [38;2;255;255;000m0.065 [0mgoal_src/jak1/engine/common-obs/nav-enemy.gc                          
-[ 95%] [goalc   ]       goal_src/jak1/engine/common-obs/baseplat.gc                           [ 95%] [goalc   ] 0.013 goal_src/jak1/engine/common-obs/baseplat.gc                           
-[ 95%] [goalc   ]       goal_src/jak1/engine/common-obs/basebutton.gc                         [ 95%] [goalc   ] 0.018 goal_src/jak1/engine/common-obs/basebutton.gc                         
-[ 96%] [goalc   ]       goal_src/jak1/engine/common-obs/tippy.gc                              [ 96%] [goalc   ] 0.002 goal_src/jak1/engine/common-obs/tippy.gc                              
-[ 96%] [goalc   ]       goal_src/jak1/engine/anim/joint-exploder.gc                           [ 96%] [goalc   ] 0.013 goal_src/jak1/engine/anim/joint-exploder.gc                           
-[ 96%] [goalc   ]       goal_src/jak1/engine/common-obs/babak.gc                              [ 96%] [goalc   ] 0.012 goal_src/jak1/engine/common-obs/babak.gc                              
-[ 96%] [goalc   ]       goal_src/jak1/engine/common-obs/sharkey.gc                            [ 96%] [goalc   ] 0.019 goal_src/jak1/engine/common-obs/sharkey.gc                            
-[ 97%] [goalc   ]       goal_src/jak1/engine/common-obs/orb-cache.gc                          [ 97%] [goalc   ] 0.010 goal_src/jak1/engine/common-obs/orb-cache.gc                          
-[ 97%] [goalc   ]       goal_src/jak1/engine/common-obs/plat.gc                               [ 97%] [goalc   ] 0.007 goal_src/jak1/engine/common-obs/plat.gc                               
-[ 97%] [goalc   ]       goal_src/jak1/engine/common-obs/plat-button.gc                        [ 97%] [goalc   ] 0.011 goal_src/jak1/engine/common-obs/plat-button.gc                        
-[ 97%] [goalc   ]       goal_src/jak1/engine/common-obs/plat-eco.gc                           [ 97%] [goalc   ] 0.008 goal_src/jak1/engine/common-obs/plat-eco.gc                           
-[ 98%] [goalc   ]       goal_src/jak1/engine/common-obs/ropebridge.gc                         [ 98%] [goalc   ] 0.014 goal_src/jak1/engine/common-obs/ropebridge.gc                         
-[ 98%] [goalc   ]       goal_src/jak1/engine/common-obs/ticky.gc                              [ 98%] [goalc   ] 0.002 goal_src/jak1/engine/common-obs/ticky.gc                              
-[ 98%] [goalc   ]       goal_src/jak1/levels/village_common/villagep-obs.gc                   [ 98%] [goalc   ] 0.030 goal_src/jak1/levels/village_common/villagep-obs.gc                   
-[ 99%] [goalc   ]       goal_src/jak1/levels/village_common/oracle.gc                         [ 99%] [goalc   ] 0.006 goal_src/jak1/levels/village_common/oracle.gc                         
-[ 99%] [goalc   ]       goal_src/jak1/levels/common/blocking-plane.gc                         [ 99%] [goalc   ] 0.003 goal_src/jak1/levels/common/blocking-plane.gc                         
-[ 99%] [goalc   ]       goal_src/jak1/levels/common/launcherdoor.gc                           [ 99%] [goalc   ] 0.006 goal_src/jak1/levels/common/launcherdoor.gc                           
-[ 99%] [goalc   ]       goal_src/jak1/levels/common/battlecontroller.gc                       [ 99%] [goalc   ] 0.018 goal_src/jak1/levels/common/battlecontroller.gc                       
-[100%] [goalc   ]       goal_src/jak1/pc/hud-classes-pc.gc                                    [100%] [goalc   ] 0.016 goal_src/jak1/pc/hud-classes-pc.gc                                    
-[100%] [dgo     ]       goal_src/jak1/dgos/game.gd                                            [100%] [dgo     ] 0.022 goal_src/jak1/dgos/game.gd                                            
-
-Successfully built all 358 targets in 4.305s

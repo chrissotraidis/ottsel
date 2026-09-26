@@ -100,7 +100,7 @@ static void activate_gstate(const ottsel::a11::SignedModule& module,bool& activa
   if(activated)throw std::runtime_error("module already active");
   const u32 type=*(s7+jak1_symbols::FIX_SYM_FUNCTION_TYPE);
   if(type!=module.function_type)throw std::runtime_error("function Type identity mismatch");
-  if(module.sha256!="6e75c0e31203c3d0d0e9619c50d821f4e211531548bc58edfb77c81059235274")
+  if(module.sha256!=OTTSEL_EXPECTED_GSTATE_SHA256)
     throw std::runtime_error("source identity mismatch");
   u8* code[3]={ottsel_module_gstate_s0_code,nullptr,ottsel_module_gstate_s2_code};
   u8* data[3]={ottsel_module_gstate_s0_data,nullptr,ottsel_module_gstate_s2_data};

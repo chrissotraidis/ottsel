@@ -1,2 +1,0 @@
-  PID STAT  %CPU %MEM ELAPSED COMMAND
-47438 S     55.7  3.9   09:18 /Users/chrissotraidis/GitHub/ottsel/out/jak-project/build/h1/game/gk -v --game jak1 -- -boot -fakeiso

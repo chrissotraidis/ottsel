@@ -80,5 +80,5 @@ int main(){
 '''
 with tempfile.TemporaryDirectory(prefix='ottsel-audio-lifecycle-') as out:
     cpp=Path(out)/'test.cpp';exe=Path(out)/'test';cpp.write_text(pre+state+methods+tests)
-    subprocess.run(['xcrun','clang++','-std=c++17','-pthread',str(cpp),'-o',str(exe)],check=True)
+    subprocess.run(['xcrun','--sdk','macosx','clang++','-std=c++17','-pthread',str(cpp),'-o',str(exe)],check=True)
     sys.exit(subprocess.run([str(exe)],timeout=10).returncode)

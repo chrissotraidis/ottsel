@@ -16,16 +16,16 @@
 // Ottsel A1.7b diagnostic: counters written by the GOAL->C++ trampolines in
 // out/jak-project/game/kernel/asm_funcs_arm64.s.  A GOAL->C++ call that returns with a
 // different x19 has clobbered GOAL's register file; the fault handler prints the last one
-// so the offending C++ target can be named.
+// so the offending C++ target can be named.  The storage is defined in that assembly file.
 extern "C" {
-volatile unsigned long long ottsel_cbridge_calls;
-volatile unsigned long long ottsel_cbridge_in;
-volatile unsigned long long ottsel_cbridge_out;
-volatile unsigned long long ottsel_cbridge_target;
-volatile unsigned long long ottsel_cbridge_leaks;
-volatile unsigned long long ottsel_cbridge_leak_in;
-volatile unsigned long long ottsel_cbridge_leak_out;
-volatile unsigned long long ottsel_cbridge_leak_target;
+extern volatile unsigned long long ottsel_cbridge_calls;
+extern volatile unsigned long long ottsel_cbridge_in;
+extern volatile unsigned long long ottsel_cbridge_out;
+extern volatile unsigned long long ottsel_cbridge_target;
+extern volatile unsigned long long ottsel_cbridge_leaks;
+extern volatile unsigned long long ottsel_cbridge_leak_in;
+extern volatile unsigned long long ottsel_cbridge_leak_out;
+extern volatile unsigned long long ottsel_cbridge_leak_target;
 }
 
 #include <cstdarg>

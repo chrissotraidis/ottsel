@@ -1,6 +1,15 @@
 #define OTTSEL_SIGNED_EXPORT_BANK_ABI_TEST
 #include "a11_export_slots_test.cpp"
 #include "game/kernel/common/ottsel_signed_exports.h"
+#include "common/log/log.h"
+
+// The signed-export loader logs through lg::; this harness prints those lines without linking the
+// whole common library ({fmt} is header-only here, see test-a11-export-bank-abi.sh).
+namespace lg::internal {
+void log_message(level, LogTime&, const char* message) {
+  std::puts(message);
+}
+}  // namespace lg::internal
 extern "C" u8 ottsel_export_bank_begin[],ottsel_export_bank_end[];
 int main() try {
   using namespace ottsel::signed_exports;

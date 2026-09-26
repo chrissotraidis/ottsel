@@ -9,7 +9,7 @@ mkdir -p "$output_dir"
 # Existing maintained actual-bootstrap source extraction and prefix control.
 bash "$original/scripts/test-a11-bootstrap-identity.sh" "$output_dir"
 python3 "$repo_root/scripts/emit-signed-export-banks.py" "$output_dir/banks.s"
-xcrun --sdk macosx clang++ -arch arm64 -std=c++20 -O2 -Wall -Wextra \
+xcrun --sdk macosx clang++ -arch arm64 -std=c++20 -O2 -Wall -Wextra -DFMT_HEADER_ONLY \
   -DOTTSEL_SIGNED_EXPORT_BANKS -I"$staged_source" -I"$source_dir" \
   -I"$source_dir/third-party/fmt/include" -I"$original/test" -I"$output_dir" \
   "$repo_root/test/a11_export_bank_abi_test.cpp" \

@@ -23,8 +23,7 @@ board). The product requirement is [../jak1-researchloop.md](../jak1-researchloo
 | [SIGNED_AOT_RECOVERY.md](SIGNED_AOT_RECOVERY.md) | How the signed module loader works |
 | [macos-settings-and-packaging.md](macos-settings-and-packaging.md) | macOS build, settings and packaging |
 
-## Evidence, reports, history
+## Evidence
 
-- [evidence/](evidence/) - one concise record per proven step, grouped by gate (media stays local).
-- [reports/](reports/) - dated audits; the latest are the 2026-09-12 recovery review and delivery audit.
-- [history/](history/) - numbered BOT prompts, the September recovery plans and the full status log.
+- [evidence/](evidence/) - one concise record per proven gate (media stays local). `evidence/H2.5/`
+  holds the small ARM64 fixtures the loader regressions read.

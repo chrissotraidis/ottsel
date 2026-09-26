@@ -14,6 +14,7 @@
   <img alt="OpenGL ES 3.0 on Metal through ANGLE" src="https://img.shields.io/badge/renderer-OpenGL%20ES%20on%20Metal-5E5CE6">
   <img alt="Game code compiled ahead of time, no JIT" src="https://img.shields.io/badge/game%20code-signed%20ARM64%2C%20no%20JIT-FF9F0A">
   <img alt="Developer preview" src="https://img.shields.io/badge/status-developer%20preview-FFD60A">
+  <a href="LICENSE"><img alt="ISC License" src="https://img.shields.io/badge/license-ISC-34C759"></a>
   <img alt="Physical iPad not yet tested" src="https://img.shields.io/badge/physical%20iPad-not%20yet%20tested-8E8E93">
   <img alt="Game data not included" src="https://img.shields.io/badge/game%20data-not%20included-FF453A">
 </p>
@@ -290,10 +291,16 @@ provides the window and input, and [glslang](https://github.com/KhronosGroup/gls
 touch controls and menu follow [SunPad](https://github.com/chrissotraidis/sunpad). See
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for every component and its license.
 
+## License
+
+Ottsel is released under the [ISC License](LICENSE), the same license as OpenGOAL, so its changes can
+flow back upstream. `patches/ottsel-jak-project.patch` modifies OpenGOAL's own files, which stay under
+OpenGOAL's ISC License and copyright. Every other component keeps its own license; see
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
 ## Legal
 
 Ottsel is an unofficial community project and is not affiliated with or endorsed by Sony Interactive
 Entertainment or Naughty Dog. Jak and Daxter names and screenshots are used only to identify the game
 and show the project working. No disc image, extracted game file or save is included in this
-repository. The Ottsel icon is original artwork. OpenGOAL is released under the ISC License, and each
-other component keeps its own license.
+repository. The Ottsel icon is original artwork.

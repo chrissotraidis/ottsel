@@ -1,7 +1,0 @@
-slot0 addr=0x1041a4000 shim0 addr=0x10419d4a0
-add_c_fn addr=0x10419d0a4
-slot0 contents=10419d0a4
-[H2-shim] add(40,2)=42 triple(14)=42
-  shim page=0x10419d000 slot page=0x1041a4000
-  (vmmap confirms shim in __TEXT RX, slot in __DATA RW)
-[H2-shim] PASS (static shim, data-slot only, no instruction writes)

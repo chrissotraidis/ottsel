@@ -65,17 +65,3 @@ int main() {
   std::printf("PASS: C->GOAL bridge preserves an IR_AsmRet-style return\n");
   return 0;
 }
-
-// Storage for the GOAL->C++ boundary diagnostic counters that
-// game/kernel/asm_funcs_arm64.s writes (see src/shell/ios_boot.cpp).  The product
-// shell defines these; this harness links the assembly without the shell.
-extern "C" {
-volatile unsigned long long ottsel_cbridge_calls;
-volatile unsigned long long ottsel_cbridge_in;
-volatile unsigned long long ottsel_cbridge_out;
-volatile unsigned long long ottsel_cbridge_target;
-volatile unsigned long long ottsel_cbridge_leaks;
-volatile unsigned long long ottsel_cbridge_leak_in;
-volatile unsigned long long ottsel_cbridge_leak_out;
-volatile unsigned long long ottsel_cbridge_leak_target;
-}

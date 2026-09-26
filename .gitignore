@@ -1,4 +1,5 @@
 .DS_Store
+.claude/
 # user game content / extracts
 iso_data/
 assets-user/

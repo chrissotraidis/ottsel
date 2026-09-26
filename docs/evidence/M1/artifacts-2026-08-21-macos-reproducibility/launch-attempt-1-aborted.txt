@@ -1,1 +1,0 @@
-ABORTED: first retained-log launch used script(1); its pty ended after stdin EOF and PID 46593 disappeared without a game fault marker. Retaining raw evidence as a harness failure, not gameplay evidence.

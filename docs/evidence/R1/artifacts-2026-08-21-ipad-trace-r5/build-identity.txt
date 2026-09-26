@@ -1,2 +1,0 @@
-bundle=/Users/chrissotraidis/Library/Developer/CoreSimulator/Devices/08636791-2675-4675-8335-EF72EF954DCF/data/Containers/Bundle/Application/40A7F17D-9870-4299-B105-419E0CE170BF/OttselShell.app
-patch=b4c71ec08a87af02a1dc2233acfc2bb176ddf31d3e1104990a825cb88aab8f27  patches/r1-texture-lookup-trace.patch

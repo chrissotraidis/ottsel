@@ -57,15 +57,18 @@ with (output / "build.log").open("w") as log:
              source / "game/kernel/jak1/klink.cpp"]
     for index, path in enumerate(fresh):
         obj = output / f"source-{index}.o"
-        run(["clang++", *flags, "-c", path, "-o", obj], log)
+        # The signed module must come from the gstate.o this fixture loads; pass its current hash.
+        gstate_sha = hashlib.sha256((source / "out/jak1/obj/gstate.o").read_bytes()).hexdigest()
+        run(["xcrun", "--sdk", "macosx", "clang++", *flags,
+             f'-DOTTSEL_EXPECTED_GSTATE_SHA256="{gstate_sha}"', "-c", path, "-o", obj], log)
         objects.append(obj)
     asm = source / "game/kernel/asm_funcs_arm64.s"
-    run(["clang", "-arch", "arm64", "-c", asm, "-o", output / "helpers.o"], log)
+    run(["xcrun", "--sdk", "macosx", "clang", "-arch", "arm64", "-c", asm, "-o", output / "helpers.o"], log)
     objects.append(output / "helpers.o")
     linkage = values("game/ottsel-cgolink-dump")
     executable = output / "gstate-activation"
     # Arena FIRST: otherwise ld may place signed __GOAL before its pointer base.
-    run(["clang++", "-arch", "arm64", *objects,
+    run(["xcrun", "--sdk", "macosx", "clang++", "-arch", "arm64", *objects,
          output / "module/gstate-arena-layout.s", output / "module/gstate.o",
          repo / "test/a11_gstate_method_driver.s", *linkage["LINK_LIBRARIES"],
          "-Wl,-dead_strip", "-Wl,-segprot,__ARENA,rw,rw", "-Wl,-segprot,__GOAL,rx,rx",

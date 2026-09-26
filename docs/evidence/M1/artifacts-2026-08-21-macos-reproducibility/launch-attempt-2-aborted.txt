@@ -1,1 +1,0 @@
-ABORTED: attempt-2 process disappeared immediately after its launching exec session completed; retained as harness failure. PID 44189 was stopped cleanly before attempt 3.
