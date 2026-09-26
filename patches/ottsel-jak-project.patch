@@ -516,21 +516,21 @@ index 2a7b5c400..173afcb4e 100644
      set_target_properties(gk PROPERTIES VS_DPI_AWARE "PerMonitor")
  endif()
 diff --git a/game/graphics/opengl_renderer/DirectRenderer.cpp b/game/graphics/opengl_renderer/DirectRenderer.cpp
-index 02653cb00..96090edfa 100644
+index 02653cb00..9c026ca6e 100644
 --- a/game/graphics/opengl_renderer/DirectRenderer.cpp
 +++ b/game/graphics/opengl_renderer/DirectRenderer.cpp
-@@ -1,5 +1,10 @@
+@@ -1,4 +1,10 @@
  #include "DirectRenderer.h"
- 
++#include "game/ottsel_trigger_poll.h"
++
 +#include <algorithm>
 +#include <cstdio>
 +#include <limits>
 +#include <set>
-+
+ 
  #include "common/dma/gs.h"
  #include "common/log/log.h"
- #include "common/util/Assert.h"
-@@ -91,6 +96,21 @@ DirectRenderer::~DirectRenderer() {
+@@ -91,6 +97,21 @@ DirectRenderer::~DirectRenderer() {
  void DirectRenderer::render(DmaFollower& dma,
                              SharedRenderState* render_state,
                              ScopedProfilerNode& prof) {
@@ -540,7 +540,7 @@ index 02653cb00..96090edfa 100644
 +  // a visible Direct pass.
 +  static int ottsel_trace_remaining = 0;
 +  static std::set<std::string> ottsel_trace_logged_buckets;
-+  if (!ottsel_trace_remaining) {
++  if (!ottsel_trace_remaining && OTTSEL_TRIGGER_POLL_DUE()) {
 +    if (auto* request = std::fopen("/tmp/ottsel-trace-direct", "r")) {
 +      std::fclose(request);
 +      std::remove("/tmp/ottsel-trace-direct");
@@ -552,7 +552,7 @@ index 02653cb00..96090edfa 100644
    pre_render();
    // if we're rendering from a bucket, we should start off we a totally reset state:
    reset_state();
-@@ -113,6 +133,30 @@ void DirectRenderer::render(DmaFollower& dma,
+@@ -113,6 +134,30 @@ void DirectRenderer::render(DmaFollower& dma,
    if (m_enabled) {
      flush_pending(render_state, prof);
    }
@@ -583,7 +583,7 @@ index 02653cb00..96090edfa 100644
    post_render();
    glColorMaski(0, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
  }
-@@ -648,6 +692,9 @@ void DirectRenderer::render_gif(const u8* data,
+@@ -648,6 +693,9 @@ void DirectRenderer::render_gif(const u8* data,
    }
  
    bool eop = false;
@@ -593,12 +593,12 @@ index 02653cb00..96090edfa 100644
  
    u32 offset = 0;
    while (!eop) {
-@@ -666,6 +713,30 @@ void DirectRenderer::render_gif(const u8* data,
+@@ -666,6 +714,30 @@ void DirectRenderer::render_gif(const u8* data,
        reg_desc[i] = tag.reg(i);
      }
  
 +    bool ottsel_glyph_packet = tag.nloop() == 1 && tag.pre() && tag.prim() == 0x5c && tag.nreg() == 13;
-+    if (!ottsel_glyph_trace_remaining) {
++    if (!ottsel_glyph_trace_remaining && OTTSEL_TRIGGER_POLL_DUE()) {
 +      if (auto* request = std::fopen("/tmp/ottsel-trace-glyph", "r")) {
 +        std::fclose(request);
 +        std::remove("/tmp/ottsel-trace-glyph");
@@ -624,7 +624,7 @@ index 02653cb00..96090edfa 100644
      auto format = tag.flg();
      if (format == GifTag::Format::PACKED) {
        if (tag.pre()) {
-@@ -749,6 +820,47 @@ void DirectRenderer::render_gif(const u8* data,
+@@ -749,6 +821,47 @@ void DirectRenderer::render_gif(const u8* data,
      }
    }
  
@@ -672,7 +672,7 @@ index 02653cb00..96090edfa 100644
    //  fmt::print("{}\n", GifTag(data).print());
  }
  
-@@ -846,7 +958,9 @@ void DirectRenderer::handle_ad(const u8* data,
+@@ -846,7 +959,9 @@ void DirectRenderer::handle_ad(const u8* data,
    }
  }
  
@@ -683,7 +683,7 @@ index 02653cb00..96090edfa 100644
  
  void DirectRenderer::handle_scissor(u64 val) {
    m_scissor.scax0 = (val >> 0) & 0x7ff;
-@@ -1053,6 +1167,7 @@ PerGameVersion<u32> normal_zbp = {448, 304, 304, 304};
+@@ -1053,6 +1168,7 @@ PerGameVersion<u32> normal_zbp = {448, 304, 304, 304};
  void DirectRenderer::handle_zbuf1(u64 val,
                                    SharedRenderState* render_state,
                                    ScopedProfilerNode& prof) {
@@ -706,14 +706,15 @@ index 4d31fae4e..b303f4a5d 100644
    struct TestState {
      void from_register(GsTest reg);
 diff --git a/game/graphics/opengl_renderer/OpenGLRenderer.cpp b/game/graphics/opengl_renderer/OpenGLRenderer.cpp
-index cc19099d4..94418cda7 100644
+index cc19099d4..0989623ab 100644
 --- a/game/graphics/opengl_renderer/OpenGLRenderer.cpp
 +++ b/game/graphics/opengl_renderer/OpenGLRenderer.cpp
-@@ -1,8 +1,11 @@
+@@ -1,8 +1,12 @@
  #include "OpenGLRenderer.h"
- 
-+#include <cstdio>
++#include "game/ottsel_trigger_poll.h"
 +
++#include <cstdio>
+ 
  #include "common/goal_constants.h"
  #include "common/log/log.h"
  #include "common/util/FileUtil.h"
@@ -721,7 +722,7 @@ index cc19099d4..94418cda7 100644
  
  #include "game/graphics/opengl_renderer/BlitDisplays.h"
  #include "game/graphics/opengl_renderer/DepthCue.h"
-@@ -26,6 +29,7 @@
+@@ -26,6 +30,7 @@
  #include "game/graphics/opengl_renderer/ocean/OceanNear.h"
  #include "game/graphics/opengl_renderer/sprite/Sprite3.h"
  #include "game/graphics/pipelines/opengl.h"
@@ -729,7 +730,7 @@ index cc19099d4..94418cda7 100644
  
  #include "third-party/imgui/imgui.h"
  #include "third-party/imgui/imgui_stdlib.h"
-@@ -41,6 +45,21 @@
+@@ -41,6 +46,21 @@
  
  namespace {
  std::string g_current_renderer;
@@ -751,7 +752,7 @@ index cc19099d4..94418cda7 100644
  }
  
  /*!
-@@ -982,6 +1001,45 @@ void OpenGLRenderer::blit_display(ScopedProfilerNode& prof) {
+@@ -982,6 +1002,45 @@ void OpenGLRenderer::blit_display(ScopedProfilerNode& prof) {
   * Main render function. This is called from the gfx loop with the chain passed from the game.
   */
  void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
@@ -797,7 +798,7 @@ index cc19099d4..94418cda7 100644
    m_profiler.clear();
    m_render_state.reset();
    m_render_state.ee_main_memory = g_ee_main_mem;
-@@ -994,6 +1052,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+@@ -994,6 +1053,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
      if (settings.gpu_sync) {
        glFinish();
      }
@@ -805,7 +806,7 @@ index cc19099d4..94418cda7 100644
    }
  
    {
-@@ -1006,6 +1065,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+@@ -1006,6 +1066,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
      } else {
        m_render_state.loader->update(*m_render_state.texture_pool);
      }
@@ -813,7 +814,7 @@ index cc19099d4..94418cda7 100644
    }
  
    // render the buckets!
-@@ -1024,6 +1084,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+@@ -1024,6 +1085,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
      g_current_renderer = "blit-display";
      auto prof = m_profiler.root()->make_scoped_child("blit-display");
      blit_display(prof);
@@ -821,7 +822,7 @@ index cc19099d4..94418cda7 100644
    }
  
    // apply effects done with PCRTC registers, as well as blit the framebuffer to the window and
-@@ -1036,6 +1097,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+@@ -1036,6 +1098,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
      if (settings.gpu_sync) {
        glFinish();
      }
@@ -829,7 +830,7 @@ index cc19099d4..94418cda7 100644
    }
  
    m_last_pmode_alp = settings.pmode_alp_register;
-@@ -1111,6 +1173,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+@@ -1111,6 +1174,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
      m_small_profiler.draw(m_render_state.load_status_debug, stats);
    }
  
@@ -837,7 +838,7 @@ index cc19099d4..94418cda7 100644
    if (settings.draw_subtitle_editor_window) {
      g_current_renderer = "subtitle-editor-window";
      if (m_subtitle_editor == nullptr) {
-@@ -1118,6 +1181,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+@@ -1118,6 +1182,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
      }
      m_subtitle_editor->draw_window();
    }
@@ -845,7 +846,7 @@ index cc19099d4..94418cda7 100644
  
    if (settings.draw_filters_window) {
      g_current_renderer = "filters-window";
-@@ -1291,6 +1355,25 @@ void OpenGLRenderer::setup_frame(const RenderOptions& settings) {
+@@ -1291,6 +1356,25 @@ void OpenGLRenderer::setup_frame(const RenderOptions& settings) {
  void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
                                             ScopedProfilerNode& prof,
                                             bool sync_after_buckets) {
@@ -854,7 +855,7 @@ index cc19099d4..94418cda7 100644
 +  // visual artifact, so this provides a bounded liveness map first.
 +  static u32 ottsel_trace_frames = 0;
 +  static u32 ottsel_trace_frame = 0;
-+  if (!ottsel_trace_frames) {
++  if (!ottsel_trace_frames && OTTSEL_TRIGGER_POLL_DUE()) {
 +    if (auto* request = std::fopen("/tmp/ottsel-trace-buckets", "r")) {
 +      std::fclose(request);
 +      std::remove("/tmp/ottsel-trace-buckets");
@@ -871,7 +872,7 @@ index cc19099d4..94418cda7 100644
    // The first thing the DMA chain should be a call to a common default-registers chain.
    // this chain resets the state of the GS. After this is buckets
    m_category_times.fill(0);
-@@ -1323,15 +1406,61 @@ void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
+@@ -1323,15 +1407,61 @@ void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
    ASSERT(dma.current_tag_offset() == m_render_state.next_bucket);
    m_render_state.next_bucket += 16;
  
@@ -933,7 +934,7 @@ index cc19099d4..94418cda7 100644
        glFinish();
      }
  
-@@ -1349,6 +1478,11 @@ void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
+@@ -1349,6 +1479,11 @@ void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
      }
    }
  
@@ -945,7 +946,7 @@ index cc19099d4..94418cda7 100644
    // TODO ending data.
  }
  
-@@ -1370,6 +1504,7 @@ void OpenGLRenderer::dispatch_buckets_jak2(DmaFollower dma,
+@@ -1370,6 +1505,7 @@ void OpenGLRenderer::dispatch_buckets_jak2(DmaFollower dma,
      g_current_renderer = renderer->name_and_id();
      // lg::info("Render: {} start", g_current_renderer);
      renderer->render(dma, &m_render_state, bucket_prof);
@@ -953,7 +954,7 @@ index cc19099d4..94418cda7 100644
      if (sync_after_buckets) {
        auto pp = scoped_prof("finish");
        glFinish();
-@@ -1412,6 +1547,7 @@ void OpenGLRenderer::dispatch_buckets_jak3(DmaFollower dma,
+@@ -1412,6 +1548,7 @@ void OpenGLRenderer::dispatch_buckets_jak3(DmaFollower dma,
      g_current_renderer = renderer->name_and_id();
      // lg::info("Render: {} start", g_current_renderer);
      renderer->render(dma, &m_render_state, bucket_prof);
@@ -1343,18 +1344,18 @@ index 1d6dbf349..7f9511f42 100644
 \ No newline at end of file
 +}
 diff --git a/game/graphics/opengl_renderer/SkyBlendCPU.cpp b/game/graphics/opengl_renderer/SkyBlendCPU.cpp
-index c70d47d32..1dc7d8ea0 100644
+index c70d47d32..73ca40e3e 100644
 --- a/game/graphics/opengl_renderer/SkyBlendCPU.cpp
 +++ b/game/graphics/opengl_renderer/SkyBlendCPU.cpp
-@@ -1,5 +1,7 @@
+@@ -1,4 +1,7 @@
  #include "SkyBlendCPU.h"
- 
-+#include <cstdio>
++#include "game/ottsel_trigger_poll.h"
 +
++#include <cstdio>
+ 
  #include "common/util/os.h"
  #include "common/util/simd_util.h"
- 
-@@ -49,6 +51,10 @@ void blend_sky_initial_fast(u8 intensity, u8* out, const u8* in, u32 size) {
+@@ -49,6 +52,10 @@ void blend_sky_initial_fast(u8 intensity, u8* out, const u8* in, u32 size) {
        _mm_storel_epi64((__m128i*)(out + (i * 8)), result);
      }
    }
@@ -1365,7 +1366,7 @@ index c70d47d32..1dc7d8ea0 100644
  #endif
  }
  
-@@ -88,12 +94,27 @@ void blend_sky_fast(u8 intensity, u8* out, const u8* in, u32 size) {
+@@ -88,13 +95,32 @@ void blend_sky_fast(u8 intensity, u8* out, const u8* in, u32 size) {
        _mm_storel_epi64((__m128i*)(out + (i * 8)), out_val);
      }
    }
@@ -1381,7 +1382,7 @@ index c70d47d32..1dc7d8ea0 100644
                                           SharedRenderState* render_state,
                                           ScopedProfilerNode& /*prof*/) {
 +  static int ottsel_trace_calls = 0;
-+  if (!ottsel_trace_calls) {
++  if (!ottsel_trace_calls && OTTSEL_TRIGGER_POLL_DUE()) {
 +    if (auto* request = std::fopen("/tmp/ottsel-trace-sky-pixels", "r")) {
 +      std::fclose(request);
 +      std::remove("/tmp/ottsel-trace-sky-pixels");
@@ -1391,9 +1392,14 @@ index c70d47d32..1dc7d8ea0 100644
 +  }
 +  const bool ottsel_trace_active = ottsel_trace_calls != 0;
    SkyBlendStats stats;
++  // Blend on the CPU copy for every packet, then upload each texture once after the loop. Every
++  // upload of a texture the frame already uses ends the Metal render pass (ANGLE blits it), so one
++  // upload per texture is much cheaper than one per packet, and the result is the same.
++  bool dirty[2] = {false, false};
  
    while (dma.current_tag().qwc == 6) {
-@@ -132,9 +153,12 @@ SkyBlendStats SkyBlendCPU::do_sky_blends(DmaFollower& dma,
+     // assuming that the vif and gif-tag is correct
+@@ -132,9 +158,13 @@ SkyBlendStats SkyBlendCPU::do_sky_blends(DmaFollower& dma,
        ASSERT(false);  // bad data
      }
  
@@ -1403,13 +1409,14 @@ index c70d47d32..1dc7d8ea0 100644
 +    // Snapshot the loader-owned source bytes under the texture-pool lock.
 +    // The loader can unload a level concurrently; retaining GpuTexture::data
 +    // here would leave glTexImage2D with a dangling pointer.
-+    std::vector<u8> source_data;
++    // Reused between packets and frames (render thread only), so this is not an allocation each time.
++    static std::vector<u8> source_data;
 +    const bool has_source_data =
 +        render_state->texture_pool->copy_texture_data(adgif.tex0().tbp0(), source_data);
  
      // slow version
      /*
-@@ -152,13 +176,13 @@ SkyBlendStats SkyBlendCPU::do_sky_blends(DmaFollower& dma,
+@@ -152,13 +182,13 @@ SkyBlendStats SkyBlendCPU::do_sky_blends(DmaFollower& dma,
        m_texture_data[buffer_idx][i] += val;
      }
       */
@@ -1427,23 +1434,33 @@ index c70d47d32..1dc7d8ea0 100644
                           m_texture_data[buffer_idx].size());
          }
        }
-@@ -177,14 +201,42 @@ SkyBlendStats SkyBlendCPU::do_sky_blends(DmaFollower& dma,
+@@ -176,13 +206,47 @@ SkyBlendStats SkyBlendCPU::do_sky_blends(DmaFollower& dma,
+           stats.cloud_blends++;
          }
        }
-       glBindTexture(GL_TEXTURE_2D, m_textures[buffer_idx].gl);
+-      glBindTexture(GL_TEXTURE_2D, m_textures[buffer_idx].gl);
 -      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, m_sizes[buffer_idx], m_sizes[buffer_idx], 0, GL_RGBA,
 -                   GL_UNSIGNED_INT_8_8_8_8_REV, m_texture_data[buffer_idx].data());
-+      // The texture storage is allocated once in the constructor. Updating the
-+      // same-sized image in place avoids Apple OpenGL/Metal's per-frame
-+      // glTexImage2D reallocation path, which can submit stale driver state.
-+      glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, m_sizes[buffer_idx], m_sizes[buffer_idx], GL_RGBA,
-+                      GL_UNSIGNED_INT_8_8_8_8_REV, m_texture_data[buffer_idx].data());
++      dirty[buffer_idx] = true;
++    }
++  }
  
-       render_state->texture_pool->move_existing_to_vram(m_textures[buffer_idx].tex,
-                                                         m_textures[buffer_idx].tbp);
+-      render_state->texture_pool->move_existing_to_vram(m_textures[buffer_idx].tex,
+-                                                        m_textures[buffer_idx].tbp);
++  for (int buffer_idx = 0; buffer_idx < 2; ++buffer_idx) {
++    if (!dirty[buffer_idx]) {
++      continue;
      }
-   }
- 
++    glBindTexture(GL_TEXTURE_2D, m_textures[buffer_idx].gl);
++    // The texture storage is allocated once in the constructor. Updating the
++    // same-sized image in place avoids Apple OpenGL/Metal's per-frame
++    // glTexImage2D reallocation path, which can submit stale driver state.
++    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, m_sizes[buffer_idx], m_sizes[buffer_idx], GL_RGBA,
++                    GL_UNSIGNED_INT_8_8_8_8_REV, m_texture_data[buffer_idx].data());
++    render_state->texture_pool->move_existing_to_vram(m_textures[buffer_idx].tex,
++                                                      m_textures[buffer_idx].tbp);
++  }
++
 +  const bool had_blend = stats.sky_draws || stats.sky_blends || stats.cloud_draws || stats.cloud_blends;
 +  if (ottsel_trace_active && had_blend) {
 +    for (int buffer_idx = 0; buffer_idx < 2; ++buffer_idx) {
@@ -1467,12 +1484,10 @@ index c70d47d32..1dc7d8ea0 100644
 +               max_value[0], max_value[1], max_value[2], max_value[3]);
 +    }
 +    --ottsel_trace_calls;
-+  }
-+
-   return stats;
- }
+   }
  
-@@ -205,4 +257,4 @@ void SkyBlendCPU::init_textures(TexturePool& tex_pool, GameVersion version) {
+   return stats;
+@@ -205,4 +269,4 @@ void SkyBlendCPU::init_textures(TexturePool& tex_pool, GameVersion version) {
      m_textures[i].tex = tex_pool.give_texture_and_load_to_vram(in, tbp);
      m_textures[i].tbp = tbp;
    }
@@ -1501,18 +1516,18 @@ index e4e0d8bef..f78311950 100644
 \ No newline at end of file
 +};
 diff --git a/game/graphics/opengl_renderer/SkyRenderer.cpp b/game/graphics/opengl_renderer/SkyRenderer.cpp
-index 556410cd4..57012d07d 100644
+index 556410cd4..2e53b1d51 100644
 --- a/game/graphics/opengl_renderer/SkyRenderer.cpp
 +++ b/game/graphics/opengl_renderer/SkyRenderer.cpp
-@@ -1,5 +1,7 @@
+@@ -1,4 +1,7 @@
  #include "SkyRenderer.h"
- 
-+#include <cstdio>
++#include "game/ottsel_trigger_poll.h"
 +
++#include <cstdio>
+ 
  #include "game/graphics/opengl_renderer/AdgifHandler.h"
  #include "game/graphics/pipelines/opengl.h"
- 
-@@ -43,11 +45,28 @@ void SkyBlendHandler::init_shaders(ShaderLibrary& shaders) {
+@@ -43,11 +46,28 @@ void SkyBlendHandler::init_shaders(ShaderLibrary& shaders) {
  void SkyBlendHandler::handle_sky_copies(DmaFollower& dma,
                                          SharedRenderState* render_state,
                                          ScopedProfilerNode& prof) {
@@ -1520,7 +1535,7 @@ index 556410cd4..57012d07d 100644
 +  // complete SkyRenderer chain can still be visually black if all blend
 +  // source textures are placeholders or if no level supplies a copy packet.
 +  static int ottsel_trace_calls = 0;
-+  if (!ottsel_trace_calls) {
++  if (!ottsel_trace_calls && OTTSEL_TRIGGER_POLL_DUE()) {
 +    if (auto* request = std::fopen("/tmp/ottsel-trace-sky-blend", "r")) {
 +      std::fclose(request);
 +      std::remove("/tmp/ottsel-trace-sky-blend");
@@ -1541,7 +1556,7 @@ index 556410cd4..57012d07d 100644
      return;
    } else {
      if (render_state->use_sky_cpu) {
-@@ -56,6 +75,12 @@ void SkyBlendHandler::handle_sky_copies(DmaFollower& dma,
+@@ -56,6 +76,12 @@ void SkyBlendHandler::handle_sky_copies(DmaFollower& dma,
      } else {
        m_gpu_stats = m_shared_gpu_blender->do_sky_blends(dma, render_state, prof);
      }
@@ -1554,7 +1569,7 @@ index 556410cd4..57012d07d 100644
    }
  }
  
-@@ -133,6 +158,20 @@ SkyRenderer::SkyRenderer(const std::string& name, int my_id)
+@@ -133,6 +159,20 @@ SkyRenderer::SkyRenderer(const std::string& name, int my_id)
  void SkyRenderer::render(DmaFollower& dma,
                           SharedRenderState* render_state,
                           ScopedProfilerNode& prof) {
@@ -1563,7 +1578,7 @@ index 556410cd4..57012d07d 100644
 +  // the generic bucket trace cannot distinguish a skipped CALL chain from a
 +  // real sky packet chain.
 +  static int ottsel_trace_calls = 0;
-+  if (!ottsel_trace_calls) {
++  if (!ottsel_trace_calls && OTTSEL_TRIGGER_POLL_DUE()) {
 +    if (auto* request = std::fopen("/tmp/ottsel-trace-sky", "r")) {
 +      std::fclose(request);
 +      std::remove("/tmp/ottsel-trace-sky");
@@ -1575,7 +1590,7 @@ index 556410cd4..57012d07d 100644
    m_direct_renderer.reset_state();
    m_frame_stats = {};
    // First thing should be a NEXT with two nops. this is a jump from buckets to sprite data
-@@ -142,6 +181,10 @@ void SkyRenderer::render(DmaFollower& dma,
+@@ -142,6 +182,10 @@ void SkyRenderer::render(DmaFollower& dma,
    ASSERT(data0.size_bytes == 0);
  
    if (dma.current_tag().kind == DmaTag::Kind::CALL) {
@@ -1586,7 +1601,7 @@ index 556410cd4..57012d07d 100644
      // sky renderer didn't run, let's just get out of here.
      for (int i = 0; i < 4; i++) {
        dma.read_and_advance();
-@@ -152,6 +195,10 @@ void SkyRenderer::render(DmaFollower& dma,
+@@ -152,6 +196,10 @@ void SkyRenderer::render(DmaFollower& dma,
  
    auto setup_packet = dma.read_and_advance();
    ASSERT(setup_packet.size_bytes == 16 * 4);
@@ -1597,7 +1612,7 @@ index 556410cd4..57012d07d 100644
    m_direct_renderer.render_gif(setup_packet.data, setup_packet.size_bytes, render_state, prof);
  
    if (dma.current_tag().qwc == 5) {
-@@ -204,6 +251,10 @@ void SkyRenderer::render(DmaFollower& dma,
+@@ -204,6 +252,10 @@ void SkyRenderer::render(DmaFollower& dma,
    }
  
    m_direct_renderer.flush_pending(render_state, prof);
@@ -2299,21 +2314,22 @@ index fdab19b57..95170498a 100644
 \ No newline at end of file
 +}
 diff --git a/game/graphics/opengl_renderer/foreground/Merc2.cpp b/game/graphics/opengl_renderer/foreground/Merc2.cpp
-index 68bebd86b..6c90be81e 100644
+index 68bebd86b..43628b754 100644
 --- a/game/graphics/opengl_renderer/foreground/Merc2.cpp
 +++ b/game/graphics/opengl_renderer/foreground/Merc2.cpp
-@@ -1,6 +1,10 @@
+@@ -1,6 +1,11 @@
  #include "Merc2.h"
- 
++#include "game/ottsel_trigger_poll.h"
++
 +#include <cstdio>
 +#include <cstring>
-+
+ 
  #include "common/global_profiler/GlobalProfiler.h"
 +#include "common/log/log.h"
  #include "common/util/fnv.h"
  #include "common/util/simd_util.h"
  
-@@ -57,31 +61,20 @@ Merc2::Merc2(ShaderLibrary& shaders, const std::vector<GLuint>* anim_slot_array)
+@@ -57,31 +62,10 @@ Merc2::Merc2(ShaderLibrary& shaders, const std::vector<GLuint>* anim_slot_array)
    glGenVertexArrays(1, &m_vao);
    glBindVertexArray(m_vao);
  
@@ -2342,33 +2358,52 @@ index 68bebd86b..6c90be81e 100644
 -                 fmt::format("opengl uniform buffer alignment is {}, which is strange\n", val));
 -    }
 -  }
-+  // Bone texture to store skinning matrices for multiple draws. Each draw selects its bones with a
++  // Skinning matrices go in bone textures (next_bone_texture). Each draw selects its bones with a
 +  // base-offset uniform, so no per-draw buffer binding is needed (and no alignment padding).
 +  static_assert(MAX_SHADER_BONE_VECTORS % BONE_TEXTURE_WIDTH == 0);
-+  glGenTextures(1, &m_bones_texture);
-+  glBindTexture(GL_TEXTURE_2D, m_bones_texture);
-+  std::vector<math::Vector4f> temp(MAX_SHADER_BONE_VECTORS, math::Vector4f::zero());
-+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, BONE_TEXTURE_WIDTH,
-+               MAX_SHADER_BONE_VECTORS / BONE_TEXTURE_WIDTH, 0, GL_RGBA, GL_FLOAT, temp.data());
-+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-+  glBindTexture(GL_TEXTURE_2D, 0);
 +  m_opengl_buffer_alignment = 1;
  
    // initialize draw buffers, these will store lists of draws to flush.
    for (int i = 0; i < MAX_LEVELS; i++) {
-@@ -108,7 +101,7 @@ Merc2::~Merc2() {
+@@ -108,10 +92,36 @@ Merc2::~Merc2() {
      glDeleteVertexArrays(1, &x.vao);
    }
  
 -  glDeleteBuffers(1, &m_bones_buffer);
-+  glDeleteTextures(1, &m_bones_texture);
++  for (auto& set : m_bone_textures) {
++    glDeleteTextures(set.size(), set.data());
++  }
    glDeleteVertexArrays(1, &m_vao);
  }
  
-@@ -426,6 +419,7 @@ void Merc2::handle_pc_model(const DmaTransfer& setup,
++GLuint Merc2::next_bone_texture(u64 frame_idx) {
++  if (frame_idx != m_bone_texture_frame) {
++    m_bone_texture_frame = frame_idx;
++    m_bone_texture_next = 0;
++  }
++  auto& set = m_bone_textures[frame_idx % BONE_TEXTURE_FRAMES];
++  if (m_bone_texture_next == set.size()) {
++    GLuint tex;
++    glGenTextures(1, &tex);
++    glBindTexture(GL_TEXTURE_2D, tex);
++    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA32F, BONE_TEXTURE_WIDTH,
++                 MAX_SHADER_BONE_VECTORS / BONE_TEXTURE_WIDTH, 0, GL_RGBA, GL_FLOAT, nullptr);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    set.push_back(tex);
++    lg::info("OTTSEL MERC: bone texture set {} grew to {} ({} KB each)",
++             frame_idx % BONE_TEXTURE_FRAMES, set.size(),
++             MAX_SHADER_BONE_VECTORS * sizeof(math::Vector4f) / 1024);
++  }
++  return set[m_bone_texture_next++];
++}
++
+ /*!
+  * Modify vertices for blerc.
+  */
+@@ -426,6 +436,7 @@ void Merc2::handle_pc_model(const DmaTransfer& setup,
    // next, we need to check if we have enough room to draw this effect.
    const LevelData* lev = model_ref->level;
    const tfrag3::MercModel* model = model_ref->model;
@@ -2376,7 +2411,7 @@ index 68bebd86b..6c90be81e 100644
  
    // each model uses only 1 light.
    if (m_next_free_light >= MAX_LIGHTS) {
-@@ -507,6 +501,7 @@ void Merc2::handle_pc_model(const DmaTransfer& setup,
+@@ -507,6 +518,7 @@ void Merc2::handle_pc_model(const DmaTransfer& setup,
    // but they may not be in order, or include all bones. The matrix slot string tells
    // us which bones go where. (the game doesn't go in order because it follows the merc format)
    ShaderMercMat skel_matrix_buffer[MAX_SKEL_BONES];
@@ -2384,7 +2419,7 @@ index 68bebd86b..6c90be81e 100644
    auto* matrix_array = (const u32*)(input_data + 128);
    int i;
    for (i = 0; i < 128; i++) {
-@@ -542,6 +537,42 @@ void Merc2::handle_pc_model(const DmaTransfer& setup,
+@@ -542,6 +554,42 @@ void Merc2::handle_pc_model(const DmaTransfer& setup,
    bool model_no_texture = flags->bitflags & 16;
    input_data += 32;
  
@@ -2427,7 +2462,7 @@ index 68bebd86b..6c90be81e 100644
    float blerc_weights[kMaxBlerc];
    if (model_uses_pc_blerc) {
      memcpy(blerc_weights, input_data, kMaxBlerc * sizeof(float));
-@@ -751,6 +782,7 @@ void Merc2::init_shader_common(Shader& shader, Uniforms* uniforms, bool include_
+@@ -751,6 +799,7 @@ void Merc2::init_shader_common(Shader& shader, Uniforms* uniforms, bool include_
    uniforms->ignore_alpha = glGetUniformLocation(id, "ignore_alpha");
  
    uniforms->gfx_hack_no_tex = glGetUniformLocation(id, "gfx_hack_no_tex");
@@ -2435,14 +2470,14 @@ index 68bebd86b..6c90be81e 100644
  }
  
  void Merc2::switch_to_merc2(SharedRenderState* render_state) {
-@@ -786,6 +818,25 @@ void Merc2::render(DmaFollower& dma,
+@@ -786,6 +835,25 @@ void Merc2::render(DmaFollower& dma,
      stats->model_list.clear();
    }
  
 +  // `touch /tmp/ottsel-trace-merc2` captures three frames. This records the
 +  // active skeletal model and material contracts before any renderer
 +  // correction is attempted.
-+  if (!m_ottsel_trace_frames) {
++  if (!m_ottsel_trace_frames && OTTSEL_TRIGGER_POLL_DUE()) {
 +    if (auto* request = std::fopen("/tmp/ottsel-trace-merc2", "r")) {
 +      std::fclose(request);
 +      std::remove("/tmp/ottsel-trace-merc2");
@@ -2461,7 +2496,7 @@ index 68bebd86b..6c90be81e 100644
    switch_to_merc2(render_state);
  
    {
-@@ -799,6 +850,15 @@ void Merc2::render(DmaFollower& dma,
+@@ -799,6 +867,15 @@ void Merc2::render(DmaFollower& dma,
      // flush buckets to draws
      flush_draw_buckets(render_state, prof, stats);
    }
@@ -2477,7 +2512,7 @@ index 68bebd86b..6c90be81e 100644
  }
  
  u32 Merc2::alloc_lights(const VuLights& lights) {
-@@ -1183,6 +1243,17 @@ void Merc2::flush_draw_buckets(SharedRenderState* render_state,
+@@ -1183,6 +1260,17 @@ void Merc2::flush_draw_buckets(SharedRenderState* render_state,
                                 ScopedProfilerNode& prof,
                                 MercDebugStats* stats) {
    stats->num_draw_flush++;
@@ -2485,7 +2520,7 @@ index 68bebd86b..6c90be81e 100644
 +  const u32 bone_rows = (m_next_free_bone_vector + BONE_TEXTURE_WIDTH - 1) / BONE_TEXTURE_WIDTH;
 +  stats->num_bones_uploaded += m_next_free_bone_vector;
 +  glActiveTexture(GL_TEXTURE0 + BONE_TEXTURE_UNIT);
-+  glBindTexture(GL_TEXTURE_2D, m_bones_texture);
++  glBindTexture(GL_TEXTURE_2D, next_bone_texture(render_state->frame_idx));
 +  if (bone_rows) {
 +    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, BONE_TEXTURE_WIDTH, bone_rows, GL_RGBA, GL_FLOAT,
 +                    m_shader_bone_vector_buffer);
@@ -2495,7 +2530,7 @@ index 68bebd86b..6c90be81e 100644
    for (u32 li = 0; li < m_next_free_level_bucket; li++) {
      const auto& lev_bucket = m_level_draw_buckets[li];
      const auto* lev = lev_bucket.level;
-@@ -1190,12 +1261,6 @@ void Merc2::flush_draw_buckets(SharedRenderState* render_state,
+@@ -1190,12 +1278,6 @@ void Merc2::flush_draw_buckets(SharedRenderState* render_state,
      glBindBuffer(GL_ARRAY_BUFFER, lev->merc_vertices);
      glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, lev->merc_indices);
      setup_merc_vao();
@@ -2508,7 +2543,7 @@ index 68bebd86b..6c90be81e 100644
  
      switch_to_merc2(render_state);
      do_draws(lev_bucket.draws.data(), lev, lev_bucket.next_free_draw, m_merc_uniforms, prof, false,
-@@ -1284,6 +1349,21 @@ void Merc2::do_draws(const Draw* draw_array,
+@@ -1284,6 +1366,21 @@ void Merc2::do_draws(const Draw* draw_array,
        last_tex = draw.texture;
      }
  
@@ -2530,7 +2565,7 @@ index 68bebd86b..6c90be81e 100644
      if ((int)draw.light_idx != last_light && !set_fade) {
        const auto& l0_dir = m_lights_buffer[draw.light_idx].direction0;
        const auto& l1_dir = m_lights_buffer[draw.light_idx].direction1;
-@@ -1323,8 +1403,7 @@ void Merc2::do_draws(const Draw* draw_array,
+@@ -1323,8 +1420,7 @@ void Merc2::do_draws(const Draw* draw_array,
  
        prof.add_draw_call(2);
        prof.add_tri(draw.num_triangles * 2);
@@ -2540,7 +2575,7 @@ index 68bebd86b..6c90be81e 100644
        // draw rgb
        const auto& l1_dir = m_lights_buffer[draw.light_idx].direction1;
        math::Vector4f l1_dir_f(l1_dir.x(), l1_dir.y(), l1_dir.z(), 1);
-@@ -1345,8 +1424,7 @@ void Merc2::do_draws(const Draw* draw_array,
+@@ -1345,8 +1441,7 @@ void Merc2::do_draws(const Draw* draw_array,
        setup_opengl_from_draw_mode(draw.mode, GL_TEXTURE0, use_mipmaps_for_filtering);
        prof.add_draw_call();
        prof.add_tri(draw.num_triangles);
@@ -2551,7 +2586,7 @@ index 68bebd86b..6c90be81e 100644
                       GL_UNSIGNED_INT, (void*)(sizeof(u32) * draw.first_index));
      }
 diff --git a/game/graphics/opengl_renderer/foreground/Merc2.h b/game/graphics/opengl_renderer/foreground/Merc2.h
-index b03ccef84..66bc6dc5b 100644
+index b03ccef84..404cee7da 100644
 --- a/game/graphics/opengl_renderer/foreground/Merc2.h
 +++ b/game/graphics/opengl_renderer/foreground/Merc2.h
 @@ -108,6 +108,8 @@ class Merc2 {
@@ -2571,16 +2606,23 @@ index b03ccef84..66bc6dc5b 100644
    };
  
    Uniforms m_merc_uniforms, m_emerc_uniforms;
-@@ -172,7 +175,7 @@ class Merc2 {
+@@ -172,7 +175,14 @@ class Merc2 {
  
    ModBuffers alloc_mod_vtx_buffer(const LevelData* lev);
  
 -  GLuint m_bones_buffer;
-+  GLuint m_bones_texture;
++  // Bone textures: a fresh one for every flush, in three sets used on rotating frames. ANGLE on Metal
++  // can write a texture the GPU is not using straight from the CPU; rewriting one that earlier draws
++  // in the frame still read costs a staging buffer and a blit, which ends the current render pass.
++  static constexpr int BONE_TEXTURE_FRAMES = 3;
++  std::vector<GLuint> m_bone_textures[BONE_TEXTURE_FRAMES];
++  u64 m_bone_texture_frame = UINT64_MAX;
++  size_t m_bone_texture_next = 0;
++  GLuint next_bone_texture(u64 frame_idx);
  
    enum DrawFlags {
      IGNORE_ALPHA = 1,
-@@ -246,6 +249,14 @@ class Merc2 {
+@@ -246,6 +256,14 @@ class Merc2 {
    u32 m_next_free_bone_vector = 0;
    size_t m_opengl_buffer_alignment = 0;
  
@@ -2782,20 +2824,20 @@ index 4eeb08801..a9dc99c3e 100644
  
    vec4 transformed = perspective_matrix * vtx_pos;
 diff --git a/game/graphics/opengl_renderer/sprite/Sprite3.cpp b/game/graphics/opengl_renderer/sprite/Sprite3.cpp
-index 9918d76d3..a8b91914f 100644
+index 9918d76d3..c1d76392d 100644
 --- a/game/graphics/opengl_renderer/sprite/Sprite3.cpp
 +++ b/game/graphics/opengl_renderer/sprite/Sprite3.cpp
-@@ -1,5 +1,9 @@
+@@ -1,4 +1,9 @@
  #include "Sprite3.h"
- 
++#include "game/ottsel_trigger_poll.h"
++
 +#include <algorithm>
 +#include <cstdio>
 +#include <vector>
-+
+ 
  #include "common/log/log.h"
  
- #include "game/graphics/opengl_renderer/background/background_common.h"
-@@ -17,6 +21,16 @@ bool looks_like_2d_chunk_start(const DmaFollower& dma) {
+@@ -17,6 +22,16 @@ bool looks_like_2d_chunk_start(const DmaFollower& dma) {
    return dma.current_tag().qwc == 1 && dma.current_tag().kind == DmaTag::Kind::CNT;
  }
  
@@ -2812,7 +2854,7 @@ index 9918d76d3..a8b91914f 100644
  /*!
   * Read the header. Asserts if it's bad.
   * Returns the number of sprites.
-@@ -35,6 +49,63 @@ u32 process_sprite_chunk_header(DmaFollower& dma) {
+@@ -35,6 +50,63 @@ u32 process_sprite_chunk_header(DmaFollower& dma) {
  }
  
  constexpr int SPRITE_RENDERER_MAX_SPRITES = 1920 * 12;
@@ -2876,7 +2918,7 @@ index 9918d76d3..a8b91914f 100644
  }  // namespace
  
  Sprite3::Sprite3(const std::string& name, int my_id)
-@@ -168,6 +239,7 @@ void Sprite3::handle_sprite_frame_setup(DmaFollower& dma,
+@@ -168,6 +240,7 @@ void Sprite3::handle_sprite_frame_setup(DmaFollower& dma,
        ASSERT(frame_data_unpack.use_tops_flag == false);
        SpriteFrameDataJak1 jak1_data;
        memcpy(&jak1_data, frame_data.data, sizeof(SpriteFrameDataJak1));
@@ -2884,7 +2926,7 @@ index 9918d76d3..a8b91914f 100644
        m_frame_data.from_jak1(jak1_data);
      } break;
      case GameVersion::Jak2:
-@@ -184,6 +256,7 @@ void Sprite3::handle_sprite_frame_setup(DmaFollower& dma,
+@@ -184,6 +257,7 @@ void Sprite3::handle_sprite_frame_setup(DmaFollower& dma,
        VifCodeUnpack frame_data_unpack(frame_data.vifcode1());
        ASSERT(frame_data_unpack.addr_qw == SpriteDataMem::FrameData);
        ASSERT(frame_data_unpack.use_tops_flag == false);
@@ -2892,7 +2934,7 @@ index 9918d76d3..a8b91914f 100644
        memcpy(&m_frame_data, frame_data.data, sizeof(SpriteFrameData));
      } break;
      default:
-@@ -215,7 +288,22 @@ void Sprite3::render_3d(DmaFollower& dma) {
+@@ -215,7 +289,22 @@ void Sprite3::render_3d(DmaFollower& dma) {
                                               SpriteDataMem::Matrix, false, false);
    ASSERT(unpack_ok);
    static_assert(sizeof(m_3d_matrix_data) == 5 * 16);
@@ -2915,7 +2957,7 @@ index 9918d76d3..a8b91914f 100644
    // TODO
  }
  
-@@ -243,8 +331,10 @@ void Sprite3::render_2d_group0(DmaFollower& dma,
+@@ -243,8 +332,10 @@ void Sprite3::render_2d_group0(DmaFollower& dma,
    glUniform4fv(glGetUniformLocation(shid, "basis_y"), 1, m_frame_data.basis_y.data());
  
    u16 last_prog = -1;
@@ -2926,7 +2968,7 @@ index 9918d76d3..a8b91914f 100644
      m_debug_stats.blocks_2d_grp0++;
      // 4 packets per chunk
  
-@@ -271,6 +361,36 @@ void Sprite3::render_2d_group0(DmaFollower& dma,
+@@ -271,6 +362,36 @@ void Sprite3::render_2d_group0(DmaFollower& dma,
      ASSERT(run.vifcode0().kind == VifCode::Kind::NOP);
      ASSERT(run.vifcode1().kind == VifCode::Kind::MSCAL);
  
@@ -2963,14 +3005,14 @@ index 9918d76d3..a8b91914f 100644
      if (m_enabled) {
        if (run.vifcode1().immediate != last_prog) {
          // one-time setups and flushing
-@@ -486,6 +606,34 @@ void Sprite3::render_jak1(DmaFollower& dma,
+@@ -486,6 +607,34 @@ void Sprite3::render_jak1(DmaFollower& dma,
                            SharedRenderState* render_state,
                            ScopedProfilerNode& prof) {
    m_debug_stats = {};
 +  // `touch /tmp/ottsel-trace-sprite3` captures the next three Sprite3
 +  // frames. This makes active source textures, transforms, and GS state
 +  // inspectable while leaving normal runs quiet.
-+  if (!m_ottsel_trace_frames) {
++  if (!m_ottsel_trace_frames && OTTSEL_TRIGGER_POLL_DUE()) {
 +    if (auto* request = std::fopen("/tmp/ottsel-trace-sprite3", "r")) {
 +      std::fclose(request);
 +      std::remove("/tmp/ottsel-trace-sprite3");
@@ -2998,7 +3040,7 @@ index 9918d76d3..a8b91914f 100644
    // First thing should be a NEXT with two nops. this is a jump from buckets to sprite data
    auto data0 = dma.read_and_advance();
    ASSERT(data0.vif1() == 0);
-@@ -498,6 +646,7 @@ void Sprite3::render_jak1(DmaFollower& dma,
+@@ -498,6 +647,7 @@ void Sprite3::render_jak1(DmaFollower& dma,
        dma.read_and_advance();
      }
      ASSERT(dma.current_tag_offset() == render_state->next_bucket);
@@ -3006,7 +3048,7 @@ index 9918d76d3..a8b91914f 100644
      return;
    }
  
-@@ -505,6 +654,7 @@ void Sprite3::render_jak1(DmaFollower& dma,
+@@ -505,6 +655,7 @@ void Sprite3::render_jak1(DmaFollower& dma,
    {
      auto child = prof.make_scoped_child("direct");
      if (render_direct(dma, render_state, child)) {
@@ -3014,7 +3056,7 @@ index 9918d76d3..a8b91914f 100644
        return;
      }
    }
-@@ -555,6 +705,8 @@ void Sprite3::render_jak1(DmaFollower& dma,
+@@ -555,6 +706,8 @@ void Sprite3::render_jak1(DmaFollower& dma,
        // fmt::print(" vif1: {}\n", VifCode(data.vif1()).print());
      }
    }
@@ -3023,7 +3065,7 @@ index 9918d76d3..a8b91914f 100644
  }
  
  void Sprite3::draw_debug_window() {
-@@ -594,11 +746,30 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
+@@ -594,11 +747,30 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
  
    // two passes through the buckets. first to build the index buffer
    u32 idx_offset = 0;
@@ -3054,7 +3096,7 @@ index 9918d76d3..a8b91914f 100644
  
    // now upload it
    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ogl.index_buffer);
-@@ -606,7 +777,18 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
+@@ -606,7 +778,18 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
                 GL_STREAM_DRAW);
  
    // now do draws!
@@ -3073,7 +3115,7 @@ index 9918d76d3..a8b91914f 100644
      u32 tbp = bucket->key >> 32;
      DrawMode mode;
      mode.as_int() = bucket->key & 0xffffffff;
-@@ -622,9 +804,23 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
+@@ -622,9 +805,23 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
  
      glActiveTexture(GL_TEXTURE0);
      glBindTexture(GL_TEXTURE_2D, *tex);
@@ -3097,7 +3139,7 @@ index 9918d76d3..a8b91914f 100644
      glUniform1f(glGetUniformLocation(render_state->shaders[ShaderId::SPRITE3].id(), "alpha_min"),
                  double_draw ? settings.aref_first : 0.016);
      glUniform1f(glGetUniformLocation(render_state->shaders[ShaderId::SPRITE3].id(), "alpha_max"),
-@@ -634,7 +830,7 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
+@@ -634,7 +831,7 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
      prof.add_draw_call();
      prof.add_tri(2 * (bucket->ids.size() / 5));
  
@@ -3106,7 +3148,7 @@ index 9918d76d3..a8b91914f 100644
                     (void*)(bucket->offset_in_idx_buffer * sizeof(u32)));
  
      if (double_draw) {
-@@ -651,7 +847,7 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
+@@ -651,7 +848,7 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
                glGetUniformLocation(render_state->shaders[ShaderId::SPRITE3].id(), "alpha_max"),
                settings.aref_second);
            glDepthMask(GL_FALSE);
@@ -3115,7 +3157,7 @@ index 9918d76d3..a8b91914f 100644
                           (void*)(bucket->offset_in_idx_buffer * sizeof(u32)));
            break;
          default:
-@@ -815,6 +1011,25 @@ void Sprite3::do_block_common(SpriteMode mode,
+@@ -815,6 +1012,25 @@ void Sprite3::do_block_common(SpriteMode mode,
      }
      handle_alpha(adgif.alpha_data, render_state, prof);
  
@@ -4585,18 +4627,19 @@ index c7ee549da..a92020035 100644
  
  /*!
 diff --git a/game/kernel/common/kmachine.cpp b/game/kernel/common/kmachine.cpp
-index bc2c52d86..5ff55e2c4 100644
+index bc2c52d86..296edb6df 100644
 --- a/game/kernel/common/kmachine.cpp
 +++ b/game/kernel/common/kmachine.cpp
-@@ -1,6 +1,7 @@
+@@ -1,6 +1,8 @@
  #include "kmachine.h"
++#include "game/ottsel_trigger_poll.h"
  
  #include <random>
 +#include <unistd.h>
  
  #include "common/global_profiler/GlobalProfiler.h"
  #include "common/log/log.h"
-@@ -25,6 +26,10 @@
+@@ -25,6 +27,10 @@
  #include "game/sce/libscf.h"
  #include "game/sce/sif_ee.h"
  
@@ -4607,7 +4650,7 @@ index bc2c52d86..5ff55e2c4 100644
  /*!
   * Where does OVERLORD load its data from?
   */
-@@ -73,6 +78,11 @@ void InitCD() {
+@@ -73,6 +79,11 @@ void InitCD() {
   * Initialize the GS and display the splash screen.
   */
  void InitVideo() {
@@ -4619,7 +4662,7 @@ index bc2c52d86..5ff55e2c4 100644
    if (!SplashScreen) {
      lg::info("InitVideo: skipping splash!\n");
      return;
-@@ -486,12 +496,67 @@ void pc_memmove(u32 dst, u32 src, u32 size) {
+@@ -486,12 +497,67 @@ void pc_memmove(u32 dst, u32 src, u32 size) {
  }
  
  void send_gfx_dma_chain(u32 /*bank*/, u32 chain) {
@@ -4630,7 +4673,7 @@ index bc2c52d86..5ff55e2c4 100644
 +  {
 +    static bool trace_sprite_producer = false;
 +    static u32 producer_chain_count = 0;
-+    if (!trace_sprite_producer) {
++    if (!trace_sprite_producer && OTTSEL_TRIGGER_POLL_DUE()) {
 +      const std::string trace_path = ottsel_ios_writable_dir() + "ottsel-trace-ios-sprite-producer";
 +      if (access(trace_path.c_str(), F_OK) == 0) {
 +        unlink(trace_path.c_str());
@@ -4687,7 +4730,7 @@ index bc2c52d86..5ff55e2c4 100644
    if (Gfx::GetCurrentRenderer()) {
      Gfx::GetCurrentRenderer()->texture_upload_now(Ptr<u8>(page).c(), mode, s7.offset);
    }
-@@ -796,6 +861,12 @@ void pc_set_mouse_camera_sens(u32 xsens, u32 ysens) {
+@@ -796,6 +862,12 @@ void pc_set_mouse_camera_sens(u32 xsens, u32 ysens) {
    memcpy(&xsens_val, &xsens, 4);
    float ysens_val;
    memcpy(&ysens_val, &ysens, 4);
@@ -7685,12 +7728,14 @@ index a24034277..3e6a768d6 100644
 \ No newline at end of file
 +// clang-format on
 diff --git a/game/mips2c/jak1_functions/sparticle_launcher.cpp b/game/mips2c/jak1_functions/sparticle_launcher.cpp
-index d6f0d33d3..db8e36a0a 100644
+index d6f0d33d3..4c9b64bd8 100644
 --- a/game/mips2c/jak1_functions/sparticle_launcher.cpp
 +++ b/game/mips2c/jak1_functions/sparticle_launcher.cpp
-@@ -2,6 +2,11 @@
+@@ -1,7 +1,13 @@
+ //--------------------------MIPS2C---------------------
  // clang-format off
  #include "game/mips2c/mips2c_private.h"
++#include "game/ottsel_trigger_poll.h"
  #include "game/kernel/jak1/kscheme.h"
 +#include "common/log/log.h"
 +#include <array>
@@ -7700,7 +7745,7 @@ index d6f0d33d3..db8e36a0a 100644
  using namespace jak1;
  
  namespace Mips2C::jak1 {
-@@ -11,8 +16,92 @@ struct Cache {
+@@ -11,8 +17,92 @@ struct Cache {
    void* particle_setup_adgif; // particle-setup-adgif
  } cache;
  
@@ -7772,7 +7817,7 @@ index d6f0d33d3..db8e36a0a 100644
 +
  u64 execute(void* ctxt) {
    auto* c = (ExecutionContext*)ctxt;
-+  if (!ottsel_particle_adgif_trace_active && ottsel_particle_adgif_trace_trigger()) {
++  if (!ottsel_particle_adgif_trace_active && OTTSEL_TRIGGER_POLL_DUE() && ottsel_particle_adgif_trace_trigger()) {
 +    ottsel_particle_adgif_trace_active = true;
 +    ottsel_particle_adgif_trace_count = 0;
 +    ottsel_particle_adgif_output_count = 0;
@@ -7793,7 +7838,7 @@ index d6f0d33d3..db8e36a0a 100644
    bool bc = false;
    u32 call_addr = 0;
    c->mov64(v1, a0);                                 // or v1, a0, r0
-@@ -76,6 +165,7 @@ u64 execute(void* ctxt) {
+@@ -76,6 +166,7 @@ u64 execute(void* ctxt) {
    c->sw(v1, 0, t1);                                 // sw v1, 0(t1)
    c->jalr(call_addr);                               // jalr ra, t9
    c->lw(a0, 0, sp);                                 // lw a0, 0(sp)
@@ -7801,7 +7846,7 @@ index d6f0d33d3..db8e36a0a 100644
    // nop                                            // sll r0, r0, 0
    c->lw(t4, 4, sp);                                 // lw t4, 4(sp)
    // nop                                            // sll r0, r0, 0
-@@ -93,6 +183,7 @@ u64 execute(void* ctxt) {
+@@ -93,6 +184,7 @@ u64 execute(void* ctxt) {
    c->sqc2(vf18, 32, a0);                            // sqc2 vf18, 32(a0)
    c->sqc2(vf19, 48, a0);                            // sqc2 vf19, 48(a0)
    c->sqc2(vf20, 64, a0);                            // sqc2 vf20, 64(a0)
@@ -7809,7 +7854,7 @@ index d6f0d33d3..db8e36a0a 100644
    c->sw(t4, 8, t1);                                 // sw t4, 8(t1)
    c->sh(a3, 4, t1);                                 // sh a3, 4(t1)
    //jr ra                                           // jr ra
-@@ -110,6 +201,7 @@ u64 execute(void* ctxt) {
+@@ -110,6 +202,7 @@ u64 execute(void* ctxt) {
    call_addr = c->gprs[t9].du32[0];                  // function call:
    // nop                                            // sll r0, r0, 0
    c->jalr(call_addr);                               // jalr ra, t9
@@ -7817,7 +7862,7 @@ index d6f0d33d3..db8e36a0a 100644
    c->lw(t4, 4, sp);                                 // lw t4, 4(sp)
    // nop                                            // sll r0, r0, 0
    c->lw(ra, 8, sp);                                 // lw ra, 8(sp)
-@@ -144,6 +236,7 @@ namespace Mips2C::jak1 {
+@@ -144,6 +237,7 @@ namespace Mips2C::jak1 {
  namespace sp_launch_particles_var {
  struct Cache {
    void* level; // *level*
@@ -7825,7 +7870,7 @@ index d6f0d33d3..db8e36a0a 100644
    void* sp_launcher_enable; // *sp-launcher-enable*
    void* sp_launcher_lock; // *sp-launcher-lock*
    void* time_of_day_context; // *time-of-day-context*
-@@ -160,12 +253,132 @@ struct Cache {
+@@ -160,12 +254,132 @@ struct Cache {
    void* sp_init_fields; // sp-init-fields!
    void* sp_queue_launch; // sp-queue-launch
    void* sp_rotate_system; // sp-rotate-system
@@ -7893,7 +7938,7 @@ index d6f0d33d3..db8e36a0a 100644
  u64 execute(void* ctxt) {
    auto* c = (ExecutionContext*)ctxt;
 +  u32 ottsel_sp_init_spec_addr = 0;
-+  if (!ottsel_sp_launch_3d_trace_active && ottsel_sp_launch_trace_trigger()) {
++  if (!ottsel_sp_launch_3d_trace_active && OTTSEL_TRIGGER_POLL_DUE() && ottsel_sp_launch_trace_trigger()) {
 +    ottsel_sp_launch_3d_trace_count = 0;
 +    ottsel_sp_launch_owner_trace_count = 0;
 +    ottsel_sp_launch_current_system = 0;
@@ -7958,7 +8003,7 @@ index d6f0d33d3..db8e36a0a 100644
    c->mov64(v1, a0);                                 // or v1, a0, r0
    c->mov64(v1, a1);                                 // or v1, a1, r0
    c->mov64(v1, a2);                                 // or v1, a2, r0
-@@ -243,9 +456,22 @@ u64 execute(void* ctxt) {
+@@ -243,9 +457,22 @@ u64 execute(void* ctxt) {
    c->load_symbol(t9, cache.sp_init_fields);         // lw t9, sp-init-fields!(s7)
    c->daddiu(t0, s7, 8);                             // daddiu t0, s7, 8
    call_addr = c->gprs[t9].du32[0];                  // function call:
@@ -7981,7 +8026,7 @@ index d6f0d33d3..db8e36a0a 100644
    // nop                                            // sll r0, r0, 0
    c->lwc1(f2, 116, sp);                             // lwc1 f2, 116(sp)
    // nop                                            // sll r0, r0, 0
-@@ -552,6 +778,25 @@ u64 execute(void* ctxt) {
+@@ -552,6 +779,25 @@ u64 execute(void* ctxt) {
    c->lw(a0, 4, s2);                                 // lw a0, 4(s2)
    c->lw(a1, 96, sp);                                // lw a1, 96(sp)
    // nop                                            // sll r0, r0, 0
@@ -8007,7 +8052,7 @@ index d6f0d33d3..db8e36a0a 100644
    c->load_symbol(t9, cache.particle_adgif);         // lw t9, particle-adgif(s7)
    // nop                                            // sll r0, r0, 0
    c->sqc2(vf4, 128, sp);                            // sqc2 vf4, 128(sp)
-@@ -818,6 +1063,7 @@ u64 execute(void* ctxt) {
+@@ -818,6 +1064,7 @@ u64 execute(void* ctxt) {
  
  void link() {
    cache.level = intern_from_c("*level*").c();
@@ -8015,7 +8060,7 @@ index d6f0d33d3..db8e36a0a 100644
    cache.sp_launcher_enable = intern_from_c("*sp-launcher-enable*").c();
    cache.sp_launcher_lock = intern_from_c("*sp-launcher-lock*").c();
    cache.time_of_day_context = intern_from_c("*time-of-day-context*").c();
-@@ -834,6 +1080,7 @@ void link() {
+@@ -834,6 +1081,7 @@ void link() {
    cache.sp_init_fields = intern_from_c("sp-init-fields!").c();
    cache.sp_queue_launch = intern_from_c("sp-queue-launch").c();
    cache.sp_rotate_system = intern_from_c("sp-rotate-system").c();
@@ -8024,13 +8069,14 @@ index d6f0d33d3..db8e36a0a 100644
  }
  
 diff --git a/game/mips2c/jak1_functions/tfrag.cpp b/game/mips2c/jak1_functions/tfrag.cpp
-index 6baf04440..f56df756c 100644
+index 6baf04440..3a87c53af 100644
 --- a/game/mips2c/jak1_functions/tfrag.cpp
 +++ b/game/mips2c/jak1_functions/tfrag.cpp
-@@ -1,7 +1,11 @@
+@@ -1,7 +1,12 @@
  
  //--------------------------MIPS2C---------------------
 +#include <cstdio>
++#include "game/ottsel_trigger_poll.h"
 +#include <cstdlib>
 +
  #include "game/kernel/jak1/kscheme.h"
@@ -8039,13 +8085,13 @@ index 6baf04440..f56df756c 100644
  using namespace jak1;
  namespace Mips2C::jak1 {
  namespace draw_inline_array_tfrag {
-@@ -18,6 +22,49 @@ struct Cache {
+@@ -18,6 +23,49 @@ struct Cache {
  u64 execute(void* ctxt) {
    auto* c = (ExecutionContext*)ctxt;
    load_vfs_from_tf_regs(cache.transform_regs, c);
 +  static int ottsel_trace_calls = 0;
 +  static int ottsel_spadfrom_logs = 0;
-+  if (!ottsel_trace_calls) {
++  if (!ottsel_trace_calls && OTTSEL_TRIGGER_POLL_DUE()) {
 +    if (auto* request = std::fopen("/tmp/ottsel-trace-tfasm", "r")) {
 +      std::fclose(request);
 +      std::remove("/tmp/ottsel-trace-tfasm");
@@ -8089,7 +8135,7 @@ index 6baf04440..f56df756c 100644
    bool bc = false;
    c->daddiu(sp, sp, -128);                          // daddiu sp, sp, -128
    c->sd(ra, 0, sp);                                 // sd ra, 0(sp)
-@@ -57,6 +104,12 @@ u64 execute(void* ctxt) {
+@@ -57,6 +105,12 @@ u64 execute(void* ctxt) {
    c->addiu(t6, r0, 0);                              // addiu t6, r0, 0
    c->mov64(ra, a3);                                 // or ra, a3, r0
  
@@ -8102,7 +8148,7 @@ index 6baf04440..f56df756c 100644
    block_1:
    bc = c->sgpr64(t7) != 0;                          // bne t7, r0, L42
    // nop                                            // sll r0, r0, 0
-@@ -113,7 +166,44 @@ u64 execute(void* ctxt) {
+@@ -113,7 +167,44 @@ u64 execute(void* ctxt) {
  
      // GO!
      //c->sw(t7, 0, t4);                                 // sw t7, 0(t4)
@@ -8147,7 +8193,7 @@ index 6baf04440..f56df756c 100644
      // nop                                            // sll r0, r0, 0
    }
  
-@@ -293,6 +383,12 @@ u64 execute(void* ctxt) {
+@@ -293,6 +384,12 @@ u64 execute(void* ctxt) {
      c->addiu(t6, r0, 256);                            // addiu t6, r0, 256
      //c->sw(t6, 0, t1);                                 // sw t6, 0(t1)
      spad_from_dma(cache.fake_scratchpad_data, madr, sadr, qwc);
@@ -8160,7 +8206,7 @@ index 6baf04440..f56df756c 100644
      c->addiu(t6, r0, 0);                              // addiu t6, r0, 0
    }
  
-@@ -508,6 +604,12 @@ u64 execute(void* ctxt) {
+@@ -508,6 +605,12 @@ u64 execute(void* ctxt) {
      c->addiu(t6, r0, 256);                            // addiu t6, r0, 256
      //c->sw(t6, 0, t1);                                 // sw t6, 0(t1)
      spad_from_dma(cache.fake_scratchpad_data, madr, sadr, qwc);
@@ -8173,7 +8219,7 @@ index 6baf04440..f56df756c 100644
      c->addiu(t6, r0, 0);                              // addiu t6, r0, 0
    }
  
-@@ -643,6 +745,12 @@ u64 execute(void* ctxt) {
+@@ -643,6 +746,12 @@ u64 execute(void* ctxt) {
      c->addiu(a0, r0, 256);                            // addiu a0, r0, 256
      //c->sw(a0, 0, t1);                                 // sw a0, 0(t1)
      spad_from_dma(cache.fake_scratchpad_data, madr, sadr, qwc);
@@ -8988,6 +9034,34 @@ index 000000000..b15f538c8
 +}
 +
 +#endif
+diff --git a/game/ottsel_trigger_poll.h b/game/ottsel_trigger_poll.h
+new file mode 100644
+index 000000000..4abc7b86f
+--- /dev/null
++++ b/game/ottsel_trigger_poll.h
+@@ -0,0 +1,22 @@
++#pragma once
++
++#include <chrono>
++
++// Ottsel diagnostic triggers are files a test driver creates to request a one-shot trace. Looking for
++// a file is a system call, and some checks sit on paths that run thousands of times a frame (particle
++// launches, GIF packets), so each call site looks at most once a second.
++inline bool ottsel_trigger_poll_due(std::chrono::steady_clock::time_point& next) {
++  const auto now = std::chrono::steady_clock::now();
++  if (now < next) {
++    return false;
++  }
++  next = now + std::chrono::seconds(1);
++  return true;
++}
++
++// One limiter per call site (each lambda has its own static).
++#define OTTSEL_TRIGGER_POLL_DUE()                          \
++  ([] {                                                    \
++    static std::chrono::steady_clock::time_point next{};  \
++    return ottsel_trigger_poll_due(next);                  \
++  }())
 diff --git a/game/overlord/common/fake_iso.cpp b/game/overlord/common/fake_iso.cpp
 index 45136b024..e86125988 100644
 --- a/game/overlord/common/fake_iso.cpp

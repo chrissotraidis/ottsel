@@ -837,7 +837,10 @@ int main(int argc, char** argv) {
     // <bundle>/ottsel-press-start injects a START press (then the file is
     // removed).  Prefer the writable app directory; the installed bundle is
     // read-only on device but remains a useful Simulator diagnostic fallback.
-    {
+    // Checked every fourth frame (15 times a second at 60 fps): ~30 file-system calls per check is
+    // measurable main-thread time, and a hold is the file's presence, so it only starts later.
+    static unsigned trigger_frame = 0;
+    if ((++trigger_frame & 3) == 0) {
       const auto trigger_path = [&](const char* name) {
         std::string writable_path = writable + name;
         if (access(writable_path.c_str(), F_OK) == 0) {
@@ -845,10 +848,8 @@ int main(int argc, char** argv) {
         }
         return bundle + name;
       };
-      // BOT59: poll every frame.  The old 30-frame divider throttled injected
-      // taps to about one per 3.3 s at the measured ~9 chains/s, so a scripted
-      // "hold" decayed into a single one-frame pulse that no actor could act
-      // on.  That made an input experiment look like an input failure.
+      // BOT59: an old 30-frame divider at ~9 fps throttled injected taps to one per 3.3 s, so a scripted
+      // "hold" decayed into a one-frame pulse. The four-frame divider above keeps holds continuous.
       {
         std::string trig = trigger_path("ottsel-press-start");
         if (access(trig.c_str(), F_OK) == 0) {

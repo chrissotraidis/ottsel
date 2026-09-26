@@ -37,7 +37,7 @@ iPad or iPhone.
 | Game code | All 518 GOAL code modules compiled ahead of time to ARM64 and signed into the app; strict mode on |
 | Rendering | OpenGOAL's OpenGL renderer on OpenGL ES 3.0 through ANGLE on Metal; title, intro and Training run at about 58 fps at the full 2420×1668 |
 | Play | New Game plays the whole intro to Geyser Rock; Load Game restores a save into the training course; Jak walks, jumps and attacks by touch |
-| Touch | Move stick, camera stick, D-pad, Cross, Circle, Square, Triangle, L1, R1 and Start, with haptics and a per-device drag-and-resize layout |
+| Touch | A move stick that appears wherever the left thumb lands, camera stick, D-pad, Cross, Circle, Square, Triangle, L1, R1 and Start, with haptics and a per-device drag-and-resize layout |
 | Settings | **•••** menu with Display (render resolution), FPS counter, Controls, Game Data import and Diagnostics |
 | Controllers | Apple GameController and hardware keyboard; the touch controls hide while either is in use and return on the next touch |
 | Sound | OpenGOAL's own IOP and OVERLORD sound code runs on iOS; audible playback on a device is not yet checked |
@@ -81,8 +81,8 @@ OTTSEL_STRICT_EXEC=1 OTTSEL_SIGNED_GSTATE_EXPERIMENT=0 OTTSEL_SIGNED_EXPORT_BANK
 scripts/prepare-user-data-pack.sh out/jak-project/iso_data/jak1 /tmp/ottsel-pack out/jak-project/out/jak1/fr3
 ```
 
-A first build takes about 25 minutes on an M-series Mac. After a change to nested OpenGOAL source,
-refresh the patch with
+A first build takes about 12 minutes on an 8-core M-series Mac; after that, rebuilds compile only what
+changed and take a few minutes. After a change to nested OpenGOAL source, refresh the patch with
 `scripts/snapshot-jak-project.sh write` and commit it with the change.
 
 ## First launch
@@ -109,13 +109,15 @@ and keeps it for later launches.
 The layout follows [SunPad](https://github.com/chrissotraidis/sunpad): controls sit at the screen edges so
 the middle of the picture stays clear.
 
-- **Left:** move stick, D-pad and L1.
+- **Left:** L1 and the D-pad at the top; below them, the move stick appears wherever your thumb lands
+  and follows it if you drag past the rim, so there is no exact spot to find.
 - **Right:** camera stick, the Cross, Circle, Square and Triangle diamond, and R1.
 - **Bottom centre:** Start.
 - **Menu:** the **•••** button opens Display, Show FPS Counter, Controls, Game Data and Diagnostics.
 - **Customise:** **Controls → Touch Control Settings…** sets when the controls show (Auto, Always,
-  Never), their opacity and size, camera speed and camera inversion. **Move Touch Controls** lets you
-  drag and resize each control, and the layout is saved per device.
+  Never), whether the move stick follows your thumb or stays in one place, their opacity and size,
+  camera speed and camera inversion. **Move Touch Controls** lets you drag and resize each control,
+  and the layout is saved per device.
 
 Buttons respond to a finger sliding onto them, so a thumb can roll from Cross to Square without lifting.
 With **Show** on Auto, a connected controller or keyboard hides the controls, and the next touch brings

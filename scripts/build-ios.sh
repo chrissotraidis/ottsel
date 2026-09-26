@@ -390,19 +390,36 @@ if true; then
 "
 fi
 
+# Ninja compiles the runtime on every core and rebuilds only what changed: clang's depfiles track
+# headers, and ninja's log rebuilds an object whose command line changed (a new -D flag, say).
+ninja_quote() {  # shell-quote each argument, then escape $ for ninja
+  local arg out=""
+  for arg in "$@"; do out+="$(printf '%q' "$arg") "; done
+  printf '%s' "${out//\$/\$\$}"
+}
+RUNTIME_NINJA="$APP_BUILD/runtime.ninja"
 OBJS=()
-for src in $COMMON_SRC $KERNEL_SRC; do
-  name="$(echo "$src" | tr '/' '_' | sed 's/\.\(cpp\|cc\|s\|c\)$/.o/')"
-  case "$src" in
-    *.c) xcrun --sdk "$SDK" clang -O2 -target "$TARGET" -isysroot "$SDKROOT" \
-           -mios-version-min="$DEPLOY" -I"$WORKTREE/third-party/glad/include" \
-           -c "$WORKTREE/$src" -o "$OBJ/$name" ;;
-    third-party/imgui/*) xcrun --sdk "$SDK" clang++ "${COMMON_FLAGS[@]}" "${INCS[@]}" \
-           -c "$WORKTREE/$src" -o "$OBJ/$name" ;;
-    *) compile "$WORKTREE/$src" "$OBJ/$name" ;;
-  esac
-  OBJS+=("$OBJ/$name")
-done
+{
+  echo "builddir = $APP_BUILD"
+  echo "cxx = $(xcrun --sdk "$SDK" -f clang++) $(ninja_quote "${COMMON_FLAGS[@]}" "${INCS[@]}")"
+  echo "cc = $(xcrun --sdk "$SDK" -f clang) $(ninja_quote -O2 -target "$TARGET" -isysroot "$SDKROOT" \
+    -mios-version-min="$DEPLOY" -I"$WORKTREE/third-party/glad/include")"
+  echo "gles = $(ninja_quote ${GLES_INCLUDE[@]+"${GLES_INCLUDE[@]}"})"
+  printf 'rule cxx\n  command = $cxx $extra -MMD -MF $out.d -c $in -o $out\n  depfile = $out.d\n  deps = gcc\n  description = $in\n'
+  printf 'rule cc\n  command = $cc -MMD -MF $out.d -c $in -o $out\n  depfile = $out.d\n  deps = gcc\n  description = $in\n'
+  printf 'rule asm\n  command = $cxx -c $in -o $out\n  description = $in\n'
+  for src in $COMMON_SRC $KERNEL_SRC; do
+    name="$(echo "$src" | tr '/' '_' | sed 's/\.\(cpp\|cc\|s\|c\)$/.o/')"
+    case "$src" in
+      *.c) echo "build $OBJ/$name: cc $WORKTREE/$src" ;;
+      *.s) echo "build $OBJ/$name: asm $WORKTREE/$src" ;;
+      game/graphics/*) printf 'build %s: cxx %s\n  extra = $gles\n' "$OBJ/$name" "$WORKTREE/$src" ;;
+      *) echo "build $OBJ/$name: cxx $WORKTREE/$src" ;;
+    esac
+    OBJS+=("$OBJ/$name")
+  done
+} > "$RUNTIME_NINJA"
+ninja -f "$RUNTIME_NINJA"
 
 ar rcs "$APP_BUILD/libottsel-runtime.tmp.a" "${OBJS[@]}"
 mv -f "$APP_BUILD/libottsel-runtime.tmp.a" "$APP_BUILD/libottsel-runtime.a"
