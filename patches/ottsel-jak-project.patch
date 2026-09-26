@@ -9950,13 +9950,16 @@ index 4f7cc5e18..40de75561 100644
    if (version != GameVersion::Jak3 && version != GameVersion::JakX) {
      jak1::dma_init_globals();
 diff --git a/game/sce/libpad.cpp b/game/sce/libpad.cpp
-index 085d80d2f..7a5b500fa 100644
+index 085d80d2f..9ecf16c2a 100644
 --- a/game/sce/libpad.cpp
 +++ b/game/sce/libpad.cpp
-@@ -1,7 +1,17 @@
+@@ -1,17 +1,53 @@
  #include "libpad.h"
  
 +#include <cstdlib>
++#include <cctype>
++#include <cstdio>
++#include <string>
 +#include <unistd.h>
 +
 +#include "common/log/log.h"
@@ -9971,7 +9974,13 @@ index 085d80d2f..7a5b500fa 100644
  #include "game/graphics/display.h"
  #include "game/graphics/gfx.h"
  #include "game/kernel/common/kernel_types.h"
-@@ -12,6 +22,26 @@
+ #include "game/system/hid/input_bindings.h"
++#ifdef OTTSEL_IOS
++extern std::string ottsel_ios_writable_dir();
++#endif
+ 
+ /*!
+  * @file libpad.cpp
   * Stub implementation of the EE pad (controller) library
   */
  
@@ -9998,7 +10007,7 @@ index 085d80d2f..7a5b500fa 100644
  namespace ee {
  
  int scePadPortOpen(int port, int slot, void*) {
-@@ -92,6 +122,466 @@ int scePadRead(int port, int /*slot*/, u8* rdata) {
+@@ -92,6 +128,490 @@ int scePadRead(int port, int /*slot*/, u8* rdata) {
      for (size_t i = 0; i < pad_data.value()->button_data.size(); i++) {
        cpad->button0 |= pad_data.value()->button_data.at(i) << i;
      }
@@ -10199,6 +10208,30 @@ index 085d80d2f..7a5b500fa 100644
 +      }
 +    }
 +    // BOT26: host-side trigger for the explicit (bg 'village1) diagnostic.
++    // Ottsel testing: a file named ottsel-warp in the app's writable directory holds a continue-point
++    // name ("village1-hut"); main.gc's display loop starts play there. See ••• → Diagnostics.
++    if ((ottsel_pad_reads % 60) == 5) {
++#ifdef OTTSEL_IOS
++      const std::string warp_path = ottsel_ios_writable_dir() + "ottsel-warp";
++#else
++      const std::string warp_path = "/tmp/ottsel-warp";
++#endif
++      if (FILE* f = fopen(warp_path.c_str(), "r")) {
++        char name[64] = {};
++        const size_t n = fread(name, 1, sizeof(name) - 1, f);
++        fclose(f);
++        unlink(warp_path.c_str());
++        std::string continue_name(name, n);
++        while (!continue_name.empty() && isspace((unsigned char)continue_name.back())) {
++          continue_name.pop_back();
++        }
++        if (!continue_name.empty()) {
++          jak1::intern_from_c("*ottsel-warp-request*")->value =
++              (u32)jak1::make_string_from_c(continue_name.c_str());
++          lg::info("OTTSEL WARP: requested {}", continue_name);
++        }
++      }
++    }
 +    // It deliberately discards title sequencing and enables all-visible
 +    // fallback rendering, so it must not substitute for title/New Game tests.
 +    if ((ottsel_pad_reads % 1000) == 3 && g_ottsel_bg_village1_request == 0) {
@@ -12591,6 +12624,40 @@ index a43bd6ae7..4327e159b 100644
    (initialize-collision this arg2 arg4)
    (process-drawable-from-entity! this (the-as entity-actor arg0))
    (initialize-skeleton this arg1 '())
+diff --git a/goal_src/jak1/engine/game/main.gc b/goal_src/jak1/engine/game/main.gc
+index ed98a8320..7bd5d4c03 100644
+--- a/goal_src/jak1/engine/game/main.gc
++++ b/goal_src/jak1/engine/game/main.gc
+@@ -234,6 +234,12 @@
+ 
+ (define *master-exit* #f)
+ 
++;; Ottsel testing: the iOS runtime (game/sce/libpad.cpp) puts a continue-point name here, for example
++;; "village1-hut", when the tester asks to start at another level. The display loop consumes it and,
++;; like the game's own *auto-continue* (target-death.gc), starts play from a short-lived process:
++;; (start 'play ...) kills and respawns processes, so it must not run on the display loop's stack.
++(define *ottsel-warp-request* (the-as string #f))
++
+ (define *progress-cheat* #f)
+ 
+ (define *first-boot* #t) ;; PAL
+@@ -566,6 +572,16 @@
+       (with-profiler "update-pc"
+         (#when PC_PORT
+           (update *pc-settings*)))
++      (when *ottsel-warp-request*
++        (let ((continue (get-continue-by-name *game-info* *ottsel-warp-request*)))
++          (format 0 "OTTSEL WARP: ~A ~A~%" *ottsel-warp-request* (if continue "starting" "unknown name"))
++          (set! *ottsel-warp-request* #f)
++          (when continue
++            (set-continue! *game-info* continue)
++            (process-spawn-function process
++              (lambda ((arg0 continue-point))
++                (start 'play arg0))
++              continue))))
+       ;; suspend
+       (suspend)))
+   0)
 diff --git a/goal_src/jak1/engine/geometry/geometry.gc b/goal_src/jak1/engine/geometry/geometry.gc
 index 8d936e924..0b16128d6 100644
 --- a/goal_src/jak1/engine/geometry/geometry.gc
@@ -13444,6 +13511,24 @@ index 5a3d3eeba..5bbdcdcd9 100644
    (cond
      ((not expected-type)
       ;; we didn't get an expected type, just check the alignment and address.
+diff --git a/goal_src/jak1/kernel/gkernel-h.gc b/goal_src/jak1/kernel/gkernel-h.gc
+index a583af51b..1b2479474 100644
+--- a/goal_src/jak1/kernel/gkernel-h.gc
++++ b/goal_src/jak1/kernel/gkernel-h.gc
+@@ -55,7 +55,12 @@
+ (defconstant PROCESS_STACK_SIZE (#if PC_PORT #x6000 #x1c00))
+ 
+ ;; default size of stack to backup for a process
+-(defconstant PROCESS_STACK_SAVE_SIZE 256)
++;; Ottsel ARM64: 256 -> 512. Each GOAL call on ARM64 pushes two 16-byte slots (the return address and the
++;; synthetic continuation, see thread-suspend) where x86 pushes 8 bytes, so a deeply nested enemy state
++;; outgrows 256 bytes at suspend (Forbidden Jungle's hopper in nav-enemy-patrol measured 336) and
++;; thread-suspend's overflow check breaks. The save area is carved from the process heap at spawn;
++;; spawned processes start with 16 KB and the smallest fixed pools hold 4 KB.
++(defconstant PROCESS_STACK_SAVE_SIZE 512)
+ 
+ ;; the size of the shared heap used by dynamically sized processes
+ (#if PC_BIG_MEMORY
 diff --git a/goal_src/jak1/kernel/gkernel.gc b/goal_src/jak1/kernel/gkernel.gc
 index 73a056e45..1a13b2378 100644
 --- a/goal_src/jak1/kernel/gkernel.gc

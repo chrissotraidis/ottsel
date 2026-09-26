@@ -1171,6 +1171,16 @@ UIColor* border_color(bool selected) {
 }
 
 - (UIMenu*)buildMenu {
+  return [self buildMenuElements];
+}
+
+- (void)jumpTo:(NSString*)continueName {
+  if (!g_hooks.log_dir) return;
+  NSString* path = [@(g_hooks.log_dir) stringByAppendingString:@"ottsel-warp"];
+  [continueName writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:nil];
+}
+
+- (UIMenu*)buildMenuElements {
   __weak OttselTouchOverlay* weakSelf = self;
   NSMutableArray* render = [NSMutableArray array];
   const int scale = setting("render_scale");
@@ -1236,12 +1246,37 @@ UIColor* border_color(bool selected) {
     [weakSelf refreshMenu];
   }];
   log.state = setting("log_overlay") ? UIMenuElementStateOn : UIMenuElementStateOff;
+  // Testing: start play at a level's own continue point (the game's respawn path), with this
+  // session's progress. game/sce/libpad.cpp reads the request; main.gc starts play there.
+  static const struct {
+    NSString* title;
+    const char* name;
+  } kLevels[] = {
+      {@"Geyser Rock", "training-start"},     {@"Sandover Village", "village1-hut"},
+      {@"Forbidden Jungle", "jungle-start"},  {@"Sentinel Beach", "beach-start"},
+      {@"Misty Island", "misty-start"},       {@"Fire Canyon", "firecanyon-start"},
+      {@"Rock Village", "village2-start"},    {@"Precursor Basin", "rolling-start"},
+      {@"Boggy Swamp", "swamp-start"},        {@"Lost Precursor City", "sunken-start"},
+      {@"Mountain Pass", "ogre-start"},       {@"Volcanic Crater", "village3-start"},
+      {@"Spider Cave", "maincave-start"},     {@"Snowy Mountain", "snow-start"},
+      {@"Lava Tube", "lavatube-start"},       {@"Gol and Maia's Citadel", "citadel-start"},
+  };
+  NSMutableArray<UIMenuElement*>* levels = [NSMutableArray array];
+  for (const auto& level : kLevels) {
+    NSString* name = @(level.name);
+    [levels addObject:[self action:level.title symbol:nil handler:^{ [weakSelf jumpTo:name]; }]];
+  }
+  UIMenu* jump = [UIMenu menuWithTitle:@"Jump to Level (Testing)"
+                                 image:[UIImage systemImageNamed:@"arrow.triangle.turn.up.right.diamond"]
+                            identifier:nil
+                               options:0
+                              children:levels];
   UIMenu* diagnostics = [UIMenu menuWithTitle:@"Diagnostics"
                                         image:[UIImage systemImageNamed:@"stethoscope"]
                                    identifier:nil
                                       options:0
                                      children:@[
-                                       log,
+                                       log, jump,
                                        [self action:@"Share Logs…" symbol:@"square.and.arrow.up"
                                             handler:^{ [weakSelf shareLogs]; }],
                                      ]];

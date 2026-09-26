@@ -40,6 +40,12 @@ scripts. It does **not** contain Jak and Daxter, a disc image, extracted game fi
 
 - **The whole opening.** New Game plays the full intro cutscene through to Geyser Rock, and Load Game
   restores a save into the training course.
+- **Every hub and level loads.** Geyser Rock, Sandover, Forbidden Jungle, Sentinel Beach, Misty Island,
+  Fire Canyon, Rock Village, Precursor Basin, Boggy Swamp, Lost Precursor City, Mountain Pass, Volcanic
+  Crater, Spider Cave, Snowy Mountain, Lava Tube and the Citadel all load and run at 50–58 fps in the
+  Simulator.
+- **Play on a TV.** Connect a TV or monitor (HDMI, USB-C or AirPlay) and the game fills it at the
+  display's resolution, while the iPad becomes the controller.
 - **Full speed in the Simulator.** The title, intro and training course run at about 58 fps at the iPad
   Pro 11-inch's native 2420×1668.
 - **Touch controls that stay out of the way.** The move stick appears wherever your left thumb lands;
@@ -56,7 +62,8 @@ scripts. It does **not** contain Jak and Daxter, a disc image, extracted game fi
 |---|---|
 | Game code | All 518 GOAL code modules compiled ahead of time to ARM64 and signed into the app; strict mode on |
 | Rendering | OpenGOAL's OpenGL renderer on OpenGL ES 3.0 through ANGLE on Metal; about 58 fps at 2420×1668 in the Simulator |
-| Play | The intro plays to Geyser Rock; Load Game restores a save into the training course; Jak walks, jumps and attacks by touch |
+| Play | The intro plays to Geyser Rock; Load Game restores a save; all 16 hubs and levels load and run; Jak walks, jumps and attacks by touch |
+| TV output | HDMI, USB-C and AirPlay displays: the game full-screen at the display's resolution (1080p tested), the iPad shows the controls; plugging in or out works mid-game |
 | Touch | Floating move stick, camera stick, D-pad, Cross, Circle, Square, Triangle, L1, R1 and Start, with haptics and a per-device layout |
 | Settings | **•••** menu: Display (render resolution), FPS counter, Controls, Game Data import, Diagnostics |
 | Controllers | Apple game controllers and hardware keyboards; the touch controls hide while either is in use |
@@ -155,6 +162,24 @@ W/A/S/D to move, I/J/K/L for the camera, Space/E/F/R for Cross/Circle/Square/Tri
 and Tab for Select. With **Show** set to Auto, the touch controls hide while a controller or keyboard is
 in use and come back on your next touch.
 
+## Playing on a TV
+
+Connect a TV or monitor with an HDMI or USB-C adapter, or over AirPlay. Ottsel moves the game to it at the
+display's own resolution and leaves the touch controls and **•••** menu on the iPad, which now reads
+"Playing on your TV". A paired controller works the same way. Unplug the display and the game returns
+to the iPad without restarting.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/readme/ottsel-tv.jpg" alt="The Jak and Daxter title screen on a 1080p external display"></td>
+    <td width="50%"><img src="docs/readme/ottsel-tv-ipad.jpg" alt="The iPad showing the touch controls while the game plays on the TV"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>The TV</strong><br>The game at 1920×1080.</td>
+    <td align="center"><strong>The iPad</strong><br>The controller and menu.</td>
+  </tr>
+</table>
+
 ## Performance
 
 In the iPad Pro 11-inch (M4) Simulator, the title screen, the intro and the training course hold about
@@ -177,6 +202,8 @@ lowers the internal resolution if a device needs it, and **••• → Show FP
 
 All screenshots come from the iPad Pro 11-inch (M4) Simulator, using game data from a disc owned by the
 person running it.
+
+![Twelve levels running on Ottsel: Sentinel Beach, Misty Island, Fire Canyon, Rock Village, Precursor Basin, Boggy Swamp, Lost Precursor City, Mountain Pass, Volcanic Crater, Spider Cave, Snowy Mountain and Lava Tube](docs/readme/ottsel-levels.jpg)
 
 ## Supported game data
 
@@ -220,8 +247,9 @@ The detailed plan is in [`docs/GOAL_LOOP.md`](docs/GOAL_LOOP.md) and the running
 ## Known limitations
 
 - Nothing has run on a physical device yet; frame rate, sound, heat and battery on hardware are unknown.
-- Only the intro, Geyser Rock and the training course have been checked; later levels have not been
-  played through.
+- Every level loads and runs, but only the opening has been played through in order; tasks, bosses and
+  vehicle sections past Geyser Rock are untested.
+- A TV has been tested in the Simulator only; a real HDMI adapter and AirPlay are untested.
 - The iPhone layout has not been checked.
 - Building needs a Mac, Xcode and your own disc; there is no IPA.
 - The app you build contains files generated from your disc, so it must not be shared.
@@ -253,6 +281,21 @@ build waits until all of those files move into the pack.
 It has not been tested on one yet. The device build compiles, links and signs, and
 `scripts/install-ios-device.sh` installs it. If you try it, please file a
 [device report](https://github.com/chrissotraidis/ottsel/issues/new?template=device_report.yml).
+
+### Can I use mods, texture packs or a higher frame rate?
+
+Texture packs are the best fit: OpenGOAL reads replacement images from
+`custom_assets/jak1/texture_replacements/` while it extracts your disc, so a pack placed there before step 2
+ends up in your build (untested so far). Code mods and custom levels are modified OpenGOAL builds; because
+iOS allows no JIT, each would have to be compiled into its own Ottsel build on the Mac. The game runs at
+60 fps; OpenGOAL's experimental 100 and 150 fps modes can break Jak 1's physics, so Ottsel does not offer
+them yet.
+
+### How do I test a later level without playing up to it?
+
+**••• → Diagnostics → Jump to Level (Testing)** starts play at any hub or level, the way the game
+respawns Jak, keeping your current progress. It is for testing: it does not unlock anything, and some
+cutscenes and tasks expect the game's normal order.
 
 ## Project map
 

@@ -25,7 +25,6 @@ Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
 
 ## Log (last eight lines)
 
-2026-09-24 Metal renderer deleted (71 files); GL is the only path; intro plays to Geyser Rock on it, 0-byte fault log.
 2026-09-24 G2 prep: install-ios-device.sh (sign/provision/install/pack/launch); last GL ES error fixed; load -> Training, 0 GL errors.
 2026-09-24 Touch: SunPad-style UIKit controller replaces the GL-drawn regions; XCUITest plays to Training by touch.
 2026-09-24 ANGLE: GLES on Metal; Simulator Training 1-2 -> 23-25 fps full-res; unsigned vertex inputs fixed for Metal.
@@ -33,3 +32,4 @@ Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
 2026-09-25 Speed: merc bones in a texture (Training 25 -> 58 fps, draw 36 -> 8 ms); per-frame menu trace removed (log flood).
 2026-09-25 Floating move stick; bone textures rotate (no Merc pass breaks); trace-file polls throttled (game thread -12%); ninja build 25 -> 12 min, rebuild ~4.
 2026-09-26 Public prep: ISC LICENSE, notices, issue forms, icon; internal archive (1,031 files) out of the tree; host regressions green again.
+2026-09-26 TV output (external scene, hot-plug); Jump to Level; stack save 256->512 fixes the jungle hopper fault; all 16 levels load, 0 faults.

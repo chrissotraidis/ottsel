@@ -56,6 +56,7 @@ void render_on_ipad() {
 // that scene to this class (see OpenGOAL's patched third-party/SDL/.../SDL_uikitappdelegate.m).
 @interface OttselExternalSceneDelegate : UIResponder <UIWindowSceneDelegate>
 @property(nonatomic, strong) UIWindow* window;
+@property(nonatomic, strong) NSTimer* sizeWatch;
 @end
 
 @implementation OttselExternalSceneDelegate
@@ -76,8 +77,19 @@ void render_on_ipad() {
            modes.UTF8String);
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-  if (screen.preferredMode && screen.currentMode != screen.preferredMode) {
-    screen.currentMode = screen.preferredMode;
+  // The display's preferred mode, unless it is below 720p (the Simulator, some adapters) and a
+  // better one exists; then the largest mode up to 1080p, which a 60 Hz game fills without a 4K cost.
+  UIScreenMode* chosen = screen.preferredMode;
+  if (!chosen || chosen.size.height < 720) {
+    for (UIScreenMode* mode in screen.availableModes) {
+      if (mode.size.height <= 1080 && (!chosen || mode.size.height > chosen.size.height)) chosen = mode;
+    }
+  }
+  if (chosen && screen.currentMode != chosen) {
+    screen.currentMode = chosen;
+    lg::info("OTTSEL DISPLAY: switched to {}x{} (now {}x{})", (int)chosen.size.width,
+             (int)chosen.size.height, (int)screen.currentMode.size.width,
+             (int)screen.currentMode.size.height);
   }
 #pragma clang diagnostic pop
   UIWindow* window = [[UIWindow alloc] initWithWindowScene:windowScene];
@@ -94,10 +106,37 @@ void render_on_ipad() {
   lg::info("OTTSEL DISPLAY: external screen connected {}x{} @{}x", (int)window.bounds.size.width,
            (int)window.bounds.size.height, windowScene.screen.scale);
   render_on_tv();
+  // A TV can switch modes after connecting (720x480, then its real 1080p or 4K) without the scene's
+  // window being resized. Keep the window on the screen's current size; the view then rebuilds the
+  // render surface (OttselMetalView layoutSubviews).
+  __weak OttselExternalSceneDelegate* weakSelf = self;
+  self.sizeWatch = [NSTimer scheduledTimerWithTimeInterval:0.5
+                                                   repeats:YES
+                                                     block:^(NSTimer*) { [weakSelf followScreenSize]; }];
+}
+
+- (void)followScreenSize {
+  UIWindowScene* scene = self.window.windowScene;
+  if (!scene) return;
+  const CGRect bounds = scene.screen.bounds;
+  if (CGRectEqualToRect(self.window.frame, bounds)) return;
+  lg::info("OTTSEL DISPLAY: external screen is now {}x{}", (int)bounds.size.width,
+           (int)bounds.size.height);
+  self.window.frame = bounds;
+  [self.window layoutIfNeeded];
+}
+
+- (void)windowScene:(UIWindowScene*)windowScene
+    didUpdateCoordinateSpace:(id<UICoordinateSpace>)previousCoordinateSpace
+        interfaceOrientation:(UIInterfaceOrientation)previousInterfaceOrientation
+             traitCollection:(UITraitCollection*)previousTraitCollection {
+  [self followScreenSize];
 }
 
 - (void)sceneDidDisconnect:(UIScene*)scene {
   lg::info("OTTSEL DISPLAY: external screen disconnected");
+  [self.sizeWatch invalidate];
+  self.sizeWatch = nil;
   render_on_ipad();
   self.window = nil;
 }
