@@ -62,7 +62,8 @@ scripts. It does **not** contain Jak and Daxter, a disc image, extracted game fi
 |---|---|
 | Game code | All 518 GOAL code modules compiled ahead of time to ARM64 and signed into the app; strict mode on |
 | Rendering | OpenGOAL's OpenGL renderer on OpenGL ES 3.0 through ANGLE on Metal; about 58 fps at 2420×1668 in the Simulator |
-| Play | The intro plays to Geyser Rock; Load Game restores a save; all 16 hubs and levels load and run; Jak walks, jumps and attacks by touch |
+| Play | The intro plays to Geyser Rock; all 16 hubs and levels load and run; saving from the pause menu and loading after a relaunch resumes where you saved; Jak walks, jumps and attacks by touch |
+| Interruptions | Leaving the app (home gesture, a call, Control Center) pauses the game and its sound; you come back to the pause menu |
 | TV output | HDMI, USB-C and AirPlay displays: the game full-screen at the display's resolution (1080p tested), the iPad shows the controls; plugging in or out works mid-game |
 | Touch | Floating move stick, camera stick, D-pad, Cross, Circle, Square, Triangle, L1, R1 and Start, with haptics and a per-device layout |
 | Settings | **•••** menu: Display (render resolution), FPS counter, Controls, Game Data import, Diagnostics |

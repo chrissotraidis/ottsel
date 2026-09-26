@@ -9950,13 +9950,14 @@ index 4f7cc5e18..40de75561 100644
    if (version != GameVersion::Jak3 && version != GameVersion::JakX) {
      jak1::dma_init_globals();
 diff --git a/game/sce/libpad.cpp b/game/sce/libpad.cpp
-index 085d80d2f..9ecf16c2a 100644
+index 085d80d2f..73b217105 100644
 --- a/game/sce/libpad.cpp
 +++ b/game/sce/libpad.cpp
-@@ -1,17 +1,53 @@
+@@ -1,17 +1,57 @@
  #include "libpad.h"
  
 +#include <cstdlib>
++#include <atomic>
 +#include <cctype>
 +#include <cstdio>
 +#include <string>
@@ -10003,11 +10004,14 @@ index 085d80d2f..9ecf16c2a 100644
 +// playability path. The current fake-ISO setup does contain title STR and VIS
 +// assets, so do not attribute a title issue to their absence.
 +int g_ottsel_bg_village1_request = 0;
++// Set by the iOS shell when the app resigns active; the next pad read hands it to main.gc, which opens
++// the pause menu (see *ottsel-pause-request*).
++std::atomic<int> g_ottsel_pause_request{0};
 +
  namespace ee {
  
  int scePadPortOpen(int port, int slot, void*) {
-@@ -92,6 +128,490 @@ int scePadRead(int port, int /*slot*/, u8* rdata) {
+@@ -92,6 +132,494 @@ int scePadRead(int port, int /*slot*/, u8* rdata) {
      for (size_t i = 0; i < pad_data.value()->button_data.size(); i++) {
        cpad->button0 |= pad_data.value()->button_data.at(i) << i;
      }
@@ -10208,6 +10212,10 @@ index 085d80d2f..9ecf16c2a 100644
 +      }
 +    }
 +    // BOT26: host-side trigger for the explicit (bg 'village1) diagnostic.
++    if (g_ottsel_pause_request.exchange(0)) {
++      jak1::intern_from_c("*ottsel-pause-request*")->value = s7.offset + jak1_symbols::FIX_SYM_TRUE;
++      lg::info("OTTSEL LIFECYCLE: pause requested");
++    }
 +    // Ottsel testing: a file named ottsel-warp in the app's writable directory holds a continue-point
 +    // name ("village1-hut"); main.gc's display loop starts play there. See ••• → Diagnostics.
 +    if ((ottsel_pad_reads % 60) == 5) {
@@ -12625,10 +12633,10 @@ index a43bd6ae7..4327e159b 100644
    (process-drawable-from-entity! this (the-as entity-actor arg0))
    (initialize-skeleton this arg1 '())
 diff --git a/goal_src/jak1/engine/game/main.gc b/goal_src/jak1/engine/game/main.gc
-index ed98a8320..7bd5d4c03 100644
+index ed98a8320..c2562a6a4 100644
 --- a/goal_src/jak1/engine/game/main.gc
 +++ b/goal_src/jak1/engine/game/main.gc
-@@ -234,6 +234,12 @@
+@@ -234,6 +234,17 @@
  
  (define *master-exit* #f)
  
@@ -12638,13 +12646,25 @@ index ed98a8320..7bd5d4c03 100644
 +;; (start 'play ...) kills and respawns processes, so it must not run on the display loop's stack.
 +(define *ottsel-warp-request* (the-as string #f))
 +
++;; Ottsel: set by the iOS runtime when the app leaves the foreground (home gesture, a call, Control
++;; Center). The next frame opens the pause menu, by the same rules as pressing Start, so the player comes
++;; back to a paused game instead of live action.
++(define *ottsel-pause-request* #f)
++
  (define *progress-cheat* #f)
  
  (define *first-boot* #t) ;; PAL
-@@ -566,6 +572,16 @@
+@@ -566,6 +577,23 @@
        (with-profiler "update-pc"
          (#when PC_PORT
            (update *pc-settings*)))
++      (when *ottsel-pause-request*
++        (set! *ottsel-pause-request* #f)
++        (when (and (= *master-mode* 'game) *target* (not *progress-process*))
++          (set! *last-master-mode* *master-mode*)
++          (cond
++            ((progress-allowed?) (set-master-mode 'progress))
++            ((pause-allowed?) (set-master-mode 'pause)))))
 +      (when *ottsel-warp-request*
 +        (let ((continue (get-continue-by-name *game-info* *ottsel-warp-request*)))
 +          (format 0 "OTTSEL WARP: ~A ~A~%" *ottsel-warp-request* (if continue "starting" "unknown name"))

@@ -32,6 +32,9 @@
 #include "touch_controls.h"
 #include "external_display.h"
 
+#include <atomic>
+extern std::atomic<int> g_ottsel_pause_request;  // game/sce/libpad.cpp
+
 namespace {
 
 // The font data in font5x7.h uses 7-bit rows (LSB = leftmost, bit 6 =
@@ -663,6 +666,8 @@ bool g_render_suspended = false;
 bool on_event_watch(void*, SDL_Event* ev) {
   switch (ev->type) {
     case SDL_EVENT_WILL_ENTER_BACKGROUND:
+      // Come back to the pause menu, not live action (game/sce/libpad.cpp -> main.gc).
+      g_ottsel_pause_request = 1;
       if (!g_render_suspended) {
         g_render_suspended = true;
         ottsel_gl_suspend();
