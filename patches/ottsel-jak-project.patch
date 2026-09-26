@@ -705,6 +705,92 @@ index 4d31fae4e..b303f4a5d 100644
  
    struct TestState {
      void from_register(GsTest reg);
+diff --git a/game/graphics/opengl_renderer/EyeRenderer.cpp b/game/graphics/opengl_renderer/EyeRenderer.cpp
+index 58427f674..8b50edba7 100644
+--- a/game/graphics/opengl_renderer/EyeRenderer.cpp
++++ b/game/graphics/opengl_renderer/EyeRenderer.cpp
+@@ -485,6 +485,49 @@ void EyeRenderer::run_gpu(const std::vector<SingleEyeDraws>& draws,
+   if (draws.empty()) {
+     return;
+   }
++  // Ottsel: an eye whose sprites and textures match what its texture already holds would be redrawn
++  // to the same pixels, and each eye texture is its own render pass (costly on Metal). Redraw only the
++  // eyes that changed: blinks and glances change the sprites, so they still redraw that frame.
++  std::vector<SingleEyeDraws> changed;
++  changed.reserve(draws.size());
++  for (const auto& draw : draws) {
++    auto& out_tex = m_gpu_eye_textures[draw.tex_slot()];
++    const u64 key = draw.content_key();
++    if (key != 0 && key == out_tex.drawn_key) {
++      render_state->texture_pool->move_existing_to_vram(out_tex.gpu_tex, out_tex.tbp);
++      continue;
++    }
++    out_tex.drawn_key = key;
++    changed.push_back(draw);
++  }
++  if (changed.empty()) {
++    return;
++  }
++  run_gpu_draws(changed, render_state);
++}
++
++u64 EyeRenderer::SingleEyeDraws::content_key() const {
++  u64 h = 0xcbf29ce484222325ull;
++  const auto mix = [&h](const void* p, size_t n) {
++    const auto* b = static_cast<const u8*>(p);
++    for (size_t i = 0; i < n; i++) h = (h ^ b[i]) * 0x100000001b3ull;
++  };
++  for (const EyeDraw* d : {&iris, &pupil, &lid}) {
++    mix(&d->sprite.a, sizeof(d->sprite.a));
++    mix(&d->sprite.uv0, sizeof(d->sprite.uv0));
++    mix(d->sprite.uv1, sizeof(d->sprite.uv1));
++    mix(d->sprite.xyz0, sizeof(d->sprite.xyz0));
++    mix(d->sprite.xyz1, sizeof(d->sprite.xyz1));
++    mix(&d->scissor, sizeof(d->scissor));
++  }
++  for (u64 tex : {iris_gl_tex, pupil_gl_tex, lid_gl_tex}) mix(&tex, sizeof(tex));
++  mix(&fnv_name_hash, sizeof(fnv_name_hash));
++  mix(&using_64, sizeof(using_64));
++  return h ? h : 1;
++}
++
++void EyeRenderer::run_gpu_draws(const std::vector<SingleEyeDraws>& draws,
++                                SharedRenderState* render_state) {
+ 
+   glBindVertexArray(m_vao);
+   glBindBuffer(GL_ARRAY_BUFFER, m_gl_vertex_buffer);
+@@ -636,4 +679,4 @@ std::string EyeRenderer::ScissorInfo::print() const {
+ 
+ std::string EyeRenderer::EyeDraw::print() const {
+   return fmt::format("{}\n{}\n", sprite.print(), scissor.print());
+-}
+\ No newline at end of file
++}
+diff --git a/game/graphics/opengl_renderer/EyeRenderer.h b/game/graphics/opengl_renderer/EyeRenderer.h
+index d59ce4ff6..bed30f719 100644
+--- a/game/graphics/opengl_renderer/EyeRenderer.h
++++ b/game/graphics/opengl_renderer/EyeRenderer.h
+@@ -56,6 +56,7 @@ class EyeRenderer : public BucketRenderer {
+     FramebufferTexturePair fb;
+     u64 fnv_name_hash = 0;
+     bool lr = false;
++    u64 drawn_key = 0;  // what was last drawn into this texture (see EyeRenderer::run_gpu)
+ 
+     // note: eye texture increased to 128x128 (originally 32x32) here.
+     GpuEyeTex() : fb(128, 128, GL_UNSIGNED_INT_8_8_8_8_REV) {}
+@@ -85,8 +86,12 @@ class EyeRenderer : public BucketRenderer {
+     EyeDraw lid;
+     GpuTexture* lid_tex = nullptr;
+     u64 lid_gl_tex = 0;
++
++    // Everything that decides this eye texture's pixels.
++    u64 content_key() const;
+   };
+ 
+   std::vector<SingleEyeDraws> get_draws(DmaFollower& dma, SharedRenderState* render_state);
+   void run_gpu(const std::vector<SingleEyeDraws>& draws, SharedRenderState* render_state);
++  void run_gpu_draws(const std::vector<SingleEyeDraws>& draws, SharedRenderState* render_state);
+ };
 diff --git a/game/graphics/opengl_renderer/OpenGLRenderer.cpp b/game/graphics/opengl_renderer/OpenGLRenderer.cpp
 index cc19099d4..0989623ab 100644
 --- a/game/graphics/opengl_renderer/OpenGLRenderer.cpp
@@ -1344,7 +1430,7 @@ index 1d6dbf349..7f9511f42 100644
 \ No newline at end of file
 +}
 diff --git a/game/graphics/opengl_renderer/SkyBlendCPU.cpp b/game/graphics/opengl_renderer/SkyBlendCPU.cpp
-index c70d47d32..73ca40e3e 100644
+index c70d47d32..551316111 100644
 --- a/game/graphics/opengl_renderer/SkyBlendCPU.cpp
 +++ b/game/graphics/opengl_renderer/SkyBlendCPU.cpp
 @@ -1,4 +1,7 @@
@@ -1355,7 +1441,29 @@ index c70d47d32..73ca40e3e 100644
  
  #include "common/util/os.h"
  #include "common/util/simd_util.h"
-@@ -49,6 +52,10 @@ void blend_sky_initial_fast(u8 intensity, u8* out, const u8* in, u32 size) {
+@@ -12,12 +15,19 @@ SkyBlendCPU::SkyBlendCPU() {
+     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, m_sizes[i], m_sizes[i], 0, GL_RGBA,
+                  GL_UNSIGNED_INT_8_8_8_8_REV, 0);
+     m_texture_data[i].resize(4 * m_sizes[i] * m_sizes[i]);
++    m_ring[i][0] = m_textures[i].gl;
++    glGenTextures(kUploadRing - 1, &m_ring[i][1]);
++    for (int r = 1; r < kUploadRing; r++) {
++      glBindTexture(GL_TEXTURE_2D, m_ring[i][r]);
++      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, m_sizes[i], m_sizes[i], 0, GL_RGBA,
++                   GL_UNSIGNED_INT_8_8_8_8_REV, 0);
++    }
+   }
+ }
+ 
+ SkyBlendCPU::~SkyBlendCPU() {
+-  for (auto& tex : m_textures) {
+-    glDeleteTextures(1, &tex.gl);
++  for (auto& ring : m_ring) {
++    glDeleteTextures(kUploadRing, ring);
+   }
+ }
+ 
+@@ -49,6 +59,10 @@ void blend_sky_initial_fast(u8 intensity, u8* out, const u8* in, u32 size) {
        _mm_storel_epi64((__m128i*)(out + (i * 8)), result);
      }
    }
@@ -1366,7 +1474,7 @@ index c70d47d32..73ca40e3e 100644
  #endif
  }
  
-@@ -88,13 +95,32 @@ void blend_sky_fast(u8 intensity, u8* out, const u8* in, u32 size) {
+@@ -88,13 +102,32 @@ void blend_sky_fast(u8 intensity, u8* out, const u8* in, u32 size) {
        _mm_storel_epi64((__m128i*)(out + (i * 8)), out_val);
      }
    }
@@ -1399,7 +1507,7 @@ index c70d47d32..73ca40e3e 100644
  
    while (dma.current_tag().qwc == 6) {
      // assuming that the vif and gif-tag is correct
-@@ -132,9 +158,13 @@ SkyBlendStats SkyBlendCPU::do_sky_blends(DmaFollower& dma,
+@@ -132,9 +165,13 @@ SkyBlendStats SkyBlendCPU::do_sky_blends(DmaFollower& dma,
        ASSERT(false);  // bad data
      }
  
@@ -1416,7 +1524,7 @@ index c70d47d32..73ca40e3e 100644
  
      // slow version
      /*
-@@ -152,13 +182,13 @@ SkyBlendStats SkyBlendCPU::do_sky_blends(DmaFollower& dma,
+@@ -152,13 +189,13 @@ SkyBlendStats SkyBlendCPU::do_sky_blends(DmaFollower& dma,
        m_texture_data[buffer_idx][i] += val;
      }
       */
@@ -1434,7 +1542,7 @@ index c70d47d32..73ca40e3e 100644
                           m_texture_data[buffer_idx].size());
          }
        }
-@@ -176,13 +206,47 @@ SkyBlendStats SkyBlendCPU::do_sky_blends(DmaFollower& dma,
+@@ -176,13 +213,55 @@ SkyBlendStats SkyBlendCPU::do_sky_blends(DmaFollower& dma,
            stats.cloud_blends++;
          }
        }
@@ -1444,23 +1552,31 @@ index c70d47d32..73ca40e3e 100644
 +      dirty[buffer_idx] = true;
 +    }
 +  }
- 
--      render_state->texture_pool->move_existing_to_vram(m_textures[buffer_idx].tex,
--                                                        m_textures[buffer_idx].tbp);
++
 +  for (int buffer_idx = 0; buffer_idx < 2; ++buffer_idx) {
 +    if (!dirty[buffer_idx]) {
 +      continue;
-     }
-+    glBindTexture(GL_TEXTURE_2D, m_textures[buffer_idx].gl);
++    }
++    const int r = m_ring_next[buffer_idx];
++    m_ring_next[buffer_idx] = (r + 1) % kUploadRing;
++    const GLuint target = m_ring[buffer_idx][r];
++    glBindTexture(GL_TEXTURE_2D, target);
 +    // The texture storage is allocated once in the constructor. Updating the
 +    // same-sized image in place avoids Apple OpenGL/Metal's per-frame
 +    // glTexImage2D reallocation path, which can submit stale driver state.
 +    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, m_sizes[buffer_idx], m_sizes[buffer_idx], GL_RGBA,
 +                    GL_UNSIGNED_INT_8_8_8_8_REV, m_texture_data[buffer_idx].data());
++    if (m_textures[buffer_idx].tex) {
++      render_state->texture_pool->update_gl_texture(m_textures[buffer_idx].tex, m_sizes[buffer_idx],
++                                                    m_sizes[buffer_idx], target);
++    }
++    m_textures[buffer_idx].gl = target;
 +    render_state->texture_pool->move_existing_to_vram(m_textures[buffer_idx].tex,
 +                                                      m_textures[buffer_idx].tbp);
 +  }
-+
+ 
+-      render_state->texture_pool->move_existing_to_vram(m_textures[buffer_idx].tex,
+-                                                        m_textures[buffer_idx].tbp);
 +  const bool had_blend = stats.sky_draws || stats.sky_blends || stats.cloud_draws || stats.cloud_blends;
 +  if (ottsel_trace_active && had_blend) {
 +    for (int buffer_idx = 0; buffer_idx < 2; ++buffer_idx) {
@@ -1482,12 +1598,12 @@ index c70d47d32..73ca40e3e 100644
 +               min_value[0], min_value[1], min_value[2], min_value[3],
 +               sum[0] / count, sum[1] / count, sum[2] / count, sum[3] / count,
 +               max_value[0], max_value[1], max_value[2], max_value[3]);
-+    }
+     }
 +    --ottsel_trace_calls;
    }
  
    return stats;
-@@ -205,4 +269,4 @@ void SkyBlendCPU::init_textures(TexturePool& tex_pool, GameVersion version) {
+@@ -205,4 +284,4 @@ void SkyBlendCPU::init_textures(TexturePool& tex_pool, GameVersion version) {
      m_textures[i].tex = tex_pool.give_texture_and_load_to_vram(in, tbp);
      m_textures[i].tbp = tbp;
    }
@@ -1495,7 +1611,7 @@ index c70d47d32..73ca40e3e 100644
 \ No newline at end of file
 +}
 diff --git a/game/graphics/opengl_renderer/SkyBlendCPU.h b/game/graphics/opengl_renderer/SkyBlendCPU.h
-index e4e0d8bef..f78311950 100644
+index e4e0d8bef..c772a60a9 100644
 --- a/game/graphics/opengl_renderer/SkyBlendCPU.h
 +++ b/game/graphics/opengl_renderer/SkyBlendCPU.h
 @@ -6,6 +6,9 @@
@@ -1508,12 +1624,18 @@ index e4e0d8bef..f78311950 100644
  class SkyBlendCPU {
   public:
    SkyBlendCPU();
-@@ -25,4 +28,4 @@ class SkyBlendCPU {
+@@ -25,4 +28,10 @@ class SkyBlendCPU {
      u32 tbp;
      GpuTexture* tex;
    } m_textures[2];
 -};
 \ No newline at end of file
++
++  // Each upload goes to the next texture in a ring, never one the GPU may still be reading this frame:
++  // on Metal (ANGLE) rewriting an in-use texture costs a staging blit that ends the render pass.
++  static constexpr int kUploadRing = 8;
++  GLuint m_ring[2][kUploadRing] = {};
++  int m_ring_next[2] = {0, 0};
 +};
 diff --git a/game/graphics/opengl_renderer/SkyRenderer.cpp b/game/graphics/opengl_renderer/SkyRenderer.cpp
 index 556410cd4..2e53b1d51 100644
@@ -1623,8 +1745,49 @@ index 556410cd4..2e53b1d51 100644
  }
  
  void SkyRenderer::draw_debug_window() {
+diff --git a/game/graphics/opengl_renderer/background/Shrub.cpp b/game/graphics/opengl_renderer/background/Shrub.cpp
+index a4c7a4517..daa0949c0 100644
+--- a/game/graphics/opengl_renderer/background/Shrub.cpp
++++ b/game/graphics/opengl_renderer/background/Shrub.cpp
+@@ -157,6 +157,8 @@ void Shrub::update_load(const LevelData* loader_data) {
+                  GL_UNSIGNED_INT_8_8_8_8, nullptr);
+     glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+     glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++    ottsel_tod_ring_create(m_trees[l_tree].tod_ring, m_trees[l_tree].time_of_day_texture,
++                           TIME_OF_DAY_COLOR_COUNT);
+ 
+     glBindVertexArray(0);
+   }
+@@ -211,6 +213,7 @@ bool Shrub::setup_for_level(const std::string& level, SharedRenderState* render_
+ 
+ void Shrub::discard_tree_cache() {
+   for (auto& tree : m_trees) {
++    ottsel_tod_ring_release(tree.tod_ring, tree.time_of_day_texture);
+     glBindTexture(GL_TEXTURE_1D, tree.time_of_day_texture);
+     glDeleteTextures(1, &tree.time_of_day_texture);
+     glDeleteBuffers(1, &tree.index_buffer);
+@@ -290,6 +293,7 @@ void Shrub::render_tree(int idx,
+ 
+   Timer setup_timer;
+   glActiveTexture(GL_TEXTURE10);
++  tree.time_of_day_texture = ottsel_tod_ring_advance(tree.tod_ring, tree.time_of_day_texture);
+   glBindTexture(GL_TEXTURE_1D, tree.time_of_day_texture);
+   glTexSubImage1D(GL_TEXTURE_1D, 0, 0, tree.colors->color_count, GL_RGBA,
+                   GL_UNSIGNED_INT_8_8_8_8_REV, m_color_result.data());
+diff --git a/game/graphics/opengl_renderer/background/Shrub.h b/game/graphics/opengl_renderer/background/Shrub.h
+index e0a7950f4..37b2ea4f6 100644
+--- a/game/graphics/opengl_renderer/background/Shrub.h
++++ b/game/graphics/opengl_renderer/background/Shrub.h
+@@ -35,6 +35,7 @@ class Shrub : public BucketRenderer {
+     GLuint index_buffer;
+     GLuint single_draw_index_buffer;
+     GLuint time_of_day_texture;
++    OttselTodRing tod_ring;
+     GLuint vao;
+     u32 vert_count;
+     const std::vector<tfrag3::ShrubDraw>* draws = nullptr;
 diff --git a/game/graphics/opengl_renderer/background/TFragment.cpp b/game/graphics/opengl_renderer/background/TFragment.cpp
-index 78b6c4772..e9b91773b 100644
+index 78b6c4772..94fafddf9 100644
 --- a/game/graphics/opengl_renderer/background/TFragment.cpp
 +++ b/game/graphics/opengl_renderer/background/TFragment.cpp
 @@ -1,5 +1,10 @@
@@ -1736,7 +1899,16 @@ index 78b6c4772..e9b91773b 100644
    }
  
    while (dma.current_tag_offset() != render_state->next_bucket) {
-@@ -418,10 +470,36 @@ void TFragment::render_tree(int geom,
+@@ -342,6 +394,8 @@ void TFragment::update_load(const std::vector<tfrag3::TFragmentTreeKind>& tree_k
+                      GL_UNSIGNED_INT_8_8_8_8, nullptr);
+         glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+         glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++        ottsel_tod_ring_create(tree_cache.tod_ring, tree_cache.time_of_day_texture,
++                               TIME_OF_DAY_COLOR_COUNT);
+         glBindVertexArray(0);
+       }
+     }
+@@ -418,11 +472,38 @@ void TFragment::render_tree(int geom,
  
    ASSERT(tree.kind != tfrag3::TFragmentTreeKind::INVALID);
  
@@ -1771,9 +1943,11 @@ index 78b6c4772..e9b91773b 100644
 +        render_state->fog_intensity);
 +  }
    glActiveTexture(GL_TEXTURE10);
++  tree.time_of_day_texture = ottsel_tod_ring_advance(tree.tod_ring, tree.time_of_day_texture);
    glBindTexture(GL_TEXTURE_1D, tree.time_of_day_texture);
    glTexSubImage1D(GL_TEXTURE_1D, 0, 0, tree.colors->color_count, GL_RGBA,
-@@ -453,7 +531,17 @@ void TFragment::render_tree(int geom,
+                   GL_UNSIGNED_INT_8_8_8_8_REV, m_color_result.data());
+@@ -453,7 +534,17 @@ void TFragment::render_tree(int geom,
          m_cache.multidraw_index_offset_buffer.data(), *tree.draws, m_cache.vis_temp);
    }
  
@@ -1791,7 +1965,7 @@ index 78b6c4772..e9b91773b 100644
  
    for (size_t draw_idx = 0; draw_idx < tree.draws->size(); draw_idx++) {
      const auto& draw = tree.draws->operator[](draw_idx);
-@@ -461,10 +549,27 @@ void TFragment::render_tree(int geom,
+@@ -461,10 +552,27 @@ void TFragment::render_tree(int geom,
      const auto& singledraw_indices = m_cache.draw_idx_temp[draw_idx];
  
      if (render_state->no_multidraw) {
@@ -1819,7 +1993,7 @@ index 78b6c4772..e9b91773b 100644
        if (multidraw_indices.second == 0) {
          continue;
        }
-@@ -473,8 +578,17 @@ void TFragment::render_tree(int geom,
+@@ -473,8 +581,17 @@ void TFragment::render_tree(int geom,
      ASSERT(m_textures);
      s32 tex_idx = draw.tree_tex_id;
      if (tex_idx >= 0) {
@@ -1837,11 +2011,27 @@ index 78b6c4772..e9b91773b 100644
        glBindTexture(GL_TEXTURE_2D, m_anim_slot_array->at(-(tex_idx + 1)));
      }
      auto double_draw = setup_tfrag_shader(render_state, draw.mode, ShaderId::TFRAG3);
+@@ -566,6 +683,7 @@ void TFragment::discard_tree_cache() {
+   for (int geom = 0; geom < GEOM_MAX; ++geom) {
+     for (auto& tree : m_cached_trees[geom]) {
+       if (tree.kind != tfrag3::TFragmentTreeKind::INVALID) {
++        ottsel_tod_ring_release(tree.tod_ring, tree.time_of_day_texture);
+         glBindTexture(GL_TEXTURE_1D, tree.time_of_day_texture);
+         glDeleteTextures(1, &tree.time_of_day_texture);
+         glDeleteBuffers(1, &tree.single_draw_index_buffer);
 diff --git a/game/graphics/opengl_renderer/background/TFragment.h b/game/graphics/opengl_renderer/background/TFragment.h
-index 1f1753cdf..9c0a61e7d 100644
+index 1f1753cdf..1db2c63e8 100644
 --- a/game/graphics/opengl_renderer/background/TFragment.h
 +++ b/game/graphics/opengl_renderer/background/TFragment.h
-@@ -177,4 +177,11 @@ class TFragment : public BucketRenderer {
+@@ -119,6 +119,7 @@ class TFragment : public BucketRenderer {
+     GLuint index_buffer = -1;
+     GLuint single_draw_index_buffer = -1;
+     GLuint time_of_day_texture = -1;
++    OttselTodRing tod_ring;
+     GLuint vao = -1;
+     u32 vert_count = 0;
+     const std::vector<tfrag3::StripDraw>* draws = nullptr;
+@@ -177,4 +178,11 @@ class TFragment : public BucketRenderer {
  
    bool m_has_level = false;
    const std::vector<GLuint>* m_anim_slot_array;
@@ -1853,11 +2043,59 @@ index 1f1753cdf..9c0a61e7d 100644
 +  u32 m_ottsel_trace_poll_frames = 0;
 +  bool m_ottsel_trace_active = false;
  };
+diff --git a/game/graphics/opengl_renderer/background/Tie3.cpp b/game/graphics/opengl_renderer/background/Tie3.cpp
+index b48436832..61fdd5482 100644
+--- a/game/graphics/opengl_renderer/background/Tie3.cpp
++++ b/game/graphics/opengl_renderer/background/Tie3.cpp
+@@ -193,6 +193,8 @@ void Tie3::load_from_fr3_data(const LevelData* loader_data) {
+                    GL_UNSIGNED_INT_8_8_8_8, nullptr);
+       glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+       glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++      ottsel_tod_ring_create(lod_tree[l_tree].tod_ring, lod_tree[l_tree].time_of_day_texture,
++                             TIME_OF_DAY_COLOR_COUNT);
+ 
+       glBindVertexArray(0);
+ 
+@@ -262,6 +264,7 @@ bool Tie3::try_loading_level(const std::string& level, SharedRenderState* render
+ void Tie3::discard_tree_cache() {
+   for (int geo = 0; geo < 4; ++geo) {
+     for (auto& tree : m_trees[geo]) {
++      ottsel_tod_ring_release(tree.tod_ring, tree.time_of_day_texture);
+       glBindTexture(GL_TEXTURE_1D, tree.time_of_day_texture);
+       glDeleteTextures(1, &tree.time_of_day_texture);
+       // glDeleteBuffers(1, &tree.index_buffer);
+@@ -436,6 +439,7 @@ void Tie3::setup_tree(int idx,
+   interp_time_of_day(settings.camera.itimes, *tree.colors, m_color_result.data());
+ 
+   glActiveTexture(GL_TEXTURE10);
++  tree.time_of_day_texture = ottsel_tod_ring_advance(tree.tod_ring, tree.time_of_day_texture);
+   glBindTexture(GL_TEXTURE_1D, tree.time_of_day_texture);
+   glTexSubImage1D(GL_TEXTURE_1D, 0, 0, tree.colors->color_count, GL_RGBA,
+                   GL_UNSIGNED_INT_8_8_8_8_REV, m_color_result.data());
+diff --git a/game/graphics/opengl_renderer/background/Tie3.h b/game/graphics/opengl_renderer/background/Tie3.h
+index 37082c55d..61d261a36 100644
+--- a/game/graphics/opengl_renderer/background/Tie3.h
++++ b/game/graphics/opengl_renderer/background/Tie3.h
+@@ -111,6 +111,7 @@ class Tie3 : public BucketRenderer {
+     GLuint index_buffer;
+     GLuint single_draw_index_buffer;
+     GLuint time_of_day_texture;
++    OttselTodRing tod_ring;
+     GLuint vao;
+     std::array<u32, tfrag3::kNumTieCategories + 1> category_draw_indices;
+     const std::vector<tfrag3::StripDraw>* draws = nullptr;
+@@ -198,4 +199,4 @@ class Tie3WithEnvmapJak1 : public Tie3 {
+ 
+  private:
+   bool m_enable_envmap = true;
+-};
+\ No newline at end of file
++};
 diff --git a/game/graphics/opengl_renderer/background/background_common.h b/game/graphics/opengl_renderer/background/background_common.h
-index 6993ae6ac..1ff30390f 100644
+index 6993ae6ac..ec878700b 100644
 --- a/game/graphics/opengl_renderer/background/background_common.h
 +++ b/game/graphics/opengl_renderer/background/background_common.h
-@@ -1,9 +1,15 @@
+@@ -1,9 +1,55 @@
  #pragma once
  
 +#include <cstddef>
@@ -1868,6 +2106,46 @@ index 6993ae6ac..1ff30390f 100644
  
 +constexpr bool tfrag_draw_range_fits(size_t first, size_t count, size_t capacity) {
 +  return first <= capacity && count <= capacity - first;
++}
++
++// Ottsel: a tree's time-of-day palette is rewritten every frame. On Metal (ANGLE) rewriting a texture
++// the frame's earlier draws still read costs a staging blit that ends the render pass, so each upload
++// goes to the next of a few palettes instead. The tree's time_of_day_texture is always the current one.
++struct OttselTodRing {
++  static constexpr int kSize = 3;
++  GLuint tex[kSize] = {};
++  int next = 0;
++};
++
++// After the tree created and allocated `first` (bound on the active unit): make the spares alike.
++inline void ottsel_tod_ring_create(OttselTodRing& ring, GLuint first, int color_count) {
++  ring.tex[0] = first;
++  ring.next = 0;
++  glGenTextures(OttselTodRing::kSize - 1, &ring.tex[1]);
++  for (int i = 1; i < OttselTodRing::kSize; i++) {
++    glBindTexture(GL_TEXTURE_1D, ring.tex[i]);
++    glTexImage1D(GL_TEXTURE_1D, 0, GL_RGBA, color_count, 0, GL_RGBA, GL_UNSIGNED_INT_8_8_8_8,
++                 nullptr);
++    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_1D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++  }
++  glBindTexture(GL_TEXTURE_1D, first);
++}
++
++// Before a palette upload: the texture to upload into and draw with this time.
++inline GLuint ottsel_tod_ring_advance(OttselTodRing& ring, GLuint current) {
++  if (!ring.tex[1]) return current;
++  ring.next = (ring.next + 1) % OttselTodRing::kSize;
++  return ring.tex[ring.next];
++}
++
++// Before the tree deletes `current`: point it at the ring's first texture and delete the spares.
++inline void ottsel_tod_ring_release(OttselTodRing& ring, GLuint& current) {
++  if (ring.tex[1]) {
++    current = ring.tex[0];
++    glDeleteTextures(OttselTodRing::kSize - 1, &ring.tex[1]);
++  }
++  ring = {};
 +}
 +
  struct GoalBackgroundCameraData {
@@ -3211,10 +3489,10 @@ index a128a8617..c4513d54f 100644
  };
 diff --git a/game/graphics/ottsel_gles.cpp b/game/graphics/ottsel_gles.cpp
 new file mode 100644
-index 000000000..ade925ada
+index 000000000..978536a3e
 --- /dev/null
 +++ b/game/graphics/ottsel_gles.cpp
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,121 @@
 +// Ottsel iOS: ES 3.0 glue for OpenGOAL's OpenGL renderer (see ottsel_gles_compat.h).
 +#ifdef OTTSEL_GLES
 +#include "game/graphics/ottsel_gles_compat.h"
@@ -3280,6 +3558,16 @@ index 000000000..ade925ada
 +void ottsel_gles_tex_sub_image_1d(GLint level, GLint x, GLsizei w, GLenum fmt, GLenum type,
 +                                  const void* data) {
 +  const auto* bytes = static_cast<const unsigned char*>(data);
++  // Whole rows in one call: each call costs ANGLE a staging buffer, and a time-of-day palette
++  // (8192 texels) is eight rows.
++  if (x % OTTSEL_GLES_1D_ROW == 0 && w >= OTTSEL_GLES_1D_ROW) {
++    const GLsizei rows = w / OTTSEL_GLES_1D_ROW;
++    glad_glTexSubImage2D(GL_TEXTURE_2D, level, 0, x / OTTSEL_GLES_1D_ROW, OTTSEL_GLES_1D_ROW, rows,
++                         fmt, type, bytes);
++    bytes += rows * OTTSEL_GLES_1D_ROW * 4;
++    x += rows * OTTSEL_GLES_1D_ROW;
++    w -= rows * OTTSEL_GLES_1D_ROW;
++  }
 +  while (w > 0) {
 +    const GLint col = x % OTTSEL_GLES_1D_ROW;
 +    const GLsizei n = w < OTTSEL_GLES_1D_ROW - col ? w : OTTSEL_GLES_1D_ROW - col;
