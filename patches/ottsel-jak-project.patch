@@ -1793,7 +1793,7 @@ index 556410cd4..2e53b1d51 100644
  
  void SkyRenderer::draw_debug_window() {
 diff --git a/game/graphics/opengl_renderer/background/Shrub.cpp b/game/graphics/opengl_renderer/background/Shrub.cpp
-index a4c7a4517..daa0949c0 100644
+index a4c7a4517..31ed48ca0 100644
 --- a/game/graphics/opengl_renderer/background/Shrub.cpp
 +++ b/game/graphics/opengl_renderer/background/Shrub.cpp
 @@ -157,6 +157,8 @@ void Shrub::update_load(const LevelData* loader_data) {
@@ -1813,14 +1813,31 @@ index a4c7a4517..daa0949c0 100644
      glBindTexture(GL_TEXTURE_1D, tree.time_of_day_texture);
      glDeleteTextures(1, &tree.time_of_day_texture);
      glDeleteBuffers(1, &tree.index_buffer);
-@@ -290,6 +293,7 @@ void Shrub::render_tree(int idx,
+@@ -284,15 +287,18 @@ void Shrub::render_tree(int idx,
+     m_color_result.resize(tree.colors->color_count);
+   }
  
+-  Timer interp_timer;
+-  interp_time_of_day(settings.camera.itimes, *tree.colors, m_color_result.data());
+-  tree.perf.tod_time.add(interp_timer.getSeconds());
+-
    Timer setup_timer;
    glActiveTexture(GL_TEXTURE10);
-+  tree.time_of_day_texture = ottsel_tod_ring_advance(tree.tod_ring, tree.time_of_day_texture);
++  if (!ottsel_tod_ring_unchanged(tree.tod_ring, settings.camera.itimes)) {
++    Timer interp_timer;
++    interp_time_of_day(settings.camera.itimes, *tree.colors, m_color_result.data());
++    tree.perf.tod_time.add(interp_timer.getSeconds());
++    tree.time_of_day_texture = ottsel_tod_ring_advance(tree.tod_ring, tree.time_of_day_texture);
++    glBindTexture(GL_TEXTURE_1D, tree.time_of_day_texture);
++    glTexSubImage1D(GL_TEXTURE_1D, 0, 0, tree.colors->color_count, GL_RGBA,
++                    GL_UNSIGNED_INT_8_8_8_8_REV, m_color_result.data());
++  }
    glBindTexture(GL_TEXTURE_1D, tree.time_of_day_texture);
-   glTexSubImage1D(GL_TEXTURE_1D, 0, 0, tree.colors->color_count, GL_RGBA,
-                   GL_UNSIGNED_INT_8_8_8_8_REV, m_color_result.data());
+-  glTexSubImage1D(GL_TEXTURE_1D, 0, 0, tree.colors->color_count, GL_RGBA,
+-                  GL_UNSIGNED_INT_8_8_8_8_REV, m_color_result.data());
+ 
+   first_tfrag_draw_setup(settings.camera, render_state, ShaderId::SHRUB);
+ 
 diff --git a/game/graphics/opengl_renderer/background/Shrub.h b/game/graphics/opengl_renderer/background/Shrub.h
 index e0a7950f4..37b2ea4f6 100644
 --- a/game/graphics/opengl_renderer/background/Shrub.h
@@ -1834,7 +1851,7 @@ index e0a7950f4..37b2ea4f6 100644
      u32 vert_count;
      const std::vector<tfrag3::ShrubDraw>* draws = nullptr;
 diff --git a/game/graphics/opengl_renderer/background/TFragment.cpp b/game/graphics/opengl_renderer/background/TFragment.cpp
-index 78b6c4772..94fafddf9 100644
+index 78b6c4772..efd571720 100644
 --- a/game/graphics/opengl_renderer/background/TFragment.cpp
 +++ b/game/graphics/opengl_renderer/background/TFragment.cpp
 @@ -1,5 +1,10 @@
@@ -1955,7 +1972,7 @@ index 78b6c4772..94fafddf9 100644
          glBindVertexArray(0);
        }
      }
-@@ -418,11 +472,38 @@ void TFragment::render_tree(int geom,
+@@ -418,14 +472,50 @@ void TFragment::render_tree(int geom,
  
    ASSERT(tree.kind != tfrag3::TFragmentTreeKind::INVALID);
  
@@ -1966,35 +1983,51 @@ index 78b6c4772..94fafddf9 100644
    if (m_color_result.size() < tree.colors->color_count) {
      m_color_result.resize(tree.colors->color_count);
    }
-   interp_time_of_day(settings.camera.itimes, *tree.colors, m_color_result.data());
-+  if (m_ottsel_trace_active && tree.colors->color_count) {
-+    math::Vector<u8, 4> low{255, 255, 255, 255};
-+    math::Vector<u8, 4> high{0, 0, 0, 0};
-+    u64 sum[4] = {};
-+    for (u32 color = 0; color < tree.colors->color_count; ++color) {
-+      for (int channel = 0; channel < 4; ++channel) {
-+        const auto value = m_color_result[color][channel];
-+        low[channel] = std::min(low[channel], value);
-+        high[channel] = std::max(high[channel], value);
-+        sum[channel] += value;
-+      }
-+    }
-+    lg::info(
-+        "OTTSEL TFRAG COLOR: frame={} tree={} kind={} colors={} rgba-min=({},{},{},{}) "
-+        "rgba-avg=({},{},{},{}) rgba-max=({},{},{},{}) fog-rgba=({},{},{},{})",
-+        m_ottsel_trace_frame, settings.tree_idx, (int)tree.kind, tree.colors->color_count, low[0],
-+        low[1], low[2], low[3], sum[0] / tree.colors->color_count,
-+        sum[1] / tree.colors->color_count, sum[2] / tree.colors->color_count,
-+        sum[3] / tree.colors->color_count, high[0], high[1], high[2], high[3],
-+        render_state->fog_color[0], render_state->fog_color[1], render_state->fog_color[2],
-+        render_state->fog_intensity);
-+  }
+-  interp_time_of_day(settings.camera.itimes, *tree.colors, m_color_result.data());
++  // Same blend weights as the last upload: same palette (the trace and debug freeze always upload).
++  const bool ottsel_trace_or_frozen = m_ottsel_trace_active || tree.freeze_itimes;
++  const bool ottsel_reuse_palette =
++      !ottsel_trace_or_frozen && ottsel_tod_ring_unchanged(tree.tod_ring, settings.camera.itimes);
++  if (ottsel_trace_or_frozen) tree.tod_ring.has_itimes = false;
    glActiveTexture(GL_TEXTURE10);
-+  tree.time_of_day_texture = ottsel_tod_ring_advance(tree.tod_ring, tree.time_of_day_texture);
-   glBindTexture(GL_TEXTURE_1D, tree.time_of_day_texture);
-   glTexSubImage1D(GL_TEXTURE_1D, 0, 0, tree.colors->color_count, GL_RGBA,
-                   GL_UNSIGNED_INT_8_8_8_8_REV, m_color_result.data());
-@@ -453,7 +534,17 @@ void TFragment::render_tree(int geom,
+-  glBindTexture(GL_TEXTURE_1D, tree.time_of_day_texture);
+-  glTexSubImage1D(GL_TEXTURE_1D, 0, 0, tree.colors->color_count, GL_RGBA,
+-                  GL_UNSIGNED_INT_8_8_8_8_REV, m_color_result.data());
++  if (ottsel_reuse_palette) {
++    glBindTexture(GL_TEXTURE_1D, tree.time_of_day_texture);
++  } else {
++    interp_time_of_day(settings.camera.itimes, *tree.colors, m_color_result.data());
++    if (m_ottsel_trace_active && tree.colors->color_count) {
++      math::Vector<u8, 4> low{255, 255, 255, 255};
++      math::Vector<u8, 4> high{0, 0, 0, 0};
++      u64 sum[4] = {};
++      for (u32 color = 0; color < tree.colors->color_count; ++color) {
++        for (int channel = 0; channel < 4; ++channel) {
++          const auto value = m_color_result[color][channel];
++          low[channel] = std::min(low[channel], value);
++          high[channel] = std::max(high[channel], value);
++          sum[channel] += value;
++        }
++      }
++      lg::info(
++          "OTTSEL TFRAG COLOR: frame={} tree={} kind={} colors={} rgba-min=({},{},{},{}) "
++          "rgba-avg=({},{},{},{}) rgba-max=({},{},{},{}) fog-rgba=({},{},{},{})",
++          m_ottsel_trace_frame, settings.tree_idx, (int)tree.kind, tree.colors->color_count, low[0],
++          low[1], low[2], low[3], sum[0] / tree.colors->color_count,
++          sum[1] / tree.colors->color_count, sum[2] / tree.colors->color_count,
++          sum[3] / tree.colors->color_count, high[0], high[1], high[2], high[3],
++          render_state->fog_color[0], render_state->fog_color[1], render_state->fog_color[2],
++          render_state->fog_intensity);
++    }
++    tree.time_of_day_texture = ottsel_tod_ring_advance(tree.tod_ring, tree.time_of_day_texture);
++    glBindTexture(GL_TEXTURE_1D, tree.time_of_day_texture);
++    glTexSubImage1D(GL_TEXTURE_1D, 0, 0, tree.colors->color_count, GL_RGBA,
++                    GL_UNSIGNED_INT_8_8_8_8_REV, m_color_result.data());
++  }
+ 
+   first_tfrag_draw_setup(settings.camera, render_state, ShaderId::TFRAG3);
+ 
+@@ -453,7 +543,17 @@ void TFragment::render_tree(int geom,
          m_cache.multidraw_index_offset_buffer.data(), *tree.draws, m_cache.vis_temp);
    }
  
@@ -2012,7 +2045,7 @@ index 78b6c4772..94fafddf9 100644
  
    for (size_t draw_idx = 0; draw_idx < tree.draws->size(); draw_idx++) {
      const auto& draw = tree.draws->operator[](draw_idx);
-@@ -461,10 +552,27 @@ void TFragment::render_tree(int geom,
+@@ -461,10 +561,27 @@ void TFragment::render_tree(int geom,
      const auto& singledraw_indices = m_cache.draw_idx_temp[draw_idx];
  
      if (render_state->no_multidraw) {
@@ -2040,7 +2073,7 @@ index 78b6c4772..94fafddf9 100644
        if (multidraw_indices.second == 0) {
          continue;
        }
-@@ -473,8 +581,17 @@ void TFragment::render_tree(int geom,
+@@ -473,8 +590,17 @@ void TFragment::render_tree(int geom,
      ASSERT(m_textures);
      s32 tex_idx = draw.tree_tex_id;
      if (tex_idx >= 0) {
@@ -2058,7 +2091,7 @@ index 78b6c4772..94fafddf9 100644
        glBindTexture(GL_TEXTURE_2D, m_anim_slot_array->at(-(tex_idx + 1)));
      }
      auto double_draw = setup_tfrag_shader(render_state, draw.mode, ShaderId::TFRAG3);
-@@ -566,6 +683,7 @@ void TFragment::discard_tree_cache() {
+@@ -566,6 +692,7 @@ void TFragment::discard_tree_cache() {
    for (int geom = 0; geom < GEOM_MAX; ++geom) {
      for (auto& tree : m_cached_trees[geom]) {
        if (tree.kind != tfrag3::TFragmentTreeKind::INVALID) {
@@ -2091,7 +2124,7 @@ index 1f1753cdf..1db2c63e8 100644
 +  bool m_ottsel_trace_active = false;
  };
 diff --git a/game/graphics/opengl_renderer/background/Tie3.cpp b/game/graphics/opengl_renderer/background/Tie3.cpp
-index b48436832..61fdd5482 100644
+index b48436832..7ca9e1a44 100644
 --- a/game/graphics/opengl_renderer/background/Tie3.cpp
 +++ b/game/graphics/opengl_renderer/background/Tie3.cpp
 @@ -193,6 +193,8 @@ void Tie3::load_from_fr3_data(const LevelData* loader_data) {
@@ -2111,14 +2144,26 @@ index b48436832..61fdd5482 100644
        glBindTexture(GL_TEXTURE_1D, tree.time_of_day_texture);
        glDeleteTextures(1, &tree.time_of_day_texture);
        // glDeleteBuffers(1, &tree.index_buffer);
-@@ -436,6 +439,7 @@ void Tie3::setup_tree(int idx,
-   interp_time_of_day(settings.camera.itimes, *tree.colors, m_color_result.data());
+@@ -433,12 +436,15 @@ void Tie3::setup_tree(int idx,
+     m_color_result.resize(tree.colors->color_count);
+   }
  
+-  interp_time_of_day(settings.camera.itimes, *tree.colors, m_color_result.data());
+-
    glActiveTexture(GL_TEXTURE10);
-+  tree.time_of_day_texture = ottsel_tod_ring_advance(tree.tod_ring, tree.time_of_day_texture);
++  if (!ottsel_tod_ring_unchanged(tree.tod_ring, settings.camera.itimes)) {
++    interp_time_of_day(settings.camera.itimes, *tree.colors, m_color_result.data());
++    tree.time_of_day_texture = ottsel_tod_ring_advance(tree.tod_ring, tree.time_of_day_texture);
++    glBindTexture(GL_TEXTURE_1D, tree.time_of_day_texture);
++    glTexSubImage1D(GL_TEXTURE_1D, 0, 0, tree.colors->color_count, GL_RGBA,
++                    GL_UNSIGNED_INT_8_8_8_8_REV, m_color_result.data());
++  }
    glBindTexture(GL_TEXTURE_1D, tree.time_of_day_texture);
-   glTexSubImage1D(GL_TEXTURE_1D, 0, 0, tree.colors->color_count, GL_RGBA,
-                   GL_UNSIGNED_INT_8_8_8_8_REV, m_color_result.data());
+-  glTexSubImage1D(GL_TEXTURE_1D, 0, 0, tree.colors->color_count, GL_RGBA,
+-                  GL_UNSIGNED_INT_8_8_8_8_REV, m_color_result.data());
+ 
+   // update proto vis mask
+   if (proto_vis_data) {
 diff --git a/game/graphics/opengl_renderer/background/Tie3.h b/game/graphics/opengl_renderer/background/Tie3.h
 index 37082c55d..61d261a36 100644
 --- a/game/graphics/opengl_renderer/background/Tie3.h
@@ -2139,13 +2184,14 @@ index 37082c55d..61d261a36 100644
 \ No newline at end of file
 +};
 diff --git a/game/graphics/opengl_renderer/background/background_common.h b/game/graphics/opengl_renderer/background/background_common.h
-index 6993ae6ac..ec878700b 100644
+index 6993ae6ac..4ae3dd904 100644
 --- a/game/graphics/opengl_renderer/background/background_common.h
 +++ b/game/graphics/opengl_renderer/background/background_common.h
-@@ -1,9 +1,55 @@
+@@ -1,9 +1,70 @@
  #pragma once
  
 +#include <cstddef>
++#include <cstring>
 +
  #include "common/math/Vector.h"
  
@@ -2162,12 +2208,15 @@ index 6993ae6ac..ec878700b 100644
 +  static constexpr int kSize = 3;
 +  GLuint tex[kSize] = {};
 +  int next = 0;
++  s32 itimes[16] = {};  // blend weights of the last upload
++  bool has_itimes = false;
 +};
 +
 +// After the tree created and allocated `first` (bound on the active unit): make the spares alike.
 +inline void ottsel_tod_ring_create(OttselTodRing& ring, GLuint first, int color_count) {
 +  ring.tex[0] = first;
 +  ring.next = 0;
++  ring.has_itimes = false;
 +  glGenTextures(OttselTodRing::kSize - 1, &ring.tex[1]);
 +  for (int i = 1; i < OttselTodRing::kSize; i++) {
 +    glBindTexture(GL_TEXTURE_1D, ring.tex[i]);
@@ -2193,6 +2242,17 @@ index 6993ae6ac..ec878700b 100644
 +    glDeleteTextures(OttselTodRing::kSize - 1, &ring.tex[1]);
 +  }
 +  ring = {};
++}
++
++// The palette is a fixed function of the tree's colours and the four time-of-day blend weights, which
++// stay the same for many frames at a time. True when they match the last upload (keep drawing with
++// the current palette); otherwise records them for the upload the caller is about to make.
++inline bool ottsel_tod_ring_unchanged(OttselTodRing& ring, const math::Vector<s32, 4> itimes[4]) {
++  static_assert(sizeof(ring.itimes) == 4 * sizeof(math::Vector<s32, 4>));
++  if (ring.has_itimes && std::memcmp(ring.itimes, itimes, sizeof(ring.itimes)) == 0) return true;
++  std::memcpy(ring.itimes, itimes, sizeof(ring.itimes));
++  ring.has_itimes = true;
++  return false;
 +}
 +
  struct GoalBackgroundCameraData {
