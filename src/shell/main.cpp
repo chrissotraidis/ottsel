@@ -589,6 +589,33 @@ void render_surface() {
     }
   }
 
+  // Players see a quiet card while the game boots; the log shows when it is asked for (••• →
+  // Diagnostics → Show Log Over Game) or when the boot failed.
+  bool failed = false;
+  for (const auto& line : g_lines) failed |= line.find("BOOT FAILED") != std::string::npos;
+  if (!g_settings.log_overlay && !failed) {
+    auto centered = [](int y, const std::string& text, int scale, unsigned char r, unsigned char g,
+                       unsigned char b) {
+      const int saved = g_font_scale;
+      g_font_scale = scale;
+      draw_text((g_surf_w - (int)text.size() * (kFontW + 1) * scale) / 2, y, text, r, g, b);
+      g_font_scale = saved;
+    };
+    const int big = g_font_scale * 5 / 2;
+    const int small = std::max(2, g_font_scale);
+    const int mid = g_surf_h / 2 - kFontH * big;
+    const int line2 = mid + (kFontH + 6) * big;
+    centered(mid, "OTTSEL", big, 120, 200, 255);
+    if (ottsel_ios_has_user_data()) {
+      centered(line2, "Loading...", small, 150, 160, 180);
+    } else {
+      centered(line2, "Import your game data to play:", small, 255, 210, 90);
+      centered(line2 + (kFontH + 4) * small, "... > Game Data > Import Game Data", small, 220, 225,
+               235);
+    }
+    return;
+  }
+
   draw_text(8 * g_font_scale, 8 * g_font_scale,
             "Ottsel",
             120, 200, 255);
