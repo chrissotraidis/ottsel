@@ -60,9 +60,8 @@ std::vector<std::string> g_lines;
 size_t g_file_pos = 0;
 bool g_quit = false;
 int g_frame = 0;
-// Timestamp at the top of the previous main-loop iteration.  Used to turn the
-// old unconditional SDL_Delay(16) into a 60 Hz budget cap (see the loop tail).
-Uint64 g_loop_start_ns = 0;
+// When the next main-loop iteration may start: a fixed 60 Hz grid (see the loop tail).
+Uint64 g_next_frame_ns = 0;
 SDL_Gamepad* g_gamepad = nullptr;
 SDL_JoystickID g_gamepad_id = 0;
 
@@ -1122,20 +1121,17 @@ int main(int argc, char** argv) {
         fps_window_start = now;
       }
     }
-    // This used to be an unconditional SDL_Delay(16), which pinned the loop
-    // (and therefore gfx_vsync's release rate) to a fixed ~23 Hz no matter how
-    // long present actually took.  Pacing is already the job of gfx_vsync, so
-    // treat this as a cap instead of a delay: sleep only the remainder of a
-    // 60 Hz budget and let a slow present take as long as it needs.
-    if (g_loop_start_ns) {
+    // Cap the loop (and so the game, which advances once per presented frame) at 60 Hz. Deadlines
+    // sit on a fixed grid, so a sleep that wakes late shortens the next wait instead of adding up:
+    // "sleep the rest of 16.7 ms" settled near 56 fps and ran the game ~7% slow. A frame more than
+    // one budget late resyncs rather than bursting to catch up.
+    {
       const Uint64 budget_ns = 1000000000ull / 60ull;
       const Uint64 now_ns = SDL_GetTicksNS();
-      const Uint64 elapsed_ns = now_ns - g_loop_start_ns;
-      if (elapsed_ns < budget_ns) {
-        SDL_DelayNS(budget_ns - elapsed_ns);
-      }
+      g_next_frame_ns = g_next_frame_ns ? g_next_frame_ns + budget_ns : now_ns;
+      if (g_next_frame_ns + budget_ns < now_ns) g_next_frame_ns = now_ns;
+      if (now_ns < g_next_frame_ns) SDL_DelayNS(g_next_frame_ns - now_ns);
     }
-    g_loop_start_ns = SDL_GetTicksNS();
   }
   release_mobile_gamepad("shutdown");
 
