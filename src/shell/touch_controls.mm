@@ -6,6 +6,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <string>
 #include <unordered_map>
@@ -13,6 +14,10 @@
 #include "game/sce/ottsel_platform_input.h"
 
 namespace pi = ottsel::platform_input;
+
+// game/sce/libpad.cpp: the cheat to toggle (a pc-cheats bit, -1 none) and the cheats that are on.
+extern std::atomic<int> g_ottsel_cheat_request;
+extern std::atomic<unsigned> g_ottsel_cheats_on;
 
 namespace {
 OttselTouchHooks g_hooks{};
@@ -37,9 +42,11 @@ struct ControlDefault {
 // position here only matters with "Stick follows thumb" turned off.
 const ControlDefault kDefaults[] = {
     {@"L1", @"L1", 0.120, 0.13, 128, 52},
+    {@"L2", @"L2", 0.245, 0.13, 92, 44},
     {@"dpad", @"D-pad", 0.120, 0.37, 128, 128},
     {@"move", @"Move stick", 0.120, 0.78, 180, 180},
     {@"R1", @"R1", 0.880, 0.13, 128, 52},
+    {@"R2", @"R2", 0.755, 0.13, 92, 44},
     {@"face", @"Face buttons", 0.880, 0.49, 232, 232},
     {@"camera", @"Camera stick", 0.855, 0.86, 124, 124},
     {@"start", @"START", 0.500, 0.95, 96, 40},
@@ -526,7 +533,9 @@ UIColor* border_color(bool selected) {
     @"face" : face,
     @"dpad" : dpad,
     @"L1" : [self textButton:@"L1" mask:pi::L1],
+    @"L2" : [self textButton:@"L2" mask:pi::L2],
     @"R1" : [self textButton:@"R1" mask:pi::R1],
+    @"R2" : [self textButton:@"R2" mask:pi::R2],
     @"start" : [self textButton:@"START" mask:pi::Start],
   };
   for (const auto& d : kDefaults) {
@@ -1280,7 +1289,43 @@ UIColor* border_color(bool selected) {
                                        [self action:@"Share Logs…" symbol:@"square.and.arrow.up"
                                             handler:^{ [weakSelf shareLogs]; }],
                                      ]];
-  return [UIMenu menuWithTitle:@"Ottsel" children:@[ display, fps, controls, data, diagnostics ]];
+  return [UIMenu menuWithTitle:@"Ottsel"
+                      children:@[ display, fps, controls, [self cheatsMenu], data, diagnostics ]];
+}
+
+// OpenGOAL's own cheats (Secrets → Cheats in the game), switched on without typing a button code. The
+// list is built each time it opens, so its checkmarks follow changes made in the game's menu too.
+- (UIMenu*)cheatsMenu {
+  static const struct {
+    NSString* title;
+    int bit;  // pc-cheats bit (goal_src/jak1/pc/pc-cheats.gc)
+  } kCheats[] = {
+      {@"Invincibility", 4},         {@"Infinite Blue Eco", 2},  {@"Infinite Yellow Eco", 3},
+      {@"Infinite Red Eco", 1},      {@"Infinite Green Eco", 0}, {@"Big Head Jak", 9},
+      {@"Huge Head Jak", 15},        {@"Small Head Jak", 10},    {@"Big Fist Jak", 11},
+      {@"Big Head Villagers", 16},   {@"Blue Daxter", 5},        {@"Mirror World", 8},
+      {@"Real-Time Sky", 7},         {@"All Music Flavors", 6},
+  };
+  UIDeferredMenuElement* list = [UIDeferredMenuElement elementWithUncachedProvider:^(
+                                                           void (^completion)(NSArray<UIMenuElement*>*)) {
+    const unsigned on = g_ottsel_cheats_on.load();
+    NSMutableArray<UIMenuElement*>* items = [NSMutableArray array];
+    for (const auto& cheat : kCheats) {
+      const int bit = cheat.bit;
+      UIAction* action = [UIAction actionWithTitle:cheat.title
+                                             image:nil
+                                        identifier:nil
+                                           handler:^(UIAction*) { g_ottsel_cheat_request = bit; }];
+      action.state = (on >> bit) & 1 ? UIMenuElementStateOn : UIMenuElementStateOff;
+      [items addObject:action];
+    }
+    completion(items);
+  }];
+  return [UIMenu menuWithTitle:@"Cheats"
+                         image:[UIImage systemImageNamed:@"wand.and.stars"]
+                    identifier:nil
+                       options:0
+                      children:@[ list ]];
 }
 @end
 

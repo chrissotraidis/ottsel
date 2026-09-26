@@ -9950,10 +9950,10 @@ index 4f7cc5e18..40de75561 100644
    if (version != GameVersion::Jak3 && version != GameVersion::JakX) {
      jak1::dma_init_globals();
 diff --git a/game/sce/libpad.cpp b/game/sce/libpad.cpp
-index 085d80d2f..73b217105 100644
+index 085d80d2f..ed9a5317a 100644
 --- a/game/sce/libpad.cpp
 +++ b/game/sce/libpad.cpp
-@@ -1,17 +1,57 @@
+@@ -1,17 +1,61 @@
  #include "libpad.h"
  
 +#include <cstdlib>
@@ -10007,11 +10007,15 @@ index 085d80d2f..73b217105 100644
 +// Set by the iOS shell when the app resigns active; the next pad read hands it to main.gc, which opens
 +// the pause menu (see *ottsel-pause-request*).
 +std::atomic<int> g_ottsel_pause_request{0};
++// The iOS ••• menu's cheat toggle (a pc-cheats bit number, -1 for none) and the cheats currently on,
++// mirrored from *pc-settings* each frame by pckernel.gc's update-cheats.
++std::atomic<int> g_ottsel_cheat_request{-1};
++std::atomic<unsigned> g_ottsel_cheats_on{0};
 +
  namespace ee {
  
  int scePadPortOpen(int port, int slot, void*) {
-@@ -92,6 +132,494 @@ int scePadRead(int port, int /*slot*/, u8* rdata) {
+@@ -92,6 +136,503 @@ int scePadRead(int port, int /*slot*/, u8* rdata) {
      for (size_t i = 0; i < pad_data.value()->button_data.size(); i++) {
        cpad->button0 |= pad_data.value()->button_data.at(i) << i;
      }
@@ -10215,6 +10219,15 @@ index 085d80d2f..73b217105 100644
 +    if (g_ottsel_pause_request.exchange(0)) {
 +      jak1::intern_from_c("*ottsel-pause-request*")->value = s7.offset + jak1_symbols::FIX_SYM_TRUE;
 +      lg::info("OTTSEL LIFECYCLE: pause requested");
++    }
++    {
++      const int cheat = g_ottsel_cheat_request.exchange(-1);
++      if (cheat >= 0) {
++        jak1::intern_from_c("*ottsel-cheat-request*")->value = (u32)cheat;
++        lg::info("OTTSEL CHEAT: toggle bit {}", cheat);
++      }
++      const u32 mirror = jak1::intern_from_c("*ottsel-cheats-mirror*")->value;
++      g_ottsel_cheats_on = mirror < (1u << 18) ? mirror : 0;  // 18 pc-cheats bits; unset before load
 +    }
 +    // Ottsel testing: a file named ottsel-warp in the app's writable directory holds a continue-point
 +    // name ("village1-hut"); main.gc's display loop starts play there. See ••• → Diagnostics.
@@ -13903,6 +13916,36 @@ index c7f7b3a10..24bf129b1 100644
      (set! (-> obj mouse-ysens) 10.0)
      (set! (-> obj mouse-movement?) #f))
    0)
+diff --git a/goal_src/jak1/pc/pckernel.gc b/goal_src/jak1/pc/pckernel.gc
+index eb8e2d66e..06823883f 100644
+--- a/goal_src/jak1/pc/pckernel.gc
++++ b/goal_src/jak1/pc/pckernel.gc
+@@ -47,8 +47,25 @@
+ ;; where we store the input progress for the cheat codes. make sure there's enough space for all cheats.
+ (define *pc-cheat-temp* (new 'global 'inline-array 'uint8 PC_CHEAT_MAX))
+ 
++;; Ottsel: the iOS ••• menu toggles cheats without typing a button code. The runtime (game/sce/libpad.cpp)
++;; puts the pc-cheats bit number here; the mirror lets the menu show which cheats are on.
++(define *ottsel-cheat-request* -1)
++(define *ottsel-cheats-mirror* 0)
++
+ (defmethod update-cheats ((obj pc-settings-jak1))
+   "run cheats."
++  (when (>= *ottsel-cheat-request* 0)
++    (let ((bit (the pc-cheats (ash 1 *ottsel-cheat-request*)))
++          (ecos (pc-cheats eco-green eco-red eco-blue eco-yellow)))
++      (set! *ottsel-cheat-request* -1)
++      ;; one eco at a time, as the Secrets menu does; leaving invincibility drops its lingering state
++      (if (logtest? bit ecos) (logclear! (-> obj cheats) (logand ecos (lognot bit))))
++      (if (and (logtest? bit (pc-cheats invinc)) *target*) (logclear! (-> *target* state-flags) 16))
++      (logxor! (-> obj cheats) bit)
++      (logior! (-> obj cheats-known) bit)
++      (cheats-sound-play (logtest? (-> obj cheats) bit))
++      (commit-to-file obj)))
++  (set! *ottsel-cheats-mirror* (the int (-> obj cheats)))
+   ;; first check for cheat inputs.
+   (when (and (cpad-hold? 0 l2) (cpad-hold? 0 l1) (cpad-hold? 0 r2) (cpad-hold? 0 r1))
+     (pc-check-cheat-code (-> *pc-cheat-temp* 0)
 diff --git a/goal_src/jak1/pc/progress-pc.gc b/goal_src/jak1/pc/progress-pc.gc
 index 4d66265a5..fdb83edc6 100644
 --- a/goal_src/jak1/pc/progress-pc.gc

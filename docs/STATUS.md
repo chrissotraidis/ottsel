@@ -25,7 +25,6 @@ Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
 
 ## Log (last eight lines)
 
-2026-09-24 Touch: SunPad-style UIKit controller replaces the GL-drawn regions; XCUITest plays to Training by touch.
 2026-09-24 ANGLE: GLES on Metal; Simulator Training 1-2 -> 23-25 fps full-res; unsigned vertex inputs fixed for Metal.
 2026-09-24 Title streaks: Sprite3 strip+restart joined sprites on ANGLE/Metal; quads now drawn as triangles. Clean title/menu.
 2026-09-25 Speed: merc bones in a texture (Training 25 -> 58 fps, draw 36 -> 8 ms); per-frame menu trace removed (log flood).
@@ -33,3 +32,4 @@ Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
 2026-09-26 Public prep: ISC LICENSE, notices, issue forms, icon; internal archive (1,031 files) out of the tree; host regressions green again.
 2026-09-26 TV output (external scene, hot-plug); Jump to Level; stack save 256->512 fixes the jungle hopper fault; all 16 levels load, 0 faults.
 2026-09-26 Sandover pause-menu save -> cold relaunch -> Load resumes village1-hut; leaving the app now returns to the pause menu; audio mixing (peak ~2500).
+2026-09-26 L2/R2 touch buttons (button cheat codes now possible by touch); ••• → Cheats toggles OpenGOAL's 14 cheats, checked live.

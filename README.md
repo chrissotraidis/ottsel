@@ -65,7 +65,8 @@ scripts. It does **not** contain Jak and Daxter, a disc image, extracted game fi
 | Play | The intro plays to Geyser Rock; all 16 hubs and levels load and run; saving from the pause menu and loading after a relaunch resumes where you saved; Jak walks, jumps and attacks by touch |
 | Interruptions | Leaving the app (home gesture, a call, Control Center) pauses the game and its sound; you come back to the pause menu |
 | TV output | HDMI, USB-C and AirPlay displays: the game full-screen at the display's resolution (1080p tested), the iPad shows the controls; plugging in or out works mid-game |
-| Touch | Floating move stick, camera stick, D-pad, Cross, Circle, Square, Triangle, L1, R1 and Start, with haptics and a per-device layout |
+| Touch | Floating move stick, camera stick, D-pad, Cross, Circle, Square, Triangle, L1, L2, R1, R2 and Start, with haptics and a per-device layout |
+| Cheats | **••• → Cheats** switches on OpenGOAL's cheats in one tap: invincibility, infinite eco of each colour, big and huge heads, big fist, blue Daxter, mirror world, real-time sky and every music flavour |
 | Settings | **•••** menu: Display (render resolution), FPS counter, Controls, Game Data import, Diagnostics |
 | Controllers | Apple game controllers and hardware keyboards; the touch controls hide while either is in use |
 | Sound | OpenGOAL's own IOP and OVERLORD sound code runs on iOS; audible playback on a device is not yet checked |
@@ -133,11 +134,11 @@ and keeps it for later launches.
 The layout follows [SunPad](https://github.com/chrissotraidis/sunpad): controls sit at the screen edges
 so the middle of the picture stays clear.
 
-- **Left:** L1 and the D-pad at the top. Below them, the move stick appears wherever your thumb lands
+- **Left:** L1 and L2 across the top, then the D-pad. Below them, the move stick appears wherever your thumb lands
   and follows it if you drag past the rim, so there is no exact spot to find.
-- **Right:** the Cross, Circle, Square and Triangle diamond, R1, and the camera stick.
+- **Right:** R1 and R2 across the top, the Cross, Circle, Square and Triangle diamond, and the camera stick.
 - **Bottom centre:** Start.
-- **Menu:** the **•••** button opens Display, Show FPS Counter, Controls, Game Data and Diagnostics.
+- **Menu:** the **•••** button opens Display, Show FPS Counter, Controls, Cheats, Game Data and Diagnostics.
 - **Customise:** **Controls → Touch Control Settings…** sets when the controls show (Auto, Always,
   Never), whether the move stick follows your thumb or stays in one place, opacity, size, camera speed
   and camera inversion. **Move Touch Controls** lets you drag and resize each control; the layout is
