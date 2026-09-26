@@ -1,0 +1,45 @@
+name: Bug report
+description: Something is broken in the build scripts, the app, or the Simulator.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please search existing issues first. Never attach game data, extracted files, a built app, or saves,
+        and do not ask for download links.
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where
+      options:
+        - Building from source
+        - iPad or iPhone Simulator
+        - Physical iPad or iPhone
+        - Mac test build
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Ottsel commit
+      description: Output of `git rev-parse --short HEAD`.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected and what happened
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Build output or log excerpt
+      render: text

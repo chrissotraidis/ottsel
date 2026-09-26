@@ -1,0 +1,38 @@
+.DS_Store
+.claude/
+# user game content / extracts
+iso_data/
+assets-user/
+user-content/
+out/
+*.iso
+*.cso
+*.bin
+*.cue
+*.img
+*.mdf
+*.nrg
+
+# local build trees if created later
+build/
+.build/
+DerivedData/
+*.xcuserstate
+
+# editor
+.idea/
+.vscode/
+
+# local research corpus (upstream clones with nested .git; keep out of repo git)
+ref/
+__pycache__/
+
+# Simulator recordings stay outside the worktree; ignore any accidental copies.
+docs/evidence/**/*.mp4
+docs/evidence/**/*.mov
+# Evidence media stays on local disk; commit the concise markdown record only.
+docs/evidence/**/*.png
+docs/evidence/**/*.jpg
+docs/evidence/**/*.jpeg
+docs/evidence/**/*.gif
+docs/evidence/**/*.wav
