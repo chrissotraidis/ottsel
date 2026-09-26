@@ -39,6 +39,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("udid")
     parser.add_argument("--route", action="store_true", help="drive title -> New Game -> Training first")
+    parser.add_argument("--load-slot", type=int, help="with --route, reach Training through LOAD GAME slot N")
+    parser.add_argument("--warp", help="continue point to jump to before saving (e.g. village1-hut)")
     parser.add_argument("--stick-seconds", type=float, default=8.0, help="length of the movement phase")
     parser.add_argument("--settle", type=float, default=20.0, help="seconds to let the level settle first")
     parser.add_argument("--screenshots", type=Path, help="optional output filename prefix")
@@ -94,12 +96,19 @@ def main():
         return found, seen
 
     def touch(region, seconds):
-        path = writable / ("ottsel-touch-" + region)
-        path.touch(exist_ok=False)
+        # Circle has no keyboard hold trigger; press it on the shell's virtual pad (src/shell/main.cpp),
+        # which reaches the game through the same gamepad path as a paired controller.
+        pad = writable / "ottsel-virtual-pad"
+        pad.touch()
+        time.sleep(1.0)
+        path = writable / ("ottsel-virtual-pad-" + region)
+        path.touch()
         time.sleep(seconds)
         path.unlink(missing_ok=True)
-        time.sleep(1.5)
-        print(f"  touch {region}: held {seconds}s then released", flush=True)
+        time.sleep(1.0)
+        pad.unlink(missing_ok=True)
+        time.sleep(1.0)
+        print(f"  press {region} on the virtual pad for {seconds}s", flush=True)
 
     def shot(tag):
         if args.screenshots:
@@ -128,11 +137,20 @@ def main():
     if marker is None:
         raise SystemExit("No fresh title-wait-ready state within 90 seconds")
     if args.route:
-        subprocess.run(["python3", str(Path(__file__).with_name("replay-ios-normal-route.py")),
-                        args.udid], check=False)
+        route = ["python3", str(Path(__file__).with_name("replay-ios-normal-route.py")), args.udid]
+        if args.load_slot is not None:
+            route += ["--load-slot", str(args.load_slot)]
+        subprocess.run(route, check=False)
     marker, _ = wait_for(("GAMEPLAY: enter training",), 150, 0)
     print(f"training: {marker!r}", flush=True)
     time.sleep(args.settle)
+    if args.warp:
+        # The testing jump (••• → Diagnostics → Jump to Level): the save below then records this level.
+        offset = log.stat().st_size
+        (writable / "ottsel-warp").write_text(args.warp)
+        marker, _ = wait_for((f'OTTSEL WARP: "{args.warp}" "starting"',), 30, offset)
+        print(f"warp {args.warp}: {marker!r}", flush=True)
+        time.sleep(args.settle + 10)
 
     # Gameplay first, so the save below is a save after real mid-level progress.
     pos = re.compile(r"OTTSEL TARGET POS: t=\((-?[0-9.]+),(-?[0-9.]+),(-?[0-9.]+)\) pad=([0-9.]+)")
@@ -183,4 +201,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
