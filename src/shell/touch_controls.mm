@@ -18,11 +18,12 @@ namespace {
 OttselTouchHooks g_hooks{};
 
 // Versioned: a layout saved against older default positions starts over from the current defaults.
-NSString* const kCentersKey = @"OttselTouchControlCenters.v2";  // ident -> normalized center in the safe area
-NSString* const kSizesKey = @"OttselTouchControlSizes.v2";      // ident -> size multiplier
+NSString* const kCentersKey = @"OttselTouchControlCenters.v3";  // ident -> normalized center in the safe area
+NSString* const kSizesKey = @"OttselTouchControlSizes.v3";      // ident -> size multiplier
 NSString* const kOpacityKey = @"OttselTouchOpacity";
 NSString* const kSizeScaleKey = @"OttselTouchSizeScale";
 NSString* const kShowFPSKey = @"OttselShowFPS";
+NSString* const kFloatingKey = @"OttselTouchFloatingStick";  // absent = on
 
 // One control's default placement: normalized center in the safe area and its size in iPad points.
 struct ControlDefault {
@@ -32,9 +33,11 @@ struct ControlDefault {
 };
 // Two columns on the screen edges, one per thumb, so the middle of the screen stays clear:
 // left edge L1 / D-pad / move stick, right edge R1 / face buttons / camera stick, START bottom centre.
+// The move stick normally floats: it appears wherever the left thumb lands below the D-pad, so its
+// position here only matters with "Stick follows thumb" turned off.
 const ControlDefault kDefaults[] = {
     {@"L1", @"L1", 0.120, 0.13, 128, 52},
-    {@"dpad", @"D-pad", 0.120, 0.44, 136, 136},
+    {@"dpad", @"D-pad", 0.120, 0.37, 128, 128},
     {@"move", @"Move stick", 0.120, 0.78, 180, 180},
     {@"R1", @"R1", 0.880, 0.13, 128, 52},
     {@"face", @"Face buttons", 0.880, 0.49, 232, 232},
@@ -67,6 +70,7 @@ UIColor* border_color(bool selected) {
 @interface OttselStickView : UIView <OttselEditable>
 @property(nonatomic, copy) void (^valueChanged)(float x, float y);
 @property(nonatomic, assign) BOOL editing;
+- (void)trackPoint:(CGPoint)p;
 @end
 
 @implementation OttselStickView {
@@ -111,7 +115,11 @@ UIColor* border_color(bool selected) {
 }
 
 - (void)track:(UITouch*)touch {
-  CGPoint p = [touch locationInView:self];
+  [self trackPoint:[touch locationInView:self]];
+}
+
+// p is in this view's coordinates; the stick's centre is neutral.
+- (void)trackPoint:(CGPoint)p {
   CGFloat radius = std::max<CGFloat>(1.0, self.bounds.size.width * 0.5);
   CGFloat dx = (p.x - CGRectGetMidX(self.bounds)) / radius;
   CGFloat dy = (p.y - CGRectGetMidY(self.bounds)) / radius;
@@ -147,6 +155,72 @@ UIColor* border_color(bool selected) {
 }
 - (void)touchesCancelled:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
   [self releaseInput];
+}
+@end
+
+// MARK: - Floating stick area
+
+// The left thumb's area. Wherever a thumb lands becomes the move stick's centre, so there is no exact
+// spot to hit; the stick fades in under the thumb and out when it lifts. Dragging past the rim pulls
+// the centre along, so reversing direction takes a short movement from anywhere. Controls above this
+// view (D-pad, L1) still get their own touches first.
+@interface OttselStickZone : UIView
+@property(nonatomic, weak) OttselStickView* stick;
+@property(nonatomic, readonly) BOOL tracking;
+@end
+
+@implementation OttselStickZone {
+  CGPoint _origin;  // stick centre, in the superview's coordinates
+}
+
+- (instancetype)initWithFrame:(CGRect)frame {
+  if ((self = [super initWithFrame:frame])) {
+    self.multipleTouchEnabled = NO;  // one thumb drives the stick; a second finger here is ignored
+    self.backgroundColor = UIColor.clearColor;
+    self.isAccessibilityElement = YES;
+    self.accessibilityLabel = @"Move area";
+  }
+  return self;
+}
+
+- (void)follow:(UITouch*)touch {
+  OttselStickView* stick = self.stick;
+  CGPoint p = [touch locationInView:self.superview];
+  CGFloat radius = stick.bounds.size.width * 0.5;
+  CGFloat dx = p.x - _origin.x, dy = p.y - _origin.y, length = std::hypot(dx, dy);
+  if (length > radius) {
+    _origin.x += dx * (1.0 - radius / length);
+    _origin.y += dy * (1.0 - radius / length);
+    stick.center = _origin;
+  }
+  [stick trackPoint:[self.superview convertPoint:p toView:stick]];
+}
+
+- (void)touchesBegan:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
+  _tracking = YES;
+  _origin = [touches.anyObject locationInView:self.superview];
+  [self.stick.layer removeAllAnimations];
+  self.stick.center = _origin;
+  self.stick.alpha = 1.0;
+  [self follow:touches.anyObject];
+}
+- (void)touchesMoved:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
+  [self follow:touches.anyObject];
+}
+- (void)touchesEnded:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
+  [self lift];
+}
+- (void)touchesCancelled:(NSSet<UITouch*>*)touches withEvent:(UIEvent*)event {
+  [self lift];
+}
+
+- (void)lift {
+  _tracking = NO;
+  OttselStickView* stick = self.stick;
+  [stick releaseInput];
+  [UIView animateWithDuration:0.18 animations:^{
+    stick.alpha = 0.0;
+  }];
 }
 @end
 
@@ -311,6 +385,7 @@ UIColor* border_color(bool selected) {
 @implementation OttselTouchOverlay {
   UIButton* _menuButton;
   UIView* _controls;  // every gameplay control; hidden as one
+  OttselStickZone* _moveZone;
   NSMutableDictionary<NSString*, UIView<OttselEditable>*>* _byIdent;
   OttselTouchPad _pad;
   uint16_t _clusterMasks[2];  // face, D-pad
@@ -325,6 +400,7 @@ UIColor* border_color(bool selected) {
   UISlider* _sizeSlider;
   UISlider* _cameraSlider;
   UISwitch* _invertSwitch;
+  UISwitch* _floatSwitch;
   UISwitch* _editSwitch;
 
   UIView* _editorBar;
@@ -371,6 +447,11 @@ UIColor* border_color(bool selected) {
   camera.valueChanged = ^(float x, float y) {
     [weakSelf stick:YES x:x y:y];
   };
+  // Added first, so every control drawn over it keeps its own touches.
+  _moveZone = [[OttselStickZone alloc] initWithFrame:CGRectZero];
+  _moveZone.stick = move;
+  _moveZone.accessibilityIdentifier = @"move-zone";
+  [_controls addSubview:_moveZone];
 
   // PlayStation face buttons in their glyph colours.
   OttselButtonCluster* face = [OttselButtonCluster new];
@@ -508,6 +589,7 @@ UIColor* border_color(bool selected) {
   NSDictionary* saved = [NSUserDefaults.standardUserDefaults dictionaryForKey:kCentersKey];
   for (const auto& d : kDefaults) {
     UIView* control = _byIdent[d.ident];
+    if (control == _byIdent[@"move"] && _moveZone.tracking) continue;  // it sits under the thumb
     CGFloat scale = base * [self sizeScaleFor:d.ident];
     control.bounds = CGRectMake(0, 0, d.w * scale, d.h * scale);
     CGPoint n = CGPointMake(d.x, d.y);
@@ -522,10 +604,16 @@ UIColor* border_color(bool selected) {
       control.layer.cornerRadius = control.bounds.size.height * 0.5;
     }
   }
+  // The floating stick's area: the left 45% of the screen below the D-pad.
+  UIView* dpad = _byIdent[@"dpad"];
+  CGFloat zoneTop = std::min(CGRectGetMaxY(dpad.frame), CGRectGetMinY(safe) + safe.size.height * 0.5);
+  _moveZone.frame = CGRectMake(CGRectGetMinX(self.bounds), zoneTop,
+                               CGRectGetMinX(safe) + safe.size.width * 0.45 - CGRectGetMinX(self.bounds),
+                               CGRectGetMaxY(self.bounds) - zoneTop);
   _menuButton.frame = CGRectMake(CGRectGetMaxX(safe) - 52, CGRectGetMinY(safe) + 12, 40, 40);
   _fpsLabel.frame = CGRectMake(CGRectGetMinX(safe) + 12, CGRectGetMinY(safe) + 12, 96, 26);
   CGFloat pw = std::min<CGFloat>(360, safe.size.width - 32);
-  CGFloat ph = std::min<CGFloat>(430, safe.size.height * 0.72);
+  CGFloat ph = std::min<CGFloat>(500, safe.size.height * 0.8);
   _panel.frame = CGRectMake(CGRectGetMaxX(safe) - pw - 12, CGRectGetMinY(safe) + 60, pw, ph);
   CGFloat ew = std::min<CGFloat>(560, safe.size.width - 24);
   _editorBar.frame = CGRectMake(CGRectGetMidX(safe) - ew * 0.5, CGRectGetMaxY(safe) - 72, ew, 60);
@@ -549,6 +637,7 @@ UIColor* border_color(bool selected) {
   _selectedSize.value = 1.0;
   _editorHint.text = @"Drag controls • tap one to resize";
   [self updateVisibility];
+  [self updateStickMode];
   [self updateEditingAppearance];
 }
 
@@ -683,9 +772,27 @@ UIColor* border_color(bool selected) {
   _showControl.selectedSegmentIndex = std::clamp(setting("controls"), 0, 2);
   _cameraSlider.value = setting("camera_sensitivity");
   _invertSwitch.on = setting("invert_camera_y") != 0;
+  _floatSwitch.on = [self floatingStick];
+  [self updateStickMode];
   [self updateFPSVisibility];
   [self updateVisibility];
   [self setNeedsLayout];
+}
+
+- (BOOL)floatingStick {
+  NSNumber* on = [NSUserDefaults.standardUserDefaults objectForKey:kFloatingKey];
+  return on ? on.boolValue : YES;
+}
+
+// Floating: the stick is invisible until a thumb lands in its area. Fixed (or while editing the
+// layout): the stick is always drawn at its saved place and takes its own touches.
+- (void)updateStickMode {
+  UIView* move = _byIdent[@"move"];
+  const BOOL floating = [self floatingStick] && !_editing;
+  _moveZone.hidden = !floating;
+  move.userInteractionEnabled = !floating;
+  move.alpha = floating ? 0.0 : 1.0;
+  if (!floating) [self setNeedsLayout];  // back to its saved place
 }
 
 - (void)setControlsHidden:(BOOL)hidden {
@@ -793,6 +900,9 @@ UIColor* border_color(bool selected) {
   _invertSwitch = [UISwitch new];
   _invertSwitch.accessibilityLabel = @"Invert camera up and down";
   [_invertSwitch addTarget:self action:@selector(invertChanged:) forControlEvents:UIControlEventValueChanged];
+  _floatSwitch = [UISwitch new];
+  _floatSwitch.accessibilityLabel = @"Move stick follows thumb";
+  [_floatSwitch addTarget:self action:@selector(floatChanged:) forControlEvents:UIControlEventValueChanged];
   _editSwitch = [UISwitch new];
   _editSwitch.accessibilityLabel = @"Move touch controls";
   [_editSwitch addTarget:self action:@selector(editChanged:) forControlEvents:UIControlEventValueChanged];
@@ -810,9 +920,17 @@ UIColor* border_color(bool selected) {
   note.numberOfLines = 0;
   note.textColor = [UIColor colorWithWhite:1.0 alpha:0.6];
   note.font = [UIFont systemFontOfSize:12];
+  UILabel* floatNote = [UILabel new];
+  floatNote.text = @"On: the move stick appears wherever your left thumb lands. Off: it stays in one "
+                   @"place.";
+  floatNote.numberOfLines = 0;
+  floatNote.textColor = note.textColor;
+  floatNote.font = note.font;
 
   UIStackView* stack = [[UIStackView alloc] initWithArrangedSubviews:@[
-    [self row:@"Show" control:_showControl], note, [self row:@"Opacity" control:_opacitySlider],
+    [self row:@"Show" control:_showControl], note,
+    [self row:@"Stick follows thumb" control:_floatSwitch], floatNote,
+    [self row:@"Opacity" control:_opacitySlider],
     [self row:@"All sizes" control:_sizeSlider], [self row:@"Camera speed" control:_cameraSlider],
     [self row:@"Invert camera Y" control:_invertSwitch], [self row:@"Move controls" control:_editSwitch],
     reset
@@ -880,6 +998,12 @@ UIColor* border_color(bool selected) {
 
 - (void)invertChanged:(UISwitch*)switcher {
   set_setting("invert_camera_y", switcher.on ? 1 : 0);
+}
+
+- (void)floatChanged:(UISwitch*)switcher {
+  [self clearInput];
+  [NSUserDefaults.standardUserDefaults setBool:switcher.on forKey:kFloatingKey];
+  [self updateStickMode];
 }
 
 - (void)editChanged:(UISwitch*)switcher {

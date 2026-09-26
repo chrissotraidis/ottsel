@@ -58,11 +58,13 @@ final class OttselTouchTests: XCTestCase {
     _ = press("Cross", until: "GAMEPLAY: enter training", timeout: 300)
     Thread.sleep(forTimeInterval: 20)
     shot("3-loaded")
-    let stick = app.otherElements["Move stick"]
-    XCTAssertTrue(stick.waitForExistence(timeout: 10))
-    let center = stick.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-    let up = stick.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: -0.2))
-    center.press(forDuration: 0.1, thenDragTo: up, withVelocity: .slow, thenHoldForDuration: 25)
+    // The move stick floats: press anywhere in the left thumb's area and drag. The drag goes well past
+    // the stick's rim, so the stick's centre has to follow the thumb.
+    let zone = app.otherElements["Move area"]
+    XCTAssertTrue(zone.waitForExistence(timeout: 10))
+    let start = zone.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.7))
+    let up = zone.coordinate(withNormalizedOffset: CGVector(dx: 0.55, dy: 0.25))
+    start.press(forDuration: 0.1, thenDragTo: up, withVelocity: .slow, thenHoldForDuration: 25)
     shot("4-after-walk")
     // Slide one thumb from Cross to Square without lifting (jump, then attack in the air).
     let cross = app.buttons["Cross"]
