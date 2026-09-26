@@ -42,7 +42,7 @@ scripts. It does **not** contain Jak and Daxter, a disc image, extracted game fi
   restores a save into the training course.
 - **Every hub and level loads.** Geyser Rock, Sandover, Forbidden Jungle, Sentinel Beach, Misty Island,
   Fire Canyon, Rock Village, Precursor Basin, Boggy Swamp, Lost Precursor City, Mountain Pass, Volcanic
-  Crater, Spider Cave, Snowy Mountain, Lava Tube and the Citadel all load and run at 50–58 fps in the
+  Crater, Spider Cave, Snowy Mountain, Lava Tube and the Citadel all load and run at 47–59 fps in the
   Simulator.
 - **Play on a TV.** Connect a TV or monitor (HDMI, USB-C or AirPlay) and the game fills it at the
   display's resolution, while the iPad becomes the controller.
@@ -184,8 +184,10 @@ to the iPad without restarting.
 
 ## Performance
 
-In the iPad Pro 11-inch (M4) Simulator, the title screen, the intro and the training course hold about
-58 fps at the full 2420×1668, with the renderer spending about 6.5 ms per frame on the CPU. The
+In the iPad Pro 11-inch (M4) Simulator at the full 2420×1668, the title screen, the intro and the training
+course hold about 58 fps, and every level runs at 47–59 fps (Forbidden Jungle and Rock Village are the
+slowest). The renderer avoids reallocating or rewriting GPU resources mid-frame, which on Metal would
+split the frame into extra render passes. The
 Simulator is not a device, so the real numbers wait for hardware. **••• → Display → Render Resolution**
 lowers the internal resolution if a device needs it, and **••• → Show FPS Counter** shows the frame rate.
 
