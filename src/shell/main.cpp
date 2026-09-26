@@ -663,7 +663,12 @@ void set_shell_setting(const char* key, int value) {
 // the app resigns active and resumes once it is active again. The game thread waits in vsync meanwhile.
 bool g_render_suspended = false;
 
+// Set by an atexit handler: after it, static objects (the audio player and its mutex, the input state)
+// are being destroyed, but UIKit can still deliver "entered background" while iOS terminates the app.
+std::atomic<bool> g_process_exiting{false};
+
 bool on_event_watch(void*, SDL_Event* ev) {
+  if (g_process_exiting.load()) return true;
   switch (ev->type) {
     case SDL_EVENT_WILL_ENTER_BACKGROUND:
       // Come back to the pause menu, not live action (game/sce/libpad.cpp -> main.gc).
@@ -717,6 +722,8 @@ int main(int argc, char** argv) {
     return 1;
   }
   SDL_AddEventWatch(on_event_watch, nullptr);
+  // Registered after every static in the program was constructed, so it runs before their destructors.
+  std::atexit([] { g_process_exiting = true; });
   select_mobile_gamepad();
 
   // The game renders with OpenGL ES (ANGLE on Metal) into this window's Metal layer (ottsel_gl_attach).

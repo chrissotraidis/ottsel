@@ -11890,7 +11890,7 @@ index 205d8e1dd..312cc32dd 100644
    u32 mNAX{0};
    u32 mLSA{0};
 diff --git a/game/sound/sndshim.cpp b/game/sound/sndshim.cpp
-index bf8d68d40..2ab243a86 100644
+index bf8d68d40..e2f4cf910 100644
 --- a/game/sound/sndshim.cpp
 +++ b/game/sound/sndshim.cpp
 @@ -1,6 +1,8 @@
@@ -11902,12 +11902,13 @@ index bf8d68d40..2ab243a86 100644
  
  #include "sdshim.h"
  
-@@ -10,21 +12,75 @@
+@@ -10,21 +12,76 @@
  #include "989snd/player.h"
  
  std::unique_ptr<snd::Player> player;
 +namespace {
-+std::mutex player_lifecycle_mutex;
++// Never destroyed: lifecycle calls can arrive while the process exits, after static destructors ran.
++std::mutex& player_lifecycle_mutex = *new std::mutex;
 +bool audio_callback_logged = false;
 +u32 audio_peak_log_count = 0;
 +bool audio_output_paused = false;

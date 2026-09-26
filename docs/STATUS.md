@@ -25,7 +25,6 @@ Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
 
 ## Log (last eight lines)
 
-2026-09-25 Speed: merc bones in a texture (Training 25 -> 58 fps, draw 36 -> 8 ms); per-frame menu trace removed (log flood).
 2026-09-25 Floating move stick; bone textures rotate (no Merc pass breaks); trace-file polls throttled (game thread -12%); ninja build 25 -> 12 min, rebuild ~4.
 2026-09-26 Public prep: ISC LICENSE, notices, issue forms, icon; internal archive (1,031 files) out of the tree; host regressions green again.
 2026-09-26 TV output (external scene, hot-plug); Jump to Level; stack save 256->512 fixes the jungle hopper fault; all 16 levels load, 0 faults.
@@ -33,3 +32,4 @@ Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
 2026-09-26 L2/R2 touch buttons (button cheat codes now possible by touch); ••• → Cheats toggles OpenGOAL's 14 cheats, checked live.
 2026-09-26 Metal pass breaks: sky + time-of-day palettes rotate, palettes upload in one call, unchanged eyes not redrawn. Swamp 34 -> 44 fps.
 2026-09-26 Texture packs proven: extractor fixed (tcc assert); apply-texture-pack.sh builds a modded pack and restores the original.
+2026-09-26 Crash on quit fixed (audio pause after static teardown); iPhone 16 Pro Simulator boots to title with the full touch layout.
