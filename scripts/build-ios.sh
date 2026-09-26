@@ -197,6 +197,10 @@ fi
 ninja -C "$SDL_BUILD" 2>&1 | tail -1
 
 echo "== [1b/4] Zstandard static (iOS Simulator) =="
+# A two-line wrapper project, so zstd builds with the iOS toolchain settings above.
+mkdir -p "$ZSTD_PROJECT"
+[ -f "$ZSTD_PROJECT/CMakeLists.txt" ] || printf '%s\n' 'cmake_minimum_required(VERSION 3.20)' \
+  'project(OttselIOSZstd C)' 'add_subdirectory(../../../third-party/zstd zstd)' > "$ZSTD_PROJECT/CMakeLists.txt"
 if [ ! -f "$ZSTD_BUILD/build.ninja" ]; then
   cmake -S "$ZSTD_PROJECT" -B "$ZSTD_BUILD" -G Ninja \
     -DCMAKE_SYSTEM_NAME=iOS \

@@ -5,17 +5,51 @@ Daxter: The Precursor Legacy* on top of
 [OpenGOAL](https://github.com/open-goal/jak-project).
 
 ## Status
-**2026-09-23: playable in the iOS Simulator; not yet run on a device.**
+**2026-09-25: plays in the iPad Simulator; the device build is ready but has not run on hardware.**
 
-- **macOS:** native arm64 `gk` plays title → New Game → Training at 60 fps.
-- **iPad/iPhone Simulator:** plays Training by touch with sound and
-  background/foreground recovery. 348 of the game's 518 code modules run as
-  signed ahead-of-time code; the other 170 (level code) are still linked at
-  runtime, which the Simulator allows and a device does not. The iPad
-  Simulator runs at roughly 5–10 fps.
-- **Physical devices:** blocked until all code is signed (the current gate);
-  `OTTSEL_PLATFORM=device scripts/build-ios.sh` builds for `iphoneos`.
+- **Code:** all 518 of the game's code modules are signed ahead-of-time ARM64 code. Strict mode makes
+  runtime code loading fatal, so the Simulator enforces what a device will.
+- **Rendering:** OpenGOAL's own OpenGL renderer on OpenGL ES 3.0 from ANGLE (on Metal). In the iPad Pro
+  11" Simulator the title runs at ~58 fps and Training at ~23-25 fps at 2420x1668; the whole intro
+  plays to Geyser Rock.
+- **Controls:** SunPad-style touch controls and three-dot menu (UIKit), plus controllers and keyboard.
+- **Device:** `scripts/install-ios-device.sh` signs, installs and launches on a connected iPad once
+  Xcode is signed in to an Apple ID. Frame rate on hardware is not measured yet.
 - Users supply their own game data; the repository contains no game assets.
+
+## Build and run
+Needs a Mac with Xcode, `brew install cmake ninja ripgrep glslang spirv-cross xcodegen`, and your own
+Jak and Daxter (NTSC, SCUS-97124) disc image. ANGLE is downloaded by the build.
+
+```sh
+# 1. OpenGOAL at the pinned commit, plus Ottsel's patch (see patches/README.md)
+git clone https://github.com/open-goal/jak-project out/jak-project
+git -C out/jak-project checkout 641fb572e876750d8618434d9f7c1a531b43b366
+git -C out/jak-project apply --binary ../../patches/ottsel-jak-project.patch
+
+# 2. Host tools, your disc's data, and the game compiled for arm64
+cd out/jak-project
+cmake -S . -B build/h1 -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang \
+  -DCMAKE_CXX_COMPILER=clang++ -DSTATICALLY_LINK=OFF -DINSTALL_GTEST=OFF -DOTTSEL_NO_EMIT=ON
+ninja -C build/h1 goalc extractor ottsel-a11-slice
+./build/h1/decompiler/extractor --extract --decompile /path/to/jak1.iso   # -> iso_data/jak1, out/jak1/fr3
+./build/h1/goalc/goalc --game jak1 --isa arm64 -c '(mi)'                  # -> out/jak1/iso, out/jak1/obj
+cd ../..
+
+# 3. The iOS app (Simulator; OTTSEL_PLATFORM=device for iPad/iPhone)
+OTTSEL_STRICT_EXEC=1 OTTSEL_SIGNED_GSTATE_EXPERIMENT=0 OTTSEL_SIGNED_EXPORT_BANKS=1 \
+  OTTSEL_SIGNED_MODULE_LIST=config/signed-game-strict.json bash scripts/build-ios.sh
+
+# 4. Your data pack, installed into a booted Simulator
+scripts/prepare-user-data-pack.sh out/jak-project/iso_data/jak1 /tmp/ottsel-pack out/jak-project/out/jak1/fr3
+xcrun simctl install booted out/jak-project/out/ios/app/OttselShell.app
+scripts/import-ios-user-data.sh <simulator-udid> /tmp/ottsel-pack
+xcrun simctl launch booted com.ottsel.shell
+```
+
+On an iPad: sign in to Xcode with an Apple ID, connect and trust the iPad, enable Developer Mode, then
+`scripts/install-ios-device.sh /tmp/ottsel-pack`. `scripts/test-ios-touch.sh <udid>` replays title ->
+LOAD GAME -> Training by real touches.
 
 ## Start here
 1. [`docs/GOAL_LOOP.md`](docs/GOAL_LOOP.md) — the single execution plan
@@ -38,7 +72,6 @@ Daxter: The Precursor Legacy* on top of
 ## Hard constraints
 - No ISOs/extracted copyrighted assets in git
 - No RWX/JIT or runtime-created executable-code product path on iOS
-- Simulator RX-blob execution is research infrastructure, not product proof
 - Simulator iteration: one device simulator at a time
 - At most one runtime executable; no fullscreen test executable
 
