@@ -1105,7 +1105,7 @@ index bfe48e43d..24cc0effa 100644
    vert_src = std::regex_replace(vert_src, std::regex("HEIGHT_SCALE"), height_scale);
    vert_src = std::regex_replace(vert_src, std::regex("SCISSOR_HEIGHT"), scissor_height);
 diff --git a/game/graphics/opengl_renderer/ShadowRenderer.cpp b/game/graphics/opengl_renderer/ShadowRenderer.cpp
-index 8f3fa3f64..eba4682da 100644
+index 8f3fa3f64..28b08e58a 100644
 --- a/game/graphics/opengl_renderer/ShadowRenderer.cpp
 +++ b/game/graphics/opengl_renderer/ShadowRenderer.cpp
 @@ -47,6 +47,9 @@ ShadowRenderer::~ShadowRenderer() {
@@ -1263,17 +1263,22 @@ index 8f3fa3f64..eba4682da 100644
    // enable stencil!
    glEnable(GL_STENCIL_TEST);
    glStencilMask(0xFF);
-@@ -348,7 +396,8 @@ void ShadowRenderer::draw(SharedRenderState* render_state, ScopedProfilerNode& p
+@@ -348,7 +396,13 @@ void ShadowRenderer::draw(SharedRenderState* render_state, ScopedProfilerNode& p
  
    glBindVertexArray(m_ogl.vao);
    glBindBuffer(GL_ARRAY_BUFFER, m_ogl.vertex_buffer);
 -  glBufferData(GL_ARRAY_BUFFER, m_next_vertex * sizeof(Vertex), m_vertices, GL_STREAM_DRAW);
 +  // Into the MAX-sized storage from the constructor (no new Metal buffer per frame on ANGLE).
 +  glBufferSubData(GL_ARRAY_BUFFER, 0, m_next_vertex * sizeof(Vertex), m_vertices);
++#ifdef OTTSEL_GLES
++  // Triangle lists with no restart index: with restart on, ANGLE/Metal rescans the rewritten index
++  // buffer on the CPU per draw and waits for the GPU (see Sprite3::flush_sprites).
++  glDisable(GL_PRIMITIVE_RESTART);
++#endif
  
    glEnable(GL_DEPTH_TEST);
    glDisable(GL_BLEND);
-@@ -369,16 +418,18 @@ void ShadowRenderer::draw(SharedRenderState* render_state, ScopedProfilerNode& p
+@@ -369,16 +423,18 @@ void ShadowRenderer::draw(SharedRenderState* render_state, ScopedProfilerNode& p
    // but we increment stencil on depth fail.
  
    {
@@ -1298,7 +1303,7 @@ index 8f3fa3f64..eba4682da 100644
        glDisable(GL_BLEND);
        glUniform4f(
            glGetUniformLocation(render_state->shaders[ShaderId::SHADOW].id(), "color_uniform"), 0.0f,
-@@ -396,14 +447,15 @@ void ShadowRenderer::draw(SharedRenderState* render_state, ScopedProfilerNode& p
+@@ -396,14 +452,15 @@ void ShadowRenderer::draw(SharedRenderState* render_state, ScopedProfilerNode& p
      glUniform4f(glGetUniformLocation(render_state->shaders[ShaderId::SHADOW].id(), "color_uniform"),
                  128.0f / 256, 0.0f, 0.0f, 130.0f / 256);
      glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ogl.index_buffer[1]);
@@ -1322,6 +1327,14 @@ index 8f3fa3f64..eba4682da 100644
        glDisable(GL_BLEND);
        glUniform4f(
            glGetUniformLocation(render_state->shaders[ShaderId::SHADOW].id(), "color_uniform"), 0.0f,
+@@ -438,4 +495,7 @@ void ShadowRenderer::draw(SharedRenderState* render_state, ScopedProfilerNode& p
+   glDepthMask(GL_TRUE);
+ 
+   glDisable(GL_STENCIL_TEST);
++#ifdef OTTSEL_GLES
++  glEnable(GL_PRIMITIVE_RESTART);
++#endif
+ }
 diff --git a/game/graphics/opengl_renderer/ShadowRenderer.h b/game/graphics/opengl_renderer/ShadowRenderer.h
 index 70afcf44d..17752b160 100644
 --- a/game/graphics/opengl_renderer/ShadowRenderer.h
@@ -3136,7 +3149,7 @@ index 4eeb08801..a9dc99c3e 100644
  
    vec4 transformed = perspective_matrix * vtx_pos;
 diff --git a/game/graphics/opengl_renderer/sprite/Sprite3.cpp b/game/graphics/opengl_renderer/sprite/Sprite3.cpp
-index 9918d76d3..688782b6a 100644
+index 9918d76d3..4e1c9c56c 100644
 --- a/game/graphics/opengl_renderer/sprite/Sprite3.cpp
 +++ b/game/graphics/opengl_renderer/sprite/Sprite3.cpp
 @@ -1,4 +1,9 @@
@@ -3387,9 +3400,19 @@ index 9918d76d3..688782b6a 100644
  }
  
  void Sprite3::draw_debug_window() {
-@@ -587,26 +741,56 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
+@@ -584,29 +738,66 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
+                             bool double_draw) {
+   glBindVertexArray(m_ogl.vao);
+ 
++#ifdef OTTSEL_GLES
++  // The quads below are plain triangle lists with no restart index. Metal only restarts strips, so
++  // with restart enabled ANGLE maps the index buffer back to the CPU on every draw to look for
++  // restart indices, waiting for the GPU each time (~60% of the main thread in Sandover).
++  glDisable(GL_PRIMITIVE_RESTART);
++#else
    glEnable(GL_PRIMITIVE_RESTART);
    glPrimitiveRestartIndex(UINT32_MAX);
++#endif
  
 -  // upload vertex buffer
 +  // upload vertex buffer (into the storage allocated once in opengl_setup_normal: re-specifying the
@@ -3449,7 +3472,7 @@ index 9918d76d3..688782b6a 100644
      u32 tbp = bucket->key >> 32;
      DrawMode mode;
      mode.as_int() = bucket->key & 0xffffffff;
-@@ -622,9 +806,23 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
+@@ -622,9 +813,23 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
  
      glActiveTexture(GL_TEXTURE0);
      glBindTexture(GL_TEXTURE_2D, *tex);
@@ -3473,7 +3496,7 @@ index 9918d76d3..688782b6a 100644
      glUniform1f(glGetUniformLocation(render_state->shaders[ShaderId::SPRITE3].id(), "alpha_min"),
                  double_draw ? settings.aref_first : 0.016);
      glUniform1f(glGetUniformLocation(render_state->shaders[ShaderId::SPRITE3].id(), "alpha_max"),
-@@ -634,7 +832,7 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
+@@ -634,7 +839,7 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
      prof.add_draw_call();
      prof.add_tri(2 * (bucket->ids.size() / 5));
  
@@ -3482,7 +3505,7 @@ index 9918d76d3..688782b6a 100644
                     (void*)(bucket->offset_in_idx_buffer * sizeof(u32)));
  
      if (double_draw) {
-@@ -651,7 +849,7 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
+@@ -651,7 +856,7 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
                glGetUniformLocation(render_state->shaders[ShaderId::SPRITE3].id(), "alpha_max"),
                settings.aref_second);
            glDepthMask(GL_FALSE);
@@ -3491,7 +3514,17 @@ index 9918d76d3..688782b6a 100644
                           (void*)(bucket->offset_in_idx_buffer * sizeof(u32)));
            break;
          default:
-@@ -815,6 +1013,25 @@ void Sprite3::do_block_common(SpriteMode mode,
+@@ -665,6 +870,9 @@ void Sprite3::flush_sprites(SharedRenderState* render_state,
+   m_last_bucket_key = UINT64_MAX;
+   m_last_bucket = nullptr;
+   m_sprite_idx = 0;
++#ifdef OTTSEL_GLES
++  glEnable(GL_PRIMITIVE_RESTART);  // what the renderers after this one expect
++#endif
+   glBindVertexArray(0);
+ }
+ 
+@@ -815,6 +1023,25 @@ void Sprite3::do_block_common(SpriteMode mode,
      }
      handle_alpha(adgif.alpha_data, render_state, prof);
  
@@ -3759,7 +3792,7 @@ index 000000000..b41f30bc8
 +void ottsel_gles_load_missing(void* (*get_proc)(const char*));
 +#endif
 diff --git a/game/graphics/pipelines/opengl.cpp b/game/graphics/pipelines/opengl.cpp
-index d8d15c873..f0a45f90c 100644
+index d8d15c873..dbeb2d928 100644
 --- a/game/graphics/pipelines/opengl.cpp
 +++ b/game/graphics/pipelines/opengl.cpp
 @@ -5,6 +5,8 @@
@@ -3882,7 +3915,7 @@ index d8d15c873..f0a45f90c 100644
    if (g_gfx_data) {
      std::unique_lock<std::mutex> lock(g_gfx_data->dma_mutex);
      if (g_gfx_data->has_data_to_render) {
-@@ -868,3 +915,328 @@ const GfxRendererModule gRendererOpenGL = {
+@@ -868,3 +915,326 @@ const GfxRendererModule gRendererOpenGL = {
      GfxPipeline::OpenGL,     // pipeline
      "OpenGL 4.3"             // name
  };
@@ -4168,10 +4201,8 @@ index d8d15c873..f0a45f90c 100644
 +  }
 +  const auto rendered = std::chrono::steady_clock::now();
 +  ++frames;
-+  if (s.framelimiter) {
-+    g_gfx_data->frame_limiter.run(s.target_fps, s.experimental_accurate_lag,
-+                                  s.sleep_in_frame_limiter, g_gfx_data->last_engine_time);
-+  }
++  // No FrameLimiter here: the shell's main loop paces on a fixed 60 Hz grid. The limiter times each
++  // frame from the end of the last one, so its late wake-ups added up (58 fps with light scenes).
 +  draw_view_layers(fb_w, fb_h);
 +  if (frames <= 600) check_view_gl("view-layers");
 +  eglSwapBuffers(g_egl_display, g_egl_surface);

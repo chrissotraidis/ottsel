@@ -100,7 +100,7 @@ All of this is in the iPad Pro 11-inch (M4) and iPhone 16 Pro Simulators at nati
 | Area | Result |
 | --- | --- |
 | Game code | All 518 GOAL modules compiled ahead of time and signed into the app; loading code at run time is fatal |
-| Levels | The intro plays through to Geyser Rock; all 16 hubs and levels load and run at 49–60 fps (2420×1668) with no faults |
+| Levels | The intro plays through to Geyser Rock; all 16 hubs and levels load and run at 51–60 fps (2420×1668; 12 of 16 hold 60) with no faults |
 | Saves | Saving in Sandover, quitting, relaunching and loading resumes in Sandover |
 | Sound | Music, effects and dialogue mix and play; a recorded minute showed no clipping or dropouts |
 | TV output | 1080p external display from a cold launch, unplugged and replugged mid-game |
