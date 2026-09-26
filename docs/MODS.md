@@ -15,18 +15,27 @@ which needs its own build.
 
 ## Texture packs
 
-OpenGOAL's extractor replaces a game texture with a PNG of the same name while it builds your data:
+OpenGOAL's extractor replaces a game texture with a PNG of the same name while it builds your level data.
+A pack is a folder laid out as `<texture page>/<texture name>.png`, the layout OpenGOAL texture packs use,
+for example [Jak 1 – Refreshed HUD](https://github.com/Aloqas/Jak-1-Refreshed-HUD) and the HD packs on
+[JakMods.dev](https://jakmods.dev). Build a separate data pack with it:
 
-```text
-out/jak-project/custom_assets/jak1/texture_replacements/<texture page>/<texture name>.png
+```sh
+ninja -C out/jak-project/build/h1 extractor          # once
+scripts/apply-texture-pack.sh /path/to/texture_replacements /tmp/ottsel-pack-modded
+scripts/import-ios-user-data.sh <simulator-udid> /tmp/ottsel-pack-modded   # or install-ios-device.sh
 ```
 
-Install a pack by copying its `texture_replacements` folder there, then redo step 2 of the build
-(`extractor --extract --decompile`) and step 4 (the data pack), and re-import the pack. Packs made for
-OpenGOAL's Jak 1 use this layout, for example
-[Jak 1 – Refreshed HUD](https://github.com/Aloqas/Jak-1-Refreshed-HUD) and the HD packs listed on
-[JakMods.dev](https://jakmods.dev). Replacement textures are loaded into memory with the level, so very
-large packs may not fit an iPad or iPhone; try one level first.
+The script re-extracts your disc's level data with the pack (about 20 seconds), builds the data pack, and
+then restores your original level data, so your normal pack is unaffected. To see which names exist, run the
+extractor once with `--decomp-config-override '{"save_texture_pngs": true}'`; every texture lands in
+`out/jak-project/decompiler_out/jak1/textures/<page>/`. Replacement textures load into memory with each
+level, so try a large HD pack on one level before a long session on an iPad or iPhone.
+
+![Sandover with a one-texture test pack that turns the hut roofs blue](readme/ottsel-texture-pack.jpg)
+
+Tested in the Simulator with a one-texture pack (Sandover's hut roof tiles recoloured); full community
+packs have not been tried yet.
 
 ## Model replacements
 
@@ -42,5 +51,5 @@ Mods such as [OG Randomizer](https://github.com/OpenGOAL-Mods/OG-Randomizer), Sp
 custom levels change the game's code. Each would need Ottsel's patch applied to that mod's OpenGOAL
 source and a separate signed build; none is packaged yet. Check each mod's license before sharing a build.
 
-None of the texture or model paths above has been tested in Ottsel yet; please report results with a
+Model replacements and code mods are untested in Ottsel; please report results with a
 [device report](https://github.com/chrissotraidis/ottsel/issues/new?template=device_report.yml).

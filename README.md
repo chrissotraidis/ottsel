@@ -307,6 +307,7 @@ cutscenes and tasks expect the game's normal order.
 | [`scripts/install-ios-device.sh`](scripts/install-ios-device.sh) | Signs, installs and launches on a connected iPad or iPhone, and copies the pack |
 | [`scripts/prepare-user-data-pack.sh`](scripts/prepare-user-data-pack.sh) | Builds a game-data pack from your extracted disc, outside the repository |
 | [`scripts/import-ios-user-data.sh`](scripts/import-ios-user-data.sh) | Copies a pack into a Simulator install |
+| [`scripts/apply-texture-pack.sh`](scripts/apply-texture-pack.sh) | Builds a data pack with a texture pack applied ([mods guide](docs/MODS.md)) |
 | [`scripts/translate-gl-shaders.py`](scripts/translate-gl-shaders.py) | Translates OpenGOAL's desktop shaders to GLSL ES 3.00 |
 | [`scripts/test-ios-touch.sh`](scripts/test-ios-touch.sh) | Plays title → Load Game → training course with real touches (XCUITest) |
 | [`scripts/replay-ios-normal-route.py`](scripts/replay-ios-normal-route.py) | Drives the menus into New Game or a saved slot for quick checks |

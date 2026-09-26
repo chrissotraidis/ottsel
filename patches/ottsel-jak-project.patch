@@ -475,6 +475,30 @@ index 2ce52cace..b7887956e 100644
      return;
    }
    size_t my_idx = (m_next_idx++ % m_nodes.size());
+diff --git a/decompiler/level_extractor/extract_merc.cpp b/decompiler/level_extractor/extract_merc.cpp
+index 7e5af62b2..c5a6dcd0c 100644
+--- a/decompiler/level_extractor/extract_merc.cpp
++++ b/decompiler/level_extractor/extract_merc.cpp
+@@ -836,7 +836,9 @@ ConvertedMercEffect convert_merc_effect(const MercEffect& input_effect,
+         process_draw_mode(*input_effect.extra_info.shader, false, false, false, false);
+     result.envmap_mode.set_ab(true);
+     u32 new_tex = remap_texture(input_effect.extra_info.shader->original_tex, map);
+-    ASSERT(result.envmap_mode.get_tcc_enable());
++    // Ottsel: upstream's get_tcc_enable read bit 6 (filtering) until common/dma/gs.h was corrected, so
++    // this check has always held for filtering; keep that, since merc shaders can have TCC off.
++    ASSERT(result.envmap_mode.get_filt_enable());
+     ASSERT(result.envmap_mode.get_alpha_blend() == DrawMode::AlphaBlend::SRC_0_DST_DST);
+ 
+     // texture the texture page/texture index, and convert to a PC port texture ID
+@@ -1001,7 +1003,7 @@ ConvertedMercEffect convert_merc_effect(const MercEffect& input_effect,
+       bool fog = true;
+       merc_state.merc_draw_mode.mode =
+           process_draw_mode(shader, result.has_envmap, use_alpha_blend, depth_write, fog);
+-      if (!merc_state.merc_draw_mode.mode.get_tcc_enable()) {
++      if (!merc_state.merc_draw_mode.mode.get_filt_enable()) {  // see the envmap note above
+         ASSERT(false);
+       }
+       u32 new_tex = remap_texture(shader.original_tex, map);
 diff --git a/game/CMakeLists.txt b/game/CMakeLists.txt
 index 2a7b5c400..173afcb4e 100644
 --- a/game/CMakeLists.txt
