@@ -286,12 +286,10 @@ It has not been tested on one yet. The device build compiles, links and signs, a
 
 ### Can I use mods, texture packs or a higher frame rate?
 
-Texture packs are the best fit: OpenGOAL reads replacement images from
-`custom_assets/jak1/texture_replacements/` while it extracts your disc, so a pack placed there before step 2
-ends up in your build (untested so far). Code mods and custom levels are modified OpenGOAL builds; because
-iOS allows no JIT, each would have to be compiled into its own Ottsel build on the Mac. The game runs at
-60 fps; OpenGOAL's experimental 100 and 150 fps modes can break Jak 1's physics, so Ottsel does not offer
-them yet.
+Cheats are built in (**••• → Cheats**). Texture packs and replacement models go into your build on the
+Mac; code mods and custom levels each need their own build. [`docs/MODS.md`](docs/MODS.md) explains all
+three. The game runs at 60 fps; OpenGOAL's experimental 100 and 150 fps modes can break Jak 1's physics,
+so Ottsel does not offer them yet.
 
 ### How do I test a later level without playing up to it?
 
