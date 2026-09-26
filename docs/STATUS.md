@@ -8,8 +8,9 @@ Authority: [GOAL_LOOP.md](GOAL_LOOP.md). Full log before 2026-09-23:
 Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
 
 - Renderer: OpenGOAL's own OpenGL renderer on OpenGL ES 3.0 from ANGLE on Metal (kivy/angle-builder
-  chromium-7151, fetched by build-ios.sh). Simulator: title 57 fps, Training 23-25 fps at full 2420x1668
-  (was 1-2 fps on Apple's CPU GLES). `OTTSEL PERF` logs the frame split. Title matches macOS, 0 GL
+  chromium-7151, fetched by build-ios.sh). Simulator: title and Training both ~58 fps at full 2420x1668
+  (merc skinning bones come from a texture, so ANGLE no longer re-encodes a Metal argument buffer per
+  draw). `OTTSEL PERF` logs the frame split. Title matches macOS, 0 GL
   errors, and the whole intro plays to Geyser Rock with the touch overlay drawn over it
   ([evidence](evidence/G3/upstream-gl-renderer-title-2026-09-24.md)). The Metal renderer is deleted (last: `df31425`).
 - G1: all 518 code modules signed; `OTTSEL_STRICT_EXEC` makes runtime code loading fatal; the whole intro
@@ -25,7 +26,6 @@ Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
 
 ## Log (last eight lines)
 
-2026-09-24 G1.3: real IOP on iOS; fake-IOP GOAL workarounds reverted; streamed reload; the full intro plays to Geyser Rock.
 2026-09-24 G1 met: 518/518 signed, strict exec on, intro to Geyser Rock with 0 aborts; fake IOP and overlays deleted.
 2026-09-24 Renderer: upstream OpenGL renderer on GLES 3.0 (shaders cross-compiled); title matches macOS, 0 GL errors.
 2026-09-24 Metal renderer deleted (71 files); GL is the only path; intro plays to Geyser Rock on it, 0-byte fault log.
@@ -33,3 +33,4 @@ Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
 2026-09-24 Touch: SunPad-style UIKit controller replaces the GL-drawn regions; XCUITest plays to Training by touch.
 2026-09-24 ANGLE: GLES on Metal; Simulator Training 1-2 -> 23-25 fps full-res; unsigned vertex inputs fixed for Metal.
 2026-09-24 Title streaks: Sprite3 strip+restart joined sprites on ANGLE/Metal; quads now drawn as triangles. Clean title/menu.
+2026-09-25 Speed: merc bones in a texture (Training 25 -> 58 fps, draw 36 -> 8 ms); per-frame menu trace removed (log flood).

@@ -10,7 +10,7 @@ Daxter: The Precursor Legacy* on top of
 - **Code:** all 518 of the game's code modules are signed ahead-of-time ARM64 code. Strict mode makes
   runtime code loading fatal, so the Simulator enforces what a device will.
 - **Rendering:** OpenGOAL's own OpenGL renderer on OpenGL ES 3.0 from ANGLE (on Metal). In the iPad Pro
-  11" Simulator the title runs at ~58 fps and Training at ~23-25 fps at 2420x1668; the whole intro
+  11" Simulator the title and Training both run at ~58 fps at 2420x1668; the whole intro
   plays to Geyser Rock.
 - **Controls:** SunPad-style touch controls and three-dot menu (UIKit), plus controllers and keyboard.
 - **Device:** `scripts/install-ios-device.sh` signs, installs and launches on a connected iPad once
