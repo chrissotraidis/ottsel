@@ -14,7 +14,7 @@
   <img alt="Game data not included" src="https://img.shields.io/badge/game%20data-not%20included-FF453A">
 </p>
 
-![Ottsel running Jak and Daxter in Geyser Rock's training course with the touch controls](docs/readme/ottsel-training-touch.jpg)
+![Jak running through Geyser Rock's training course, steered by the floating move stick under the left thumb](docs/readme/ottsel-training-touch.jpg)
 
 Ottsel packages [OpenGOAL](https://github.com/open-goal/jak-project), the open-source port of Jak and
 Daxter built from its decompiled GOAL source, as a native iPadOS and iOS app. On a PC, OpenGOAL compiles
