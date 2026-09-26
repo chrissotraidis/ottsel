@@ -24,6 +24,7 @@ count=$(find "$pack_src" -name '*.png' | wc -l | tr -d ' ')
 [[ "$count" -gt 0 ]] || { echo "no PNG files under $pack_src" >&2; exit 1; }
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/ottsel-texpack.XXXXXX")"
+log="${TMPDIR:-/tmp}/ottsel-texpack-extract.log"
 cp -R "$jak/out/jak1/fr3" "$work/fr3-original"
 if [[ -e "$assets" ]]; then mv "$assets" "$work/replacements-original"; fi
 restore() {
@@ -31,6 +32,9 @@ restore() {
   if [[ -e "$assets" ]]; then mv "$assets" "$work/replacements-used"; fi
   if [[ -e "$work/replacements-original" ]]; then mv "$work/replacements-original" "$assets"; fi
   echo "restored the original level data and custom_assets"
+  # Keep only the extractor log; the level-data copies are several hundred MB.
+  cp "$work/extract.log" "$log" 2>/dev/null || true
+  rm -rf "$work"
 }
 trap restore EXIT
 
@@ -40,6 +44,6 @@ echo "extracting with $count replacement textures..."
 (cd "$jak" && "$extractor" --folder --decompile iso_data/jak1 > "$work/extract.log" 2>&1) ||
   { tail -5 "$work/extract.log" >&2; exit 1; }
 replaced=$(grep -c 'Replacing ' "$work/extract.log" || true)
-echo "the extractor replaced $replaced textures (log: $work/extract.log)"
+echo "the extractor replaced $replaced textures (log: $log)"
 cp -R "$jak/out/jak1/fr3" "$work/fr3-modded"
 "$repo/scripts/prepare-user-data-pack.sh" "$jak/iso_data/jak1" "$output" "$work/fr3-modded"
