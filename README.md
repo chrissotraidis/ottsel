@@ -82,7 +82,7 @@ a physical iPad or iPhone is the most useful thing you can send right now.
     <td align="center"><strong>Touch Control Settings</strong><br>Visibility, floating stick, opacity, size and camera.</td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/readme/ottsel-tv.jpg" alt="The Jak and Daxter title screen on a 1080p TV"></td>
+    <td width="50%"><img src="docs/readme/ottsel-tv.jpg" alt="Jak in Sandover Village on a 1080p TV"></td>
     <td width="50%"><img src="docs/readme/ottsel-tv-ipad.jpg" alt="The iPad showing the controls while the game plays on the TV"></td>
   </tr>
   <tr>
@@ -104,7 +104,7 @@ All of this is in the iPad Pro 11-inch (M4) and iPhone 16 Pro Simulators at nati
 | Saves | Saving in Sandover, quitting, relaunching and loading resumes in Sandover |
 | Sound | Music, effects and dialogue mix and play; a recorded minute showed no clipping or dropouts |
 | TV output | 1080p external display from a cold launch, unplugged and replugged mid-game |
-| Touch | A scripted real-touch run plays title → Load Game → training course, walks, jumps and attacks |
+| Touch | A scripted real-touch run plays title → Load Game → the saved level, walks, jump-attacks, and opens the ••• menu and the layout editor |
 | iPhone | Boots to the title with the full touch layout fitted to the screen |
 | Physical devices | **Not yet tested.** The device build compiles, links and signs |
 

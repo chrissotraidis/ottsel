@@ -55,7 +55,8 @@ final class OttselTouchTests: XCTestCase {
     app.buttons["D-pad down"].press(forDuration: 0.6)
     Thread.sleep(forTimeInterval: 8)
     shot("2b-slot")
-    _ = press("Cross", until: "GAMEPLAY: enter training", timeout: 300)
+    // Whatever level slot 1 was saved in (Training on a fresh card, Sandover after a save there).
+    _ = press("Cross", until: "GAMEPLAY: enter ", timeout: 300)
     Thread.sleep(forTimeInterval: 20)
     shot("3-loaded")
     // The move stick floats: press anywhere in the left thumb's area and drag. The drag goes well past

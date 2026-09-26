@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Plays Ottsel on the booted Simulator through its real touch controls (XCUITest taps on the UIKit
-# overlay): START, D-pad and Cross through the menus into LOAD GAME slot 1, the move stick in Training,
-# then the three-dot menu. The app must be installed, have a pack imported and a save in slot 1.
+# overlay): START, D-pad and Cross through the menus into LOAD GAME slot 1, the move stick in the
+# saved level, then the three-dot menu. The app must be installed, have a pack imported and a save
+# in slot 1.
 # Screenshots: /tmp/ottsel-uitest-*.png.   Usage: scripts/test-ios-touch.sh <simulator-udid>
 set -euo pipefail
 udid="${1:?usage: $0 <simulator-udid>}"
