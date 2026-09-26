@@ -25,7 +25,6 @@ Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
 
 ## Log (last eight lines)
 
-2026-09-25 Floating move stick; bone textures rotate (no Merc pass breaks); trace-file polls throttled (game thread -12%); ninja build 25 -> 12 min, rebuild ~4.
 2026-09-26 Public prep: ISC LICENSE, notices, issue forms, icon; internal archive (1,031 files) out of the tree; host regressions green again.
 2026-09-26 TV output (external scene, hot-plug); Jump to Level; stack save 256->512 fixes the jungle hopper fault; all 16 levels load, 0 faults.
 2026-09-26 Sandover pause-menu save -> cold relaunch -> Load resumes village1-hut; leaving the app now returns to the pause menu; audio mixing (peak ~2500).
@@ -33,3 +32,4 @@ Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
 2026-09-26 Metal pass breaks: sky + time-of-day palettes rotate, palettes upload in one call, unchanged eyes not redrawn. Swamp 34 -> 44 fps.
 2026-09-26 Texture packs proven: extractor fixed (tcc assert); apply-texture-pack.sh builds a modded pack and restores the original.
 2026-09-26 Crash on quit fixed (audio pause after static teardown); iPhone 16 Pro Simulator boots to title with the full touch layout.
+2026-09-26 Sprite/shadow buffers updated in place (no Metal buffer per flush). Sweep: 16 levels 47-59 fps, 0 faults.
