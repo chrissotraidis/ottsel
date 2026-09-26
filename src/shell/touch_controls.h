@@ -30,3 +30,5 @@ struct OttselTouchHooks {
 void ottsel_touch_install(SDL_Window* window, const OttselTouchHooks& hooks);
 // A keyboard, mouse or controller is in use (hide the controls when set to "Automatically").
 void ottsel_touch_set_hidden(bool hidden);
+// The game is showing on a TV or monitor: the iPad shows a dark backdrop behind the controls.
+void ottsel_touch_set_tv_mode(bool on_tv);

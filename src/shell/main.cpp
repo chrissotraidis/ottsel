@@ -30,6 +30,7 @@
 #include "ios_boot.h"
 #include "game/graphics/pipelines/ottsel_gl_view.h"
 #include "touch_controls.h"
+#include "external_display.h"
 
 namespace {
 
@@ -748,6 +749,7 @@ int main(int argc, char** argv) {
   ottsel_touch_install(g_win, {[](const OttselTouchPad& pad) { g_input.touch_pad(pad); },
                                shell_setting, set_shell_setting, [] { return g_presented_fps; },
                                [] { return ottsel_ios_has_user_data(); }, g_writable_dir.c_str()});
+  ottsel_external_display_install();  // a connected TV shows the game; the iPad keeps the controls
   // With the real IOP, OVERLORD's InitSound starts the sound system (game/overlord/jak1/ssound.cpp).
 
   std::thread boot(ottsel_ios_run_boot);

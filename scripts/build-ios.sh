@@ -506,10 +506,11 @@ fi
 compile "$REPO_DIR/src/shell/main.cpp" "$OBJ/shell_main.o"
 compile "$REPO_DIR/src/shell/ios_boot.cpp" "$OBJ/ios_boot.o"
 compile_objc "$REPO_DIR/src/shell/touch_controls.mm" "$OBJ/touch_controls.o"
+compile_objc "$REPO_DIR/src/shell/external_display.mm" "$OBJ/external_display.o"
 
 xcrun --sdk "$SDK" clang++ "${COMMON_FLAGS[@]}" \
   ${SIGNED_OBJECTS[@]+"${SIGNED_OBJECTS[@]}"} \
-  "$OBJ/shell_main.o" "$OBJ/ios_boot.o" "$OBJ/touch_controls.o" \
+  "$OBJ/shell_main.o" "$OBJ/ios_boot.o" "$OBJ/touch_controls.o" "$OBJ/external_display.o" \
   "$APP_BUILD/libottsel-runtime.a" "$ZSTD_LIB" "$SDL_BUILD/libSDL3.a" \
   "${FRAMEWORKS[@]}" -F"$ANGLE_DIR" -framework libEGL -framework libGLESv2 \
   -Wl,-rpath,@executable_path/Frameworks -lobjc \

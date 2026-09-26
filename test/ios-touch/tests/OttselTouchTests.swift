@@ -79,6 +79,10 @@ final class OttselTouchTests: XCTestCase {
     Thread.sleep(forTimeInterval: 1)
     app.buttons["Touch Control Settings…"].tap()
     Thread.sleep(forTimeInterval: 2)
+    // Start the layout checks from the defaults, whatever an earlier run or a person left saved.
+    app.buttons["Reset This Device Layout"].tap()
+    app.alerts.buttons["Reset"].tap()
+    Thread.sleep(forTimeInterval: 1)
     shot("7-settings-panel")
     app.buttons["Close touch control settings"].tap()
     app.buttons["Menu"].tap()
@@ -88,6 +92,7 @@ final class OttselTouchTests: XCTestCase {
     app.buttons["Move Touch Controls"].tap()
     Thread.sleep(forTimeInterval: 2)
     let camera = app.otherElements["Camera stick"]
+    let cameraHome = camera.frame
     camera.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
       .press(forDuration: 0.2,
              thenDragTo: camera.coordinate(withNormalizedOffset: CGVector(dx: -0.8, dy: -0.4)),
@@ -97,5 +102,18 @@ final class OttselTouchTests: XCTestCase {
     app.buttons["Finish moving touch controls"].tap()
     Thread.sleep(forTimeInterval: 1)
     shot("9-after-edit")
+    // Put the layout back, so a test run never leaves the controls moved for the next launch.
+    app.buttons["Menu"].tap()
+    Thread.sleep(forTimeInterval: 1)
+    app.buttons["Controls"].tap()
+    Thread.sleep(forTimeInterval: 1)
+    app.buttons["Touch Control Settings…"].tap()
+    Thread.sleep(forTimeInterval: 1)
+    app.buttons["Reset This Device Layout"].tap()
+    app.alerts.buttons["Reset"].tap()
+    Thread.sleep(forTimeInterval: 1)
+    app.buttons["Close touch control settings"].tap()
+    Thread.sleep(forTimeInterval: 1)
+    XCTAssertEqual(camera.frame, cameraHome, "Reset puts the camera stick back where it started")
   }
 }

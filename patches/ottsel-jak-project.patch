@@ -3415,7 +3415,7 @@ index 000000000..b41f30bc8
 +void ottsel_gles_load_missing(void* (*get_proc)(const char*));
 +#endif
 diff --git a/game/graphics/pipelines/opengl.cpp b/game/graphics/pipelines/opengl.cpp
-index d8d15c873..fff878a4a 100644
+index d8d15c873..f0a45f90c 100644
 --- a/game/graphics/pipelines/opengl.cpp
 +++ b/game/graphics/pipelines/opengl.cpp
 @@ -5,6 +5,8 @@
@@ -3538,7 +3538,7 @@ index d8d15c873..fff878a4a 100644
    if (g_gfx_data) {
      std::unique_lock<std::mutex> lock(g_gfx_data->dma_mutex);
      if (g_gfx_data->has_data_to_render) {
-@@ -868,3 +915,287 @@ const GfxRendererModule gRendererOpenGL = {
+@@ -868,3 +915,328 @@ const GfxRendererModule gRendererOpenGL = {
      GfxPipeline::OpenGL,     // pipeline
      "OpenGL 4.3"             // name
  };
@@ -3569,6 +3569,9 @@ index d8d15c873..fff878a4a 100644
 +EGLDisplay g_egl_display = EGL_NO_DISPLAY;
 +EGLSurface g_egl_surface = EGL_NO_SURFACE;
 +EGLContext g_egl_context = EGL_NO_CONTEXT;
++EGLConfig g_egl_config = nullptr;
++void* g_window_layer = nullptr;  // the iPad window's own CAMetalLayer
++void* g_target_layer = nullptr;  // the layer the current surface presents into
 +
 +GLuint g_view_program = 0, g_view_vao = 0, g_view_vbo = 0, g_status_tex = 0;
 +
@@ -3691,6 +3694,9 @@ index d8d15c873..fff878a4a 100644
 +    return false;
 +  }
 +  g_egl_surface = eglCreateWindowSurface(g_egl_display, config, layer, nullptr);
++  g_egl_config = config;
++  g_window_layer = layer;
++  g_target_layer = layer;
 +  const EGLint context_attribs[] = {EGL_CONTEXT_MAJOR_VERSION, 3, EGL_CONTEXT_MINOR_VERSION, 0,
 +                                    EGL_NONE};
 +  g_egl_context = eglCreateContext(g_egl_display, config, EGL_NO_CONTEXT, context_attribs);
@@ -3755,6 +3761,41 @@ index d8d15c873..fff878a4a 100644
 +
 +void ottsel_gl_suspend() {
 +  if (g_egl_context != EGL_NO_CONTEXT) glFinish();
++}
++
++bool ottsel_gl_retarget(void* metal_layer) {
++  void* target = metal_layer ? metal_layer : g_window_layer;
++  if (!gl_inited || !target) return false;
++  glFinish();
++  // A layer takes one surface at a time: to resize, release the current one first.
++  if (target == g_target_layer) {
++    eglMakeCurrent(g_egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, g_egl_context);
++    eglDestroySurface(g_egl_display, g_egl_surface);
++    g_egl_surface = EGL_NO_SURFACE;
++  }
++  EGLSurface surface = eglCreateWindowSurface(g_egl_display, g_egl_config, target, nullptr);
++  if (surface == EGL_NO_SURFACE ||
++      !eglMakeCurrent(g_egl_display, surface, surface, g_egl_context)) {
++    lg::error("OTTSEL DISPLAY: could not render to the {} screen: 0x{:x}",
++              metal_layer ? "external" : "iPad", eglGetError());
++    if (surface != EGL_NO_SURFACE) eglDestroySurface(g_egl_display, surface);
++    if (g_egl_surface != EGL_NO_SURFACE) {
++      eglMakeCurrent(g_egl_display, g_egl_surface, g_egl_surface, g_egl_context);
++    } else if (target != g_window_layer) {
++      return ottsel_gl_retarget(nullptr);  // the resized surface failed: fall back to the iPad
++    }
++    return false;
++  }
++  if (g_egl_surface != EGL_NO_SURFACE) eglDestroySurface(g_egl_display, g_egl_surface);
++  g_egl_surface = surface;
++  g_target_layer = target;
++  eglSwapInterval(g_egl_display, 1);
++  EGLint w = 0, h = 0;
++  eglQuerySurface(g_egl_display, g_egl_surface, EGL_WIDTH, &w);
++  eglQuerySurface(g_egl_display, g_egl_surface, EGL_HEIGHT, &h);
++  lg::info("OTTSEL DISPLAY: rendering to the {} screen at {}x{}", metal_layer ? "external" : "iPad",
++           w, h);
++  return true;
 +}
 +
 +void ottsel_gl_shutdown() {
@@ -3828,10 +3869,10 @@ index d8d15c873..fff878a4a 100644
 +#endif
 diff --git a/game/graphics/pipelines/ottsel_gl_view.h b/game/graphics/pipelines/ottsel_gl_view.h
 new file mode 100644
-index 000000000..be5e2255f
+index 000000000..fcd69aea9
 --- /dev/null
 +++ b/game/graphics/pipelines/ottsel_gl_view.h
-@@ -0,0 +1,21 @@
+@@ -0,0 +1,24 @@
 +#pragma once
 +// Ottsel iOS: what the shell (src/shell/main.cpp) needs from OpenGOAL's OpenGL pipeline, which renders the
 +// game on an OpenGL ES 3.0 context (implemented in pipelines/opengl.cpp).
@@ -3851,6 +3892,9 @@ index 000000000..be5e2255f
 +bool ottsel_gl_has_live_scene();
 +// Finish all submitted GPU work (before the app resigns active; iOS forbids background GPU work).
 +void ottsel_gl_suspend();
++// Render into another CAMetalLayer (a TV's), or back into the window's own layer with null. Main thread,
++// between frames. Returns false and keeps the current target if the new surface cannot be made.
++bool ottsel_gl_retarget(void* metal_layer);
 +// Wake the game thread if it waits for a frame that will not come (shutdown).
 +void ottsel_gl_shutdown();
 diff --git a/game/graphics/texture/TexturePool.cpp b/game/graphics/texture/TexturePool.cpp
@@ -19834,6 +19878,69 @@ index dda5f573c..62a28d101 100644
  #endif
  }
  
+diff --git a/third-party/SDL/src/video/uikit/SDL_uikitappdelegate.m b/third-party/SDL/src/video/uikit/SDL_uikitappdelegate.m
+index 2bc65e245..d53224978 100644
+--- a/third-party/SDL/src/video/uikit/SDL_uikitappdelegate.m
++++ b/third-party/SDL/src/video/uikit/SDL_uikitappdelegate.m
+@@ -504,6 +504,13 @@ API_AVAILABLE(ios(13.0))
+ - (UISceneConfiguration *)application:(UIApplication *)application configurationForConnectingSceneSession:(UISceneSession *)connectingSceneSession options:(UISceneConnectionOptions *)options API_AVAILABLE(ios(13.0))
+ {
+     // This doesn't appear to be called, but it needs to be implemented to signal that we support the UIScene life cycle
++    // Ottsel: an external display (TV, monitor) must not reach SDLUIKitSceneDelegate, whose connect
++    // handler starts the app's main function. The app supplies OttselExternalSceneDelegate for it.
++    if (![connectingSceneSession.role isEqualToString:UIWindowSceneSessionRoleApplication]) {
++        UISceneConfiguration *external = [[UISceneConfiguration alloc] initWithName:@"OttselExternalDisplay" sessionRole:connectingSceneSession.role];
++        external.delegateClass = NSClassFromString(@"OttselExternalSceneDelegate");
++        return external;
++    }
+     UISceneConfiguration *config = [[UISceneConfiguration alloc] initWithName:@"SDLSceneConfiguration" sessionRole:connectingSceneSession.role];
+     config.delegateClass = [SDLUIKitSceneDelegate class];
+     return config;
+diff --git a/third-party/SDL/src/video/uikit/SDL_uikitvideo.m b/third-party/SDL/src/video/uikit/SDL_uikitvideo.m
+index 97aeb9443..fcb94fdad 100644
+--- a/third-party/SDL/src/video/uikit/SDL_uikitvideo.m
++++ b/third-party/SDL/src/video/uikit/SDL_uikitvideo.m
+@@ -255,6 +255,13 @@ CGRect UIKit_ComputeViewFrame(SDL_Window *window, UIScreen *screen)
+ }
+ #endif // SDL_PLATFORM_VISIONOS
+ 
++// Ottsel: SDL's windows belong on the device's own screen. An external display (TV, monitor) arrives
++// as a separate scene with its own role, which the app drives itself.
++static bool UIKit_IsApplicationScene(UIScene *scene) API_AVAILABLE(ios(13.0), tvos(13.0))
++{
++    return [scene.session.role isEqualToString:UIWindowSceneSessionRoleApplication];
++}
++
+ UIWindowScene *UIKit_GetActiveWindowScene(void)
+ {
+     if (@available(iOS 13.0, tvOS 13.0, *)) {
+@@ -262,7 +269,7 @@ UIWindowScene *UIKit_GetActiveWindowScene(void)
+ 
+         // First, try to find an active foreground scene
+         for (UIScene *scene in connectedScenes) {
+-            if ([scene isKindOfClass:[UIWindowScene class]]) {
++            if ([scene isKindOfClass:[UIWindowScene class]] && UIKit_IsApplicationScene(scene)) {
+                 UIWindowScene *windowScene = (UIWindowScene *)scene;
+                 if (windowScene.activationState == UISceneActivationStateForegroundActive) {
+                     return windowScene;
+@@ -272,7 +279,7 @@ UIWindowScene *UIKit_GetActiveWindowScene(void)
+ 
+         // If no active scene, return any foreground scene
+         for (UIScene *scene in connectedScenes) {
+-            if ([scene isKindOfClass:[UIWindowScene class]]) {
++            if ([scene isKindOfClass:[UIWindowScene class]] && UIKit_IsApplicationScene(scene)) {
+                 UIWindowScene *windowScene = (UIWindowScene *)scene;
+                 if (windowScene.activationState == UISceneActivationStateForegroundInactive) {
+                     return windowScene;
+@@ -282,7 +289,7 @@ UIWindowScene *UIKit_GetActiveWindowScene(void)
+ 
+         // Last resort: return first window scene
+         for (UIScene *scene in connectedScenes) {
+-            if ([scene isKindOfClass:[UIWindowScene class]]) {
++            if ([scene isKindOfClass:[UIWindowScene class]] && UIKit_IsApplicationScene(scene)) {
+                 return (UIWindowScene *)scene;
+             }
+         }
 diff --git a/third-party/cmake/modules/SDLOptions.cmake b/third-party/cmake/modules/SDLOptions.cmake
 index 639054a29..a56c98cc7 100644
 --- a/third-party/cmake/modules/SDLOptions.cmake

@@ -380,11 +380,13 @@ UIColor* border_color(bool selected) {
 
 @interface OttselTouchOverlay : OttselPassThroughView <UIDocumentPickerDelegate>
 - (void)setControlsHidden:(BOOL)hidden;
+- (void)setTVMode:(BOOL)onTV;
 @end
 
 @implementation OttselTouchOverlay {
   UIButton* _menuButton;
   UIView* _controls;  // every gameplay control; hidden as one
+  UIView* _tvBackdrop;  // covers the (no longer presented) game view while the game is on a TV
   OttselStickZone* _moveZone;
   NSMutableDictionary<NSString*, UIView<OttselEditable>*>* _byIdent;
   OttselTouchPad _pad;
@@ -415,8 +417,13 @@ UIColor* border_color(bool selected) {
   if ((self = [super initWithFrame:frame])) {
     self.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
     self.multipleTouchEnabled = YES;
+    // Layouts saved against older default positions are never read again; drop them.
+    for (NSString* key in @[ @"OttselTouchControlCenters.v2", @"OttselTouchControlSizes.v2" ]) {
+      [NSUserDefaults.standardUserDefaults removeObjectForKey:key];
+    }
     _byIdent = [NSMutableDictionary dictionary];
     _haptic = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
+    [self buildTVBackdrop];
     _controls = [[OttselPassThroughView alloc] initWithFrame:self.bounds];
     _controls.autoresizingMask = self.autoresizingMask;
     _controls.multipleTouchEnabled = YES;
@@ -432,6 +439,43 @@ UIColor* border_color(bool selected) {
 }
 
 // MARK: Controls
+
+- (void)buildTVBackdrop {
+  _tvBackdrop = [[UIView alloc] initWithFrame:self.bounds];
+  _tvBackdrop.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+  _tvBackdrop.backgroundColor = [UIColor colorWithWhite:0.04 alpha:1.0];
+  _tvBackdrop.userInteractionEnabled = NO;
+  _tvBackdrop.hidden = YES;
+  UIImageView* icon = [[UIImageView alloc]
+      initWithImage:[UIImage systemImageNamed:@"tv"
+                            withConfiguration:[UIImageSymbolConfiguration
+                                                  configurationWithPointSize:44
+                                                                      weight:UIImageSymbolWeightRegular]]];
+  icon.tintColor = [UIColor colorWithWhite:1.0 alpha:0.5];
+  UILabel* title = [UILabel new];
+  title.text = @"Playing on your TV";
+  title.textColor = [UIColor colorWithWhite:1.0 alpha:0.75];
+  title.font = [UIFont systemFontOfSize:22 weight:UIFontWeightSemibold];
+  UILabel* note = [UILabel new];
+  note.text = @"This iPad is the controller.";
+  note.textColor = [UIColor colorWithWhite:1.0 alpha:0.45];
+  note.font = [UIFont systemFontOfSize:15];
+  UIStackView* stack = [[UIStackView alloc] initWithArrangedSubviews:@[ icon, title, note ]];
+  stack.axis = UILayoutConstraintAxisVertical;
+  stack.alignment = UIStackViewAlignmentCenter;
+  stack.spacing = 8;
+  stack.translatesAutoresizingMaskIntoConstraints = NO;
+  [_tvBackdrop addSubview:stack];
+  [NSLayoutConstraint activateConstraints:@[
+    [stack.centerXAnchor constraintEqualToAnchor:_tvBackdrop.centerXAnchor],
+    [stack.centerYAnchor constraintEqualToAnchor:_tvBackdrop.centerYAnchor constant:-40],
+  ]];
+  [self addSubview:_tvBackdrop];
+}
+
+- (void)setTVMode:(BOOL)onTV {
+  _tvBackdrop.hidden = !onTV;
+}
 
 - (void)buildControls {
   __weak OttselTouchOverlay* weakSelf = self;
@@ -1227,4 +1271,8 @@ void ottsel_touch_install(SDL_Window* window, const OttselTouchHooks& hooks) {
 
 void ottsel_touch_set_hidden(bool hidden) {
   [g_overlay setControlsHidden:hidden];
+}
+
+void ottsel_touch_set_tv_mode(bool on_tv) {
+  [g_overlay setTVMode:on_tv];
 }
