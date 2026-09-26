@@ -1,7 +1,7 @@
 # Ottsel
 
 <p align="center">
-  <img src="docs/readme/ottsel-icon.png" width="180" alt="Ottsel app icon: a cartoon otter waving from a tropical island at sunset">
+  <img src="docs/readme/ottsel-icon.png" width="180" alt="Ottsel app icon: a tropical island with two palm trees at sunset">
 </p>
 
 <p align="center">
@@ -295,5 +295,5 @@ touch controls and menu follow [SunPad](https://github.com/chrissotraidis/sunpad
 Ottsel is an unofficial community project and is not affiliated with or endorsed by Sony Interactive
 Entertainment or Naughty Dog. Jak and Daxter names and screenshots are used only to identify the game
 and show the project working. No disc image, extracted game file or save is included in this
-repository. The Ottsel icon is original artwork, not a character from the game. OpenGOAL is released
-under the ISC License, and each other component keeps its own license.
+repository. The Ottsel icon is original artwork. OpenGOAL is released under the ISC License, and each
+other component keeps its own license.
