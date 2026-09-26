@@ -1,87 +1,118 @@
 # Ottsel
 
 <p align="center">
-  <img src="docs/readme/ottsel-icon.png" width="180" alt="Ottsel app icon: a tropical island with two palm trees at sunset">
+  <img src="docs/readme/ottsel-icon.png" width="160" alt="Ottsel app icon: a tropical island with two palm trees at sunset">
 </p>
 
 <p align="center">
-  <strong>Jak and Daxter: The Precursor Legacy as a native iPad and iPhone app, built on OpenGOAL.</strong><br>
-  The game's own code compiled ahead of time to signed ARM64, OpenGOAL's renderer on Metal, touch controls with a floating move stick, and game data you supply from your own disc.
+  <strong>Jak and Daxter: The Precursor Legacy, native for iPad and iPhone.</strong><br>
+  The game's own code compiled ahead of time to signed ARM64, OpenGOAL's renderer on Metal, touch controls with a floating stick, controllers, TV output, cheats and texture packs.
 </p>
 
+Ottsel builds on [OpenGOAL](https://github.com/open-goal/jak-project), the open-source project that
+decompiled Jak and Daxter back into GOAL source and wrote the compiler, runtime and renderer that run it
+on PC. OpenGOAL provides the game; Ottsel maintains the iOS and iPadOS port: ahead-of-time compilation
+for a platform without JIT, the Metal rendering path, touch and TV support, packaging and releases. The
+projects are independently maintained.
+
 <p align="center">
+  <img alt="iPhone and iPad" src="https://img.shields.io/badge/platform-iPhone%20%2F%20iPad-0A84FF?logo=apple">
   <img alt="iOS and iPadOS 18.5+" src="https://img.shields.io/badge/iOS%20%2F%20iPadOS-18.5%2B-0A84FF?logo=apple">
-  <img alt="OpenGL ES 3.0 on Metal through ANGLE" src="https://img.shields.io/badge/renderer-OpenGL%20ES%20on%20Metal-5E5CE6">
-  <img alt="Game code compiled ahead of time, no JIT" src="https://img.shields.io/badge/game%20code-signed%20ARM64%2C%20no%20JIT-FF9F0A">
+  <img alt="OpenGL ES 3.0 on Metal through ANGLE" src="https://img.shields.io/badge/renderer-Metal%20(ANGLE)-5E5CE6">
+  <img alt="Game code compiled ahead of time, no JIT" src="https://img.shields.io/badge/GOAL-ahead--of--time%20ARM64-FF9F0A">
   <img alt="Developer preview" src="https://img.shields.io/badge/status-developer%20preview-FFD60A">
   <a href="LICENSE"><img alt="ISC License" src="https://img.shields.io/badge/license-ISC-34C759"></a>
-  <img alt="Physical iPad not yet tested" src="https://img.shields.io/badge/physical%20iPad-not%20yet%20tested-8E8E93">
   <img alt="Game data not included" src="https://img.shields.io/badge/game%20data-not%20included-FF453A">
+  <a href="https://discord.gg/xwHfUD2bxW"><img alt="Join the Discord" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&amp;logoColor=white"></a>
 </p>
 
-![Jak running through Geyser Rock's training course, steered by the floating move stick under the left thumb](docs/readme/ottsel-training-touch.jpg)
-
-Ottsel packages [OpenGOAL](https://github.com/open-goal/jak-project), the open-source port of Jak and
-Daxter rebuilt from its decompiled GOAL source, as a native iPadOS and iOS app. On a PC, OpenGOAL
-compiles and links the game's code while it runs. iOS does not allow apps to create executable code, so
-Ottsel compiles all 518 of the game's code modules to ARM64 on your Mac and signs them into the app. A
-strict mode makes any attempt to load code at run time fatal, so the Simulator enforces the same rule an
-iPad does. OpenGOAL's own OpenGL renderer draws the game through OpenGL ES 3.0, which
-[ANGLE](https://chromium.googlesource.com/angle/angle) translates to Metal.
-
-This repository contains the iOS app, one patch against a pinned OpenGOAL commit, and the build
-scripts. It does **not** contain Jak and Daxter, a disc image, extracted game files, or saves.
+![Jak running through Geyser Rock's training course on iPad, steered by the floating move stick](docs/readme/ottsel-training-touch.jpg)
 
 > [!IMPORTANT]
-> Ottsel is a developer preview. It plays in the iPad Simulator; it has not yet run on a physical iPad
-> or iPhone, and there is no downloadable IPA. You build it yourself from your own disc on a Mac.
+> **Bring your own game data.** Ottsel needs your own Jak and Daxter: The Precursor Legacy disc image
+> (NTSC-U `SCUS-97124`). This repository contains no disc image, extracted game files or saves.
+>
+> **Developer preview.** Every result below comes from the iPad and iPhone Simulators; Ottsel has not
+> yet run on a physical iPad or iPhone, and there is no downloadable IPA. You build it on a Mac.
+>
+> **AI disclosure:** Ottsel uses substantial AI assistance for code, tests, documentation, debugging and
+> maintenance. There is no audited percentage of AI-generated code. Status and test records describe
+> what was checked. This disclosure concerns Ottsel's workflow, not the authorship of OpenGOAL.
 
-## What works
+## Get Ottsel
 
-- **The whole opening.** New Game plays the full intro cutscene through to Geyser Rock, and Load Game
-  restores a save into the training course.
-- **Every hub and level loads.** Geyser Rock, Sandover, Forbidden Jungle, Sentinel Beach, Misty Island,
-  Fire Canyon, Rock Village, Precursor Basin, Boggy Swamp, Lost Precursor City, Mountain Pass, Volcanic
-  Crater, Spider Cave, Snowy Mountain, Lava Tube and the Citadel all load and run at 47–59 fps in the
-  Simulator.
-- **Play on a TV.** Connect a TV or monitor (HDMI, USB-C or AirPlay) and the game fills it at the
-  display's resolution, while the iPad becomes the controller.
-- **Full speed in the Simulator.** The title, intro and training course run at about 58 fps at the iPad
-  Pro 11-inch's native 2420×1668.
-- **Touch controls that stay out of the way.** The move stick appears wherever your left thumb lands;
-  buttons sit along the screen edges and respond to a sliding thumb.
-- **Controllers and keyboards.** Apple game controllers and hardware keyboards work, and the touch
-  controls hide while you use them.
-- **A settings menu.** The **•••** button holds render resolution, an FPS counter, control settings,
-  game-data import and diagnostics.
-- **No JIT, ever.** Every piece of game code is compiled ahead of time and signed with the app.
+| Platform | Status | Setup |
+| --- | --- | --- |
+| iPad | Build from source; Simulator-tested | [Build from source](#build-from-source), then `scripts/install-ios-device.sh` |
+| iPhone | Build from source; Simulator-tested | Same build (the app is universal) |
+| Downloadable IPA | Not available yet | Waits until every game-derived file lives in your data pack |
 
-## Current status
+**Need help or found a bug?** Join the [Discord](https://discord.gg/xwHfUD2bxW), or open a
+[device report](https://github.com/chrissotraidis/ottsel/issues/new?template=device_report.yml) or
+[bug report](https://github.com/chrissotraidis/ottsel/issues/new?template=bug_report.yml). A report from
+a physical iPad or iPhone is the most useful thing you can send right now.
 
-| Area | Current result |
-|---|---|
-| Game code | All 518 GOAL code modules compiled ahead of time to ARM64 and signed into the app; strict mode on |
-| Rendering | OpenGOAL's OpenGL renderer on OpenGL ES 3.0 through ANGLE on Metal; about 58 fps at 2420×1668 in the Simulator |
-| Play | The intro plays to Geyser Rock; all 16 hubs and levels load and run; saving from the pause menu and loading after a relaunch resumes where you saved; Jak walks, jumps and attacks by touch |
-| Interruptions | Leaving the app (home gesture, a call, Control Center) pauses the game and its sound; you come back to the pause menu |
-| TV output | HDMI, USB-C and AirPlay displays: the game full-screen at the display's resolution (1080p tested), the iPad shows the controls; plugging in or out works mid-game |
-| Touch | Floating move stick, camera stick, D-pad, Cross, Circle, Square, Triangle, L1, L2, R1, R2 and Start, with haptics and a per-device layout |
-| Cheats | **••• → Cheats** switches on OpenGOAL's cheats in one tap: invincibility, infinite eco of each colour, big and huge heads, big fist, blue Daxter, mirror world, real-time sky and every music flavour |
-| Settings | **•••** menu: Display (render resolution), FPS counter, Controls, Game Data import, Diagnostics |
-| Controllers | Apple game controllers and hardware keyboards; the touch controls hide while either is in use |
-| Sound | OpenGOAL's own IOP and OVERLORD sound code runs on iOS; audible playback on a device is not yet checked |
-| Device build | The device build compiles, links and signs; `scripts/install-ios-device.sh` installs it on a connected iPad |
+## Playing
 
-## Get started
+[Frequently asked questions](#frequently-asked-questions) · [Mods, texture packs and cheats](docs/MODS.md) · [Current status](docs/STATUS.md)
 
-You need:
+- **Touch controls.** The move stick appears wherever your left thumb lands and follows it; L1/L2,
+  R1/R2, the D-pad, the face buttons and the camera stick sit at the screen edges and respond to a
+  sliding thumb. **••• → Controls** sets when they show, their opacity and size, and lets you move and
+  resize each one.
+- **Controllers and keyboards.** Apple game controllers work like a PlayStation pad; hardware keyboards
+  use OpenGOAL's layout (W/A/S/D, I/J/K/L camera, Space/E/F/R, Return for Start). The touch controls hide
+  while either is in use and return on your next touch.
+- **Play on a TV.** Connect a TV or monitor over HDMI, USB-C or AirPlay: the game fills it at the
+  display's resolution and the iPad becomes the controller. Unplug and the game returns to the iPad.
+- **Cheats.** **••• → Cheats** switches OpenGOAL's cheats on in one tap: invincibility, infinite eco,
+  big and huge heads, big fist, blue Daxter, mirror world and more. The original button codes work too.
+- **Saves and interruptions.** Save from the pause menu as on the PS2; Load Game resumes after a
+  relaunch. Leaving the app pauses the game and its sound, and you come back to the pause menu.
+- **Texture packs.** `scripts/apply-texture-pack.sh` builds a data pack with any OpenGOAL-format texture
+  pack. See the [mods guide](docs/MODS.md).
 
-- an Apple Silicon Mac with Xcode and its command-line tools;
-- `brew install cmake ninja ripgrep glslang spirv-cross xcodegen`;
-- for a physical device, an Apple ID signed in to Xcode (a free Personal Team is enough); and
-- your own Jak and Daxter: The Precursor Legacy disc image, NTSC-U (`SCUS-97124`).
+<table>
+  <tr>
+    <td width="50%"><img src="docs/readme/ottsel-menu.jpg" alt="The Ottsel three-dot menu open over gameplay"></td>
+    <td width="50%"><img src="docs/readme/ottsel-touch-settings.jpg" alt="Ottsel's Touch Control Settings panel"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>The ••• menu</strong><br>Display, controls, cheats, game data and diagnostics.</td>
+    <td align="center"><strong>Touch Control Settings</strong><br>Visibility, floating stick, opacity, size and camera.</td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/readme/ottsel-tv.jpg" alt="The Jak and Daxter title screen on a 1080p TV"></td>
+    <td width="50%"><img src="docs/readme/ottsel-tv-ipad.jpg" alt="The iPad showing the controls while the game plays on the TV"></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>On a TV</strong><br>The game at the display's resolution.</td>
+    <td align="center"><strong>The iPad as controller</strong><br>Touch controls and menu stay on the iPad.</td>
+  </tr>
+</table>
 
-The build downloads a prebuilt ANGLE. Everything it generates stays under the ignored `out/` directory.
+![Twelve levels running on Ottsel: Sentinel Beach, Misty Island, Fire Canyon, Rock Village, Precursor Basin, Boggy Swamp, Lost Precursor City, Mountain Pass, Volcanic Crater, Spider Cave, Snowy Mountain and Lava Tube](docs/readme/ottsel-levels.jpg)
+
+## What has been tested
+
+All of this is in the iPad Pro 11-inch (M4) and iPhone 16 Pro Simulators at native resolution.
+
+| Area | Result |
+| --- | --- |
+| Game code | All 518 GOAL modules compiled ahead of time and signed into the app; loading code at run time is fatal |
+| Levels | The intro plays through to Geyser Rock; all 16 hubs and levels load and run at 47–59 fps (2420×1668) with no faults |
+| Saves | Saving in Sandover, quitting, relaunching and loading resumes in Sandover |
+| Sound | Music, effects and dialogue mix and play; a recorded minute showed no clipping or dropouts |
+| TV output | 1080p external display from a cold launch, unplugged and replugged mid-game |
+| Touch | A scripted real-touch run plays title → Load Game → training course, walks, jumps and attacks |
+| iPhone | Boots to the title with the full touch layout fitted to the screen |
+| Physical devices | **Not yet tested.** The device build compiles, links and signs |
+
+## Build from source
+
+You need an Apple Silicon Mac with Xcode, `brew install cmake ninja ripgrep glslang spirv-cross xcodegen`,
+an Apple ID signed in to Xcode for a physical device (a free Personal Team is enough), and your disc image.
+The build downloads a prebuilt ANGLE; everything it generates stays under the ignored `out/` directory.
 
 ~~~sh
 # 1. OpenGOAL at the pinned commit, plus Ottsel's patch
@@ -95,8 +126,8 @@ cd out/jak-project
 cmake -S . -B build/h1 -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang \
   -DCMAKE_CXX_COMPILER=clang++ -DSTATICALLY_LINK=OFF -DINSTALL_GTEST=OFF -DOTTSEL_NO_EMIT=ON
 ninja -C build/h1 goalc extractor ottsel-a11-slice
-./build/h1/decompiler/extractor --extract --decompile /path/to/jak1.iso   # -> iso_data/jak1, out/jak1/fr3
-./build/h1/goalc/goalc --game jak1 --isa arm64 -c '(mi)'                  # -> out/jak1/iso, out/jak1/obj
+./build/h1/decompiler/extractor --extract --decompile /path/to/jak1.iso
+./build/h1/goalc/goalc --game jak1 --isa arm64 -c '(mi)'
 cd ../..
 
 # 3. The app (Simulator; add OTTSEL_PLATFORM=device for iPad or iPhone)
@@ -107,246 +138,134 @@ OTTSEL_STRICT_EXEC=1 OTTSEL_SIGNED_GSTATE_EXPERIMENT=0 OTTSEL_SIGNED_EXPORT_BANK
 scripts/prepare-user-data-pack.sh out/jak-project/iso_data/jak1 /tmp/ottsel-pack out/jak-project/out/jak1/fr3
 ~~~
 
-The first build takes about 12 minutes on an 8-core M-series Mac; later builds compile only what
-changed and take a few minutes.
+The first build takes about 12 minutes on an 8-core M-series Mac; later builds take a few minutes.
 
-## First launch
+**Simulator:** `xcrun simctl install booted out/jak-project/out/ios/app/OttselShell.app`, then
+`scripts/import-ios-user-data.sh <udid> /tmp/ottsel-pack` and `xcrun simctl launch booted com.ottsel.shell`.
 
-**In the Simulator,** install the app, copy your pack into it, and launch:
-
-~~~sh
-xcrun simctl install booted out/jak-project/out/ios/app/OttselShell.app
-scripts/import-ios-user-data.sh <simulator-udid> /tmp/ottsel-pack
-xcrun simctl launch booted com.ottsel.shell
-~~~
-
-**On an iPad or iPhone,** sign in to Xcode with an Apple ID, connect and trust the device, and turn on
-Developer Mode. Then run `scripts/install-ios-device.sh /tmp/ottsel-pack`. It finds your signing
-identity, has Xcode create a development profile if needed, builds the device app, installs it, copies
-the pack into the app, and launches it.
-
-You can also move a pack onto a device yourself: put the pack folder in Files, open **••• → Game Data →
-Import Game Data…**, choose the folder, then close and reopen Ottsel. The app checks the pack on launch
-and keeps it for later launches.
-
-## Touch controls
-
-The layout follows [SunPad](https://github.com/chrissotraidis/sunpad): controls sit at the screen edges
-so the middle of the picture stays clear.
-
-- **Left:** L1 and L2 across the top, then the D-pad. Below them, the move stick appears wherever your thumb lands
-  and follows it if you drag past the rim, so there is no exact spot to find.
-- **Right:** R1 and R2 across the top, the Cross, Circle, Square and Triangle diamond, and the camera stick.
-- **Bottom centre:** Start.
-- **Menu:** the **•••** button opens Display, Show FPS Counter, Controls, Cheats, Game Data and Diagnostics.
-- **Customise:** **Controls → Touch Control Settings…** sets when the controls show (Auto, Always,
-  Never), whether the move stick follows your thumb or stays in one place, opacity, size, camera speed
-  and camera inversion. **Move Touch Controls** lets you drag and resize each control; the layout is
-  saved per device.
-
-Buttons respond to a finger sliding onto them, so a thumb can roll from Cross to Square without lifting.
-
-<table>
-  <tr>
-    <td width="50%"><img src="docs/readme/ottsel-menu.jpg" alt="The Ottsel three-dot menu open over gameplay"></td>
-    <td width="50%"><img src="docs/readme/ottsel-touch-settings.jpg" alt="Ottsel's Touch Control Settings panel"></td>
-  </tr>
-  <tr>
-    <td align="center"><strong>Three-dot menu</strong><br>Display, controls, game data and diagnostics.</td>
-    <td align="center"><strong>Touch Control Settings</strong><br>Visibility, floating stick, opacity, size and camera.</td>
-  </tr>
-</table>
-
-## Controllers and keyboards
-
-Apple game controllers work as a PlayStation pad would. A hardware keyboard uses OpenGOAL's layout, with
-W/A/S/D to move, I/J/K/L for the camera, Space/E/F/R for Cross/Circle/Square/Triangle, Return for Start
-and Tab for Select. With **Show** set to Auto, the touch controls hide while a controller or keyboard is
-in use and come back on your next touch.
-
-## Playing on a TV
-
-Connect a TV or monitor with an HDMI or USB-C adapter, or over AirPlay. Ottsel moves the game to it at the
-display's own resolution and leaves the touch controls and **•••** menu on the iPad, which now reads
-"Playing on your TV". A paired controller works the same way. Unplug the display and the game returns
-to the iPad without restarting.
-
-<table>
-  <tr>
-    <td width="50%"><img src="docs/readme/ottsel-tv.jpg" alt="The Jak and Daxter title screen on a 1080p external display"></td>
-    <td width="50%"><img src="docs/readme/ottsel-tv-ipad.jpg" alt="The iPad showing the touch controls while the game plays on the TV"></td>
-  </tr>
-  <tr>
-    <td align="center"><strong>The TV</strong><br>The game at 1920×1080.</td>
-    <td align="center"><strong>The iPad</strong><br>The controller and menu.</td>
-  </tr>
-</table>
-
-## Performance
-
-In the iPad Pro 11-inch (M4) Simulator at the full 2420×1668, the title screen, the intro and the training
-course hold about 58 fps, and every level runs at 47–59 fps (Forbidden Jungle and Rock Village are the
-slowest). The renderer avoids reallocating or rewriting GPU resources mid-frame, which on Metal would
-split the frame into extra render passes. The
-Simulator is not a device, so the real numbers wait for hardware. **••• → Display → Render Resolution**
-lowers the internal resolution if a device needs it, and **••• → Show FPS Counter** shows the frame rate.
-
-## Screenshots
-
-<table>
-  <tr>
-    <td width="50%"><img src="docs/readme/ottsel-main-menu.jpg" alt="The Jak and Daxter main menu with the touch controls"></td>
-    <td width="50%"><img src="docs/readme/ottsel-intro-cutscene.jpg" alt="Jak in the opening cutscene"></td>
-  </tr>
-  <tr>
-    <td align="center"><strong>Menus by touch</strong><br>The D-pad, Cross and Start drive every menu.</td>
-    <td align="center"><strong>The whole intro plays</strong><br>OpenGOAL's cutscenes, start to finish, on iOS.</td>
-  </tr>
-</table>
-
-All screenshots come from the iPad Pro 11-inch (M4) Simulator, using game data from a disc owned by the
-person running it.
-
-![Twelve levels running on Ottsel: Sentinel Beach, Misty Island, Fire Canyon, Rock Village, Precursor Basin, Boggy Swamp, Lost Precursor City, Mountain Pass, Volcanic Crater, Spider Cave, Snowy Mountain and Lava Tube](docs/readme/ottsel-levels.jpg)
-
-## Supported game data
-
-| Disc | Region | Status |
-|---|---|---|
-| `SCUS-97124` | NTSC-U | The only disc tested |
-
-OpenGOAL supports other releases of the game; Ottsel has not been tested with them.
-
-## How it fits together
-
-~~~text
-Your Jak and Daxter disc image (on the Mac)
-        ↓  OpenGOAL extractor and decompiler
-Game data + OpenGOAL's GOAL source
-        ↓  goalc compiles the game for arm64; build-ios.sh signs all 518 modules into the app,
-        ↓  translates the 92 shaders to GLSL ES and embeds ANGLE
-Ottsel app (Simulator or device)  +  your game-data pack
-        ↓
-OpenGOAL runtime → OpenGL ES 3.0 → ANGLE → Metal
-~~~
-
-The app you build also contains a few files generated from your disc (the compiled `KERNEL.CGO` and
-`GAME.CGO`, the title and village DGO files, and the text files). It is for your own devices only.
-
-## Roadmap
-
-1. **Run on a physical iPad**, reaching the training course from a cold launch.
-2. **Measure the frame rate on that iPad** over five minutes of play, aiming for a steady 30 fps or
-   better, and tune from on-device profiles.
-3. **A 20-minute playtest** from New Game through Sandover Village and a neighbouring level, with touch
-   and a controller, saving and continuing, sound, and backgrounding the app.
-4. **Fix what the playtest finds**, most painful first.
-5. **iPhone**, the same checks on a physical iPhone.
-6. **A shareable build**, once every game-derived file lives in your pack, so the app itself carries no
-   game data.
-
-The detailed plan is in [`docs/GOAL_LOOP.md`](docs/GOAL_LOOP.md) and the running log in
-[`docs/STATUS.md`](docs/STATUS.md).
-
-## Known limitations
-
-- Nothing has run on a physical device yet; frame rate, sound, heat and battery on hardware are unknown.
-- Every level loads and runs, but only the opening has been played through in order; tasks, bosses and
-  vehicle sections past Geyser Rock are untested.
-- A TV has been tested in the Simulator only; a real HDMI adapter and AirPlay are untested.
-- The iPhone layout has not been checked.
-- Building needs a Mac, Xcode and your own disc; there is no IPA.
-- The app you build contains files generated from your disc, so it must not be shared.
+**iPad or iPhone:** connect and trust the device, turn on Developer Mode, then run
+`scripts/install-ios-device.sh /tmp/ottsel-pack`. It finds your signing identity, builds the device app,
+installs it, copies your pack in and launches it. You can also import a pack later from Files with
+**••• → Game Data → Import Game Data…**.
 
 ## Frequently asked questions
 
-### Does this repository include Jak and Daxter?
+<details>
+<summary>Does this repository include Jak and Daxter?</summary>
 
-No. You need your own disc image. Please do not open issues asking for game data or download links.
+No. You need your own disc image. Please do not ask for game data or download links in issues or on
+Discord.
 
-### Is Ottsel an emulator?
+</details>
 
-No. OpenGOAL runs the game's own GOAL code natively; it does not emulate a PlayStation 2. Ottsel makes
-that code run on iOS by compiling it ahead of time, and adapts OpenGOAL's renderer, input and file access
-to the platform.
+<details>
+<summary>Can I download an IPA?</summary>
 
-### Does it use a JIT?
+Not yet. The app you build contains a few files generated from your disc (the compiled `KERNEL.CGO` and
+`GAME.CGO`, the title and village DGO files, and the text files), so it is for your own devices only. A
+shareable build waits until all of those move into the data pack.
 
-No. There is no JIT, no memory that is both writable and executable, and no code patching at run time.
-Every piece of game code is ARM64 compiled on the Mac and signed with the app.
+</details>
 
-### Can I download an IPA?
+<details>
+<summary>Is Ottsel an emulator? Does it use a JIT?</summary>
 
-Not yet. The app you build contains files generated from your disc, so it cannot be shared. A public
-build waits until all of those files move into the pack.
+Neither. OpenGOAL runs the game's own GOAL code natively; it does not emulate a PlayStation 2. On PC it
+compiles that code while it runs, which iOS forbids, so Ottsel compiles all of it to ARM64 on your Mac and
+signs it into the app. There is no JIT, no writable-and-executable memory and no code patching at run
+time.
 
-### Does it run on a real iPad or iPhone?
+</details>
+
+<details>
+<summary>Does it run on a real iPad or iPhone?</summary>
 
 It has not been tested on one yet. The device build compiles, links and signs, and
-`scripts/install-ios-device.sh` installs it. If you try it, please file a
-[device report](https://github.com/chrissotraidis/ottsel/issues/new?template=device_report.yml).
+`scripts/install-ios-device.sh` installs it. If you try, please file a
+[device report](https://github.com/chrissotraidis/ottsel/issues/new?template=device_report.yml) with the
+frame rate from **••• → Show FPS Counter**.
 
-### Can I use mods, texture packs or a higher frame rate?
+</details>
 
-Cheats are built in (**••• → Cheats**). Texture packs and replacement models go into your build on the
-Mac; code mods and custom levels each need their own build. [`docs/MODS.md`](docs/MODS.md) explains all
-three. The game runs at 60 fps; OpenGOAL's experimental 100 and 150 fps modes can break Jak 1's physics,
-so Ottsel does not offer them yet.
+<details>
+<summary>Can I play on a TV?</summary>
 
-### How do I test a later level without playing up to it?
+Yes. Connect a TV or monitor over HDMI or USB-C, or use AirPlay. The game moves to it at the display's
+resolution and the iPad keeps the controls; a paired controller works too. This has been tested with the
+Simulator's external display; a real adapter has not been tried yet.
 
-**••• → Diagnostics → Jump to Level (Testing)** starts play at any hub or level, the way the game
-respawns Jak, keeping your current progress. It is for testing: it does not unlock anything, and some
-cutscenes and tasks expect the game's normal order.
+</details>
 
-## Project map
+<details>
+<summary>Can I use mods, texture packs, cheats or a higher frame rate?</summary>
+
+Cheats are built in (**••• → Cheats**). Texture packs and replacement models go into your data pack on
+the Mac; code mods and custom levels each need their own build. The [mods guide](docs/MODS.md) covers all
+three. The game runs at 60 fps; OpenGOAL's experimental 100 and 150 fps modes can break Jak 1's
+physics, so Ottsel does not offer them.
+
+</details>
+
+<details>
+<summary>How do I test a later level without playing up to it?</summary>
+
+**••• → Diagnostics → Jump to Level (Testing)** starts play at any hub or level, the way the game respawns
+Jak, keeping your progress. It does not unlock anything, and some cutscenes and tasks expect the normal
+order.
+
+</details>
+
+<details>
+<summary>Why does the music stop in menus?</summary>
+
+The game pauses music and effects whenever its pause or main menu is open, as it did on the PS2. It
+resumes when you close the menu.
+
+</details>
+
+<details>
+<summary>Is everything finished?</summary>
+
+No. Still open: physical iPad and iPhone runs and their frame rate, heat and battery; a real HDMI adapter
+and AirPlay; a full play-through past the opening (tasks, bosses and vehicle sections); and a shareable
+build. The plan is in [`docs/GOAL_LOOP.md`](docs/GOAL_LOOP.md) and the running log in
+[`docs/STATUS.md`](docs/STATUS.md).
+
+</details>
+
+## Build and contribute
+
+Ottsel compiles OpenGOAL's GOAL code ahead of time for ARM64 and renders through OpenGOAL's own OpenGL
+renderer on OpenGL ES 3.0, which [ANGLE](https://chromium.googlesource.com/angle/angle) translates to
+Metal.
 
 | Path | Purpose |
-|---|---|
-| [`src/shell/`](src/shell/) | The iOS app: window, boot, touch controls, the three-dot menu and the app icon |
-| [`patches/ottsel-jak-project.patch`](patches/ottsel-jak-project.patch) | Every change to the pinned OpenGOAL commit ([how to refresh it](patches/README.md)) |
-| [`scripts/build-ios.sh`](scripts/build-ios.sh) | Builds SDL, zstd and the runtime; signs the game modules; translates shaders; assembles the app |
-| [`scripts/install-ios-device.sh`](scripts/install-ios-device.sh) | Signs, installs and launches on a connected iPad or iPhone, and copies the pack |
-| [`scripts/prepare-user-data-pack.sh`](scripts/prepare-user-data-pack.sh) | Builds a game-data pack from your extracted disc, outside the repository |
-| [`scripts/import-ios-user-data.sh`](scripts/import-ios-user-data.sh) | Copies a pack into a Simulator install |
-| [`scripts/apply-texture-pack.sh`](scripts/apply-texture-pack.sh) | Builds a data pack with a texture pack applied ([mods guide](docs/MODS.md)) |
-| [`scripts/translate-gl-shaders.py`](scripts/translate-gl-shaders.py) | Translates OpenGOAL's desktop shaders to GLSL ES 3.00 |
-| [`scripts/test-ios-touch.sh`](scripts/test-ios-touch.sh) | Plays title → Load Game → training course with real touches (XCUITest) |
-| [`scripts/replay-ios-normal-route.py`](scripts/replay-ios-normal-route.py) | Drives the menus into New Game or a saved slot for quick checks |
-| [`config/`](config/) | Signed-module lists for the build profiles |
-| [`docs/`](docs/) | The plan, the status log, per-milestone evidence and the original research |
-| [`jak1-researchloop.md`](jak1-researchloop.md) | The original project brief |
+| --- | --- |
+| [`src/shell/`](src/shell/) | The iOS app: boot, touch controls, the ••• menu, TV output and the icon |
+| [`patches/ottsel-jak-project.patch`](patches/ottsel-jak-project.patch) | Every change to the pinned OpenGOAL commit ([refreshing it](patches/README.md)) |
+| [`scripts/build-ios.sh`](scripts/build-ios.sh) | Builds the runtime, signs the game modules, translates shaders, assembles the app |
+| [`scripts/install-ios-device.sh`](scripts/install-ios-device.sh) | Signs, installs and launches on a connected iPad or iPhone |
+| [`scripts/prepare-user-data-pack.sh`](scripts/prepare-user-data-pack.sh) | Builds a game-data pack from your extracted disc |
+| [`scripts/apply-texture-pack.sh`](scripts/apply-texture-pack.sh) | Builds a data pack with a texture pack applied |
+| [`scripts/test-ios-touch.sh`](scripts/test-ios-touch.sh) | Plays title → Load Game → training course with real touches |
+| [`docs/`](docs/) | The plan, the status log, the mods guide and the original research |
 
-## Contributing
+Changes to OpenGOAL go through `patches/ottsel-jak-project.patch`; refresh it with
+`scripts/snapshot-jak-project.sh write`. For a bug report, include the exact commit, device, iOS version
+and steps. Never attach game data, extracted files, a built app or saves.
 
-The most useful contribution right now is a
-[device report](https://github.com/chrissotraidis/ottsel/issues/new?template=device_report.yml) from a
-physical iPad or iPhone: the device, iOS version, how far it got, and the frame rate from **••• → Show FPS
-Counter**. For problems building or running, use the
-[bug report](https://github.com/chrissotraidis/ottsel/issues/new?template=bug_report.yml) form. Changes to
-OpenGOAL go through `patches/ottsel-jak-project.patch`; refresh it with
-`scripts/snapshot-jak-project.sh write`. Never attach game data, extracted files, a built app or saves.
-
-## Credits
+## Credits and license
 
 Ottsel stands on [OpenGOAL](https://github.com/open-goal/jak-project), whose team decompiled the game,
 wrote the GOAL compiler and runtime, and built the renderer Ottsel uses. ANGLE comes from
-[kivy/angle-builder](https://github.com/kivy/angle-builder) releases. [SDL](https://github.com/libsdl-org/SDL)
-provides the window and input, and [glslang](https://github.com/KhronosGroup/glslang) with
-[SPIRV-Cross](https://github.com/KhronosGroup/SPIRV-Cross) translate the shaders at build time. The
-touch controls and menu follow [SunPad](https://github.com/chrissotraidis/sunpad). See
+[kivy/angle-builder](https://github.com/kivy/angle-builder); [SDL](https://github.com/libsdl-org/SDL)
+provides the window and input; [glslang](https://github.com/KhronosGroup/glslang) and
+[SPIRV-Cross](https://github.com/KhronosGroup/SPIRV-Cross) translate the shaders. The touch controls and
+menu follow [SunPad](https://github.com/chrissotraidis/sunpad). See
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for every component and its license.
 
-## License
-
-Ottsel is released under the [ISC License](LICENSE), the same license as OpenGOAL, so its changes can
-flow back upstream. `patches/ottsel-jak-project.patch` modifies OpenGOAL's own files, which stay under
-OpenGOAL's ISC License and copyright. Every other component keeps its own license; see
-[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
-
-## Legal
-
+Ottsel is released under the [ISC License](LICENSE), the same license as OpenGOAL, so its changes can flow
+back upstream; the patch's changes to OpenGOAL's files stay under OpenGOAL's license and copyright.
 Ottsel is an unofficial community project and is not affiliated with or endorsed by Sony Interactive
-Entertainment or Naughty Dog. Jak and Daxter names and screenshots are used only to identify the game
-and show the project working. No disc image, extracted game file or save is included in this
-repository. The Ottsel icon is original artwork.
+Entertainment or Naughty Dog. Jak and Daxter names and screenshots are used only to identify the game.
+The Ottsel icon is original artwork.
