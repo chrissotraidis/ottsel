@@ -3110,7 +3110,7 @@ index 000000000..b41f30bc8
 +void ottsel_gles_load_missing(void* (*get_proc)(const char*));
 +#endif
 diff --git a/game/graphics/pipelines/opengl.cpp b/game/graphics/pipelines/opengl.cpp
-index d8d15c873..f3509931c 100644
+index d8d15c873..fff878a4a 100644
 --- a/game/graphics/pipelines/opengl.cpp
 +++ b/game/graphics/pipelines/opengl.cpp
 @@ -5,6 +5,8 @@
@@ -3233,7 +3233,7 @@ index d8d15c873..f3509931c 100644
    if (g_gfx_data) {
      std::unique_lock<std::mutex> lock(g_gfx_data->dma_mutex);
      if (g_gfx_data->has_data_to_render) {
-@@ -868,3 +915,283 @@ const GfxRendererModule gRendererOpenGL = {
+@@ -868,3 +915,287 @@ const GfxRendererModule gRendererOpenGL = {
      GfxPipeline::OpenGL,     // pipeline
      "OpenGL 4.3"             // name
  };
@@ -3448,6 +3448,10 @@ index d8d15c873..f3509931c 100644
 +  return g_live_scene.load();
 +}
 +
++void ottsel_gl_suspend() {
++  if (g_egl_context != EGL_NO_CONTEXT) glFinish();
++}
++
 +void ottsel_gl_shutdown() {
 +  if (!g_gfx_data) return;
 +  std::unique_lock<std::mutex> lock(g_gfx_data->sync_mutex);
@@ -3519,10 +3523,10 @@ index d8d15c873..f3509931c 100644
 +#endif
 diff --git a/game/graphics/pipelines/ottsel_gl_view.h b/game/graphics/pipelines/ottsel_gl_view.h
 new file mode 100644
-index 000000000..b11373f82
+index 000000000..be5e2255f
 --- /dev/null
 +++ b/game/graphics/pipelines/ottsel_gl_view.h
-@@ -0,0 +1,19 @@
+@@ -0,0 +1,21 @@
 +#pragma once
 +// Ottsel iOS: what the shell (src/shell/main.cpp) needs from OpenGOAL's OpenGL pipeline, which renders the
 +// game on an OpenGL ES 3.0 context (implemented in pipelines/opengl.cpp).
@@ -3540,6 +3544,8 @@ index 000000000..b11373f82
 +void ottsel_gl_set_render_scale(int percent);
 +// True once the game has handed the renderer a frame.
 +bool ottsel_gl_has_live_scene();
++// Finish all submitted GPU work (before the app resigns active; iOS forbids background GPU work).
++void ottsel_gl_suspend();
 +// Wake the game thread if it waits for a frame that will not come (shutdown).
 +void ottsel_gl_shutdown();
 diff --git a/game/graphics/texture/TexturePool.cpp b/game/graphics/texture/TexturePool.cpp

@@ -655,8 +655,19 @@ void set_shell_setting(const char* key, int value) {
   save_settings();
 }
 
+// iOS terminates an app that submits Metal (ANGLE) work while it is not active, so rendering stops before
+// the app resigns active and resumes once it is active again. The game thread waits in vsync meanwhile.
+bool g_render_suspended = false;
+
 bool on_event_watch(void*, SDL_Event* ev) {
   switch (ev->type) {
+    case SDL_EVENT_WILL_ENTER_BACKGROUND:
+      if (!g_render_suspended) {
+        g_render_suspended = true;
+        ottsel_gl_suspend();
+        lg::info("OTTSEL LIFECYCLE: resigning active; GPU work finished and rendering paused");
+      }
+      break;
     case SDL_EVENT_DID_ENTER_BACKGROUND:
       // Never leave movement or an action held when the app is suspended.
       g_input.neutralize();
@@ -672,6 +683,10 @@ bool on_event_watch(void*, SDL_Event* ev) {
       // reconnect does not require relaunching the app.
       select_mobile_gamepad();
       snd_ResumeAudioOutput();
+      if (g_render_suspended) {
+        g_render_suspended = false;
+        lg::info("OTTSEL LIFECYCLE: active again; rendering resumed");
+      }
       lg::info("OTTSEL LIFECYCLE: foreground controller rechecked and audio resumed");
       break;
     default:
@@ -1075,6 +1090,10 @@ int main(int argc, char** argv) {
       }
     }
     // OpenGOAL renders the frame and the status surface goes on top; UIKit draws the touch controls.
+    if (g_render_suspended) {
+      SDL_Delay(50);
+      continue;
+    }
     ottsel_gl_render(g_win);
     g_frame++;
     {
