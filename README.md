@@ -143,7 +143,9 @@ Feedback, and Diagnostics (log overlay, jump to a level for testing).
 | --- | --- |
 | Boot and play | Data pack imported on first launch; the intro, Geyser Rock and Sandover play with every code module signed and no faults |
 | Frame rate | 2732×2048, 60 fps for 98.5% of a 29-minute session |
-| Input | Touch and an Xbox Series X controller both play; the touch controls hide and return with the controller |
+| Sound | Music, effects, voice hints and cutscene dialogue all play; voice hints no longer silence the rest of the game |
+| Input | Touch and an Xbox Series X controller both play; the touch controls hide and return with the controller, and can be moved and resized |
+| Saves | OpenGOAL PC saves copied onto the iPad fill slots 2–4 (the Citadel, Rock Village and Volcanic Crater, all with 100 power cells); Rock Village loads and plays at 60 fps |
 | Updates | Reinstalling over the app keeps saves and settings |
 
 **In the Simulators** (iPad Pro 11-inch M4 and iPhone 16 Pro, native resolution):
@@ -260,6 +262,18 @@ physics, so Ottsel does not offer them.
 **••• → Diagnostics → Jump to Level (Testing)** starts play at any hub or level, the way the game respawns
 Jak, keeping your progress. It does not unlock anything, and some cutscenes and tasks expect the normal
 order.
+
+</details>
+
+<details>
+<summary>Can I use my OpenGOAL saves from a PC?</summary>
+
+Yes. OpenGOAL keeps each Jak 1 save slot as two files in its `saves/BASCUS-97124AYBABTU!` folder: slot 1
+is `bank0.bin` and `bank1.bin`, slot 2 is `bank2.bin` and `bank3.bin`, and so on up to slot 4. Copy them
+into the same folder in Ottsel's container, for example with
+`xcrun devicectl device copy to --domain-type appDataContainer --domain-identifier com.ottsel.shell` and the
+destination `Library/Application Support/local.ottsel/OttselShell/OpenGOAL/jak1/saves/BASCUS-97124AYBABTU!/`.
+Renaming a pair moves it to another slot. They appear under **Load Game** the next time Ottsel starts.
 
 </details>
 
