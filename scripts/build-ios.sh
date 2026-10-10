@@ -566,7 +566,11 @@ if [ "$PLATFORM" = device ] && [ -n "${OTTSEL_SIGN_IDENTITY:-}" ] && [ -n "${OTT
   /usr/libexec/PlistBuddy -x -c 'Print :Entitlements' "$APP_BUILD/profile.plist" > "$APP_BUILD/entitlements.plist"
   APP_ID="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:application-identifier' "$APP_BUILD/profile.plist")"
   BUNDLE_ID="${APP_ID#*.}"
-  case "$BUNDLE_ID" in *'*'*) BUNDLE_ID="${OTTSEL_BUNDLE_ID:-com.ottsel.shell}" ;; esac
+  # A wildcard profile (TEAM.*) signs the app as TEAM.<bundle id>, the way Xcode does.
+  case "$BUNDLE_ID" in *'*'*)
+    BUNDLE_ID="${OTTSEL_BUNDLE_ID:-com.ottsel.shell}"
+    /usr/libexec/PlistBuddy -c "Set :application-identifier ${APP_ID%%.*}.$BUNDLE_ID" "$APP_BUILD/entitlements.plist" ;;
+  esac
   /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$APP/Info.plist"
   /usr/libexec/PlistBuddy -c 'Add :CFBundleSupportedPlatforms array' \
     -c 'Add :CFBundleSupportedPlatforms:0 string iPhoneOS' "$APP/Info.plist"

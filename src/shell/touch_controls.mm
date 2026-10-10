@@ -2,6 +2,7 @@
 
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#include <sys/utsname.h>
 
 #include <SDL3/SDL.h>
 
@@ -28,6 +29,8 @@ NSString* const kSizesKey = @"OttselTouchControlSizes.v3";      // ident -> size
 NSString* const kOpacityKey = @"OttselTouchOpacity";
 NSString* const kSizeScaleKey = @"OttselTouchSizeScale";
 NSString* const kShowFPSKey = @"OttselShowFPS";
+NSString* const kGitHubURL = @"https://github.com/chrissotraidis/ottsel";
+NSString* const kDiscordURL = @"https://discord.gg/xwHfUD2bxW";
 NSString* const kFloatingKey = @"OttselTouchFloatingStick";  // absent = on
 
 // One control's default placement: normalized center in the safe area and its size in iPad points.
@@ -413,6 +416,7 @@ UIColor* border_color(bool selected) {
   UISwitch* _editSwitch;
 
   UIView* _editorBar;
+  BOOL _placeEditorBar;  // choose the bar's spot at the next layout (editing began, a drag ended)
   UILabel* _editorHint;
   UISlider* _selectedSize;
 
@@ -669,8 +673,28 @@ UIColor* border_color(bool selected) {
   CGFloat ph = std::min<CGFloat>(500, safe.size.height * 0.8);
   _panel.frame = CGRectMake(CGRectGetMaxX(safe) - pw - 12, CGRectGetMinY(safe) + 60, pw, ph);
   CGFloat ew = std::min<CGFloat>(560, safe.size.width - 24);
-  _editorBar.frame = CGRectMake(CGRectGetMidX(safe) - ew * 0.5, CGRectGetMaxY(safe) - 72, ew, 60);
+  if (_placeEditorBar || !CGRectContainsRect(safe, _editorBar.frame)) {
+    _editorBar.frame = [self editorBarFrameWidth:ew inSafe:safe];
+    _placeEditorBar = NO;
+  }
   [self updateEditingAppearance];
+}
+
+// The editor bar takes the first of top, bottom or middle where it covers no control, so every control
+// (START sits bottom centre) can still be dragged; a control dropped under it moves the bar again.
+- (CGRect)editorBarFrameWidth:(CGFloat)ew inSafe:(CGRect)safe {
+  const CGFloat x = CGRectGetMidX(safe) - ew * 0.5;
+  const CGFloat ys[] = {CGRectGetMinY(safe) + 12, CGRectGetMaxY(safe) - 72, CGRectGetMidY(safe) - 30};
+  for (CGFloat y : ys) {
+    CGRect frame = CGRectMake(x, y, ew, 60);
+    if (CGRectIntersectsRect(frame, _menuButton.frame)) continue;
+    BOOL clear = YES;
+    for (UIView* control in _byIdent.allValues) {
+      if (CGRectIntersectsRect(frame, control.frame)) clear = NO;
+    }
+    if (clear) return frame;
+  }
+  return CGRectMake(x, ys[2], ew, 60);
 }
 
 // MARK: Layout editing (SunPad: drag to move, tap to select and resize, Done)
@@ -685,6 +709,8 @@ UIColor* border_color(bool selected) {
     for (UIGestureRecognizer* g in control.gestureRecognizers) g.enabled = editing;
   }
   _editorBar.hidden = !editing;
+  _placeEditorBar = YES;
+  [self setNeedsLayout];
   if (editing) _panel.hidden = YES;
   _selectedSize.enabled = NO;
   _selectedSize.value = 1.0;
@@ -746,6 +772,8 @@ UIColor* border_color(bool selected) {
             ?: [NSMutableDictionary dictionary];
     saved[control.accessibilityIdentifier] = NSStringFromCGPoint(n);
     [NSUserDefaults.standardUserDefaults setObject:saved forKey:kCentersKey];
+    _placeEditorBar = YES;  // the editor bar steps aside if the control landed under it
+    [self setNeedsLayout];
   }
 }
 
@@ -1144,7 +1172,28 @@ UIColor* border_color(bool selected) {
   [self present:[[UIActivityViewController alloc] initWithActivityItems:items applicationActivities:nil]];
 }
 
-// MARK: Three-dot menu (SunPad's structure: Display, FPS counter, Controls, Game Data, Diagnostics)
+// MARK: Help & Feedback
+
+- (void)openURL:(NSString*)url {
+  [UIApplication.sharedApplication openURL:[NSURL URLWithString:url] options:@{} completionHandler:nil];
+}
+
+// A new device report on GitHub with this device, its OS version and the current frame rate filled in.
+- (void)reportProblem {
+  struct utsname sys;
+  uname(&sys);
+  NSURLComponents* url = [NSURLComponents componentsWithString:[kGitHubURL stringByAppendingString:@"/issues/new"]];
+  url.queryItems = @[
+    [NSURLQueryItem queryItemWithName:@"template" value:@"device_report.yml"],
+    [NSURLQueryItem queryItemWithName:@"device" value:@(sys.machine)],
+    [NSURLQueryItem queryItemWithName:@"ios" value:UIDevice.currentDevice.systemVersion],
+    [NSURLQueryItem queryItemWithName:@"fps"
+                                value:[NSString stringWithFormat:@"%.0f fps", g_hooks.fps ? g_hooks.fps() : 0.0]],
+  ];
+  [UIApplication.sharedApplication openURL:url.URL options:@{} completionHandler:nil];
+}
+
+// MARK: Three-dot menu (BlueWake's structure: Display, Cheats, Touch Controls, Game Data, Help, Diagnostics)
 
 - (void)buildMenuButton {
   UIButtonConfiguration* config = [UIButtonConfiguration plainButtonConfiguration];
@@ -1204,16 +1253,6 @@ UIColor* border_color(bool selected) {
     choice.state = scale == v ? UIMenuElementStateOn : UIMenuElementStateOff;
     [render addObject:choice];
   }
-  UIMenu* display = [UIMenu menuWithTitle:@"Display"
-                                    image:[UIImage systemImageNamed:@"display"]
-                               identifier:nil
-                                  options:0
-                                 children:@[ [UIMenu menuWithTitle:@"Render Resolution"
-                                                             image:nil
-                                                        identifier:nil
-                                                           options:UIMenuOptionsSingleSelection
-                                                          children:render] ]];
-
   UIAction* fps = [self action:@"Show FPS Counter" symbol:@"speedometer" handler:^{
     NSUserDefaults* d = NSUserDefaults.standardUserDefaults;
     [d setBool:![d boolForKey:kShowFPSKey] forKey:kShowFPSKey];
@@ -1222,16 +1261,26 @@ UIColor* border_color(bool selected) {
   }];
   fps.state = [NSUserDefaults.standardUserDefaults boolForKey:kShowFPSKey] ? UIMenuElementStateOn
                                                                            : UIMenuElementStateOff;
+  UIMenu* display = [UIMenu menuWithTitle:@"Display"
+                                    image:[UIImage systemImageNamed:@"display"]
+                               identifier:nil
+                                  options:0
+                                 children:@[ [UIMenu menuWithTitle:@"Render Resolution"
+                                                             image:[UIImage systemImageNamed:@"square.resize.up"]
+                                                        identifier:nil
+                                                           options:UIMenuOptionsSingleSelection
+                                                          children:render],
+                                             fps ]];
 
   UIMenu* controls = [UIMenu
-      menuWithTitle:@"Controls"
-              image:[UIImage systemImageNamed:@"gamecontroller"]
+      menuWithTitle:@"Touch Controls"
+              image:[UIImage systemImageNamed:@"hand.draw"]
          identifier:nil
             options:0
            children:@[
              [self action:@"Touch Control Settings…" symbol:@"slider.horizontal.3"
                   handler:^{ [weakSelf openPanel]; }],
-             [self action:@"Move Touch Controls" symbol:@"hand.draw"
+             [self action:@"Move Touch Controls" symbol:@"arrow.up.and.down.and.arrow.left.and.right"
                   handler:^{ [weakSelf setEditing:YES]; }],
            ]];
 
@@ -1284,13 +1333,22 @@ UIColor* border_color(bool selected) {
                                         image:[UIImage systemImageNamed:@"stethoscope"]
                                    identifier:nil
                                       options:0
-                                     children:@[
-                                       log, jump,
-                                       [self action:@"Share Logs…" symbol:@"square.and.arrow.up"
-                                            handler:^{ [weakSelf shareLogs]; }],
-                                     ]];
+                                     children:@[ log, jump ]];
+  UIMenu* help = [UIMenu
+      menuWithTitle:@"Help & Feedback"
+              image:[UIImage systemImageNamed:@"questionmark.circle"]
+         identifier:nil
+            options:0
+           children:@[
+             [self action:@"Report a Problem on GitHub…" symbol:@"exclamationmark.bubble"
+                  handler:^{ [weakSelf reportProblem]; }],
+             [self action:@"Share Logs…" symbol:@"doc.text" handler:^{ [weakSelf shareLogs]; }],
+             [self action:@"Join the Discord" symbol:@"bubble.left.and.bubble.right"
+                  handler:^{ [weakSelf openURL:kDiscordURL]; }],
+             [self action:@"Ottsel on GitHub" symbol:@"safari" handler:^{ [weakSelf openURL:kGitHubURL]; }],
+           ]];
   return [UIMenu menuWithTitle:@"Ottsel"
-                      children:@[ display, fps, controls, [self cheatsMenu], data, diagnostics ]];
+                      children:@[ display, [self cheatsMenu], controls, data, help, diagnostics ]];
 }
 
 // OpenGOAL's own cheats (Secrets → Cheats in the game), switched on without typing a button code. The

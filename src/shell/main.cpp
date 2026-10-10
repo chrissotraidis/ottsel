@@ -172,6 +172,16 @@ void hide_touch_overlay_for_native_input() {
   lg::info("OTTSEL INPUT: native keyboard/mouse/controller active; touch controls hidden");
 }
 
+// Touch is the input again (a finger on the game view, or the controller went away).
+void show_touch_overlay_again(const char* reason) {
+  if (!g_native_input_mode) {
+    return;
+  }
+  g_native_input_mode = false;
+  update_touch_visibility();
+  lg::info("OTTSEL INPUT: touch controls shown again ({})", reason);
+}
+
 // The mobile shell does not create the desktop Display/InputManager.  It
 // nevertheless delivers the same completed DualShock snapshot to GOAL, via
 // the platform bridge sampled by scePadRead.
@@ -348,6 +358,9 @@ struct ShellPadInput {
       case SDL_GAMEPAD_BUTTON_DPAD_LEFT: mapped = DpadLeft; break;
       default: return;
     }
+    if (pressed) {
+      hide_touch_overlay_for_native_input();
+    }
     set_button(&state, mapped, pressed);
     publish();
     trace("gamepad-button");
@@ -356,6 +369,10 @@ struct ShellPadInput {
   void gamepad_axis(SDL_JoystickID instance_id, Uint8 axis, Sint16 value) {
     if (instance_id != g_gamepad_id) {
       return;
+    }
+    // A deliberate push (a quarter of the travel) means the controller is in use; resting drift does not.
+    if (std::abs(int(value)) > 8192) {
+      hide_touch_overlay_for_native_input();
     }
     const auto normalize = [](Sint16 input) {
       return static_cast<u8>(std::clamp(127 + int(input) * 128 / 32767, 0, 255));
@@ -473,6 +490,7 @@ void handle_mobile_gamepad_removed(SDL_JoystickID instance_id) {
     return;
   }
   release_mobile_gamepad("disconnect");
+  show_touch_overlay_again("controller disconnected");
   // SDL may deliver another GAMEPAD_ADDED event after the replacement is
   // enumerated; select now as well for already-present reconnects.
   select_mobile_gamepad();
@@ -848,10 +866,7 @@ int main(int argc, char** argv) {
         case SDL_EVENT_FINGER_DOWN:
           // Touches on the controls go to UIKit; one that reaches the game view while a controller or
           // keyboard hid the controls means touch is the input in use again.
-          if (g_native_input_mode) {
-            g_native_input_mode = false;
-            update_touch_visibility();
-          }
+          show_touch_overlay_again("touch");
           break;
         default:
           break;

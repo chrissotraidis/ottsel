@@ -1,7 +1,7 @@
 # Ottsel
 
 <p align="center">
-  <img src="docs/readme/ottsel-icon.png" width="160" alt="Ottsel app icon: a tropical island with two palm trees at sunset">
+  <img src="docs/readme/ottsel-icon.png" width="160" alt="Ottsel app icon: a grinning orange ottsel's face against a tropical sunset">
 </p>
 
 <p align="center">
@@ -32,8 +32,9 @@ projects are independently maintained.
 > **Bring your own game data.** Ottsel needs your own Jak and Daxter: The Precursor Legacy disc image
 > (NTSC-U `SCUS-97124`). This repository contains no disc image, extracted game files or saves.
 >
-> **Developer preview.** Every result below comes from the iPad and iPhone Simulators; Ottsel has not
-> yet run on a physical iPad or iPhone, and there is no downloadable IPA. You build it on a Mac.
+> **Developer preview.** Ottsel has run on one physical iPad (iPad Pro 12.9-inch, M2) by touch and with an
+> Xbox controller; the rest of the results below come from the iPad and iPhone Simulators. It has not
+> run on a physical iPhone yet, and there is no downloadable IPA. You build it on a Mac.
 >
 > **AI disclosure:** Ottsel uses substantial AI assistance for code, tests, documentation, debugging and
 > maintenance. There is no audited percentage of AI-generated code. Status and test records describe
@@ -43,7 +44,7 @@ projects are independently maintained.
 
 | Platform | Status | Setup |
 | --- | --- | --- |
-| iPad | Build from source; Simulator-tested | [Build from source](#build-from-source), then `scripts/install-ios-device.sh` |
+| iPad | Build from source; runs on an iPad Pro 12.9-inch (M2) | [Build from source](#build-from-source), then `scripts/install-ios-device.sh` |
 | iPhone | Build from source; Simulator-tested | Same build (the app is universal) |
 | Downloadable IPA | Not available yet | Waits until every game-derived file lives in your data pack |
 
@@ -58,11 +59,13 @@ a physical iPad or iPhone is the most useful thing you can send right now.
 
 - **Touch controls.** The move stick appears wherever your left thumb lands and follows it; L1/L2,
   R1/R2, the D-pad, the face buttons and the camera stick sit at the screen edges and respond to a
-  sliding thumb. **••• → Controls** sets when they show, their opacity and size, and lets you move and
+  sliding thumb. **••• → Touch Controls** sets when they show, their opacity and size, and lets you move and
   resize each one.
 - **Controllers and keyboards.** Apple game controllers work like a PlayStation pad; hardware keyboards
   use OpenGOAL's layout (W/A/S/D, I/J/K/L camera, Space/E/F/R, Return for Start). The touch controls hide
-  while either is in use and return on your next touch.
+  while either is in use and return on your next touch or when the controller disconnects.
+- **Help and feedback.** **••• → Help & Feedback** opens a GitHub device report with your device, iPadOS
+  version and frame rate filled in, shares the logs, and links the Discord.
 - **Play on a TV.** Connect a TV or monitor over HDMI, USB-C or AirPlay: the game fills it at the
   display's resolution and the iPad becomes the controller. Unplug and the game returns to the iPad.
 - **Cheats.** **••• → Cheats** switches OpenGOAL's cheats on in one tap: invincibility, infinite eco,
@@ -106,7 +109,8 @@ All of this is in the iPad Pro 11-inch (M4) and iPhone 16 Pro Simulators at nati
 | TV output | 1080p external display from a cold launch, unplugged and replugged mid-game |
 | Touch | A scripted real-touch run plays title → Load Game → the saved level, walks, jump-attacks, and opens the ••• menu and the layout editor |
 | iPhone | Boots to the title with the full touch layout fitted to the screen |
-| Physical devices | **Not yet tested.** The device build compiles, links and signs |
+| Physical iPad | iPad Pro 12.9-inch (M2), iPadOS 27: intro, Geyser Rock and Sandover at 2732×2048, 60 fps for 98.5% of a 29-minute session, no faults; touch and an Xbox Series X controller both play ([evidence](docs/evidence/G2/g2-first-ipad-hardware-run-2026-10-10.md)) |
+| Physical iPhone | Not yet tested |
 
 ## Build from source
 
@@ -180,10 +184,11 @@ time.
 <details>
 <summary>Does it run on a real iPad or iPhone?</summary>
 
-It has not been tested on one yet. The device build compiles, links and signs, and
-`scripts/install-ios-device.sh` installs it. If you try, please file a
+It runs on an iPad Pro 12.9-inch (6th generation, M2) at the iPad's full resolution and 60 fps, by touch
+or with a controller. It has not run on an iPhone yet. `scripts/install-ios-device.sh` builds, installs
+and launches it. If you try another device, please file a
 [device report](https://github.com/chrissotraidis/ottsel/issues/new?template=device_report.yml) with the
-frame rate from **••• → Show FPS Counter**.
+frame rate from **••• → Display → Show FPS Counter** (or use **••• → Help & Feedback → Report a Problem**).
 
 </details>
 
@@ -226,7 +231,7 @@ resumes when you close the menu.
 <details>
 <summary>Is everything finished?</summary>
 
-No. Still open: physical iPad and iPhone runs and their frame rate, heat and battery; a real HDMI adapter
+No. Still open: physical iPhone runs, long iPad sessions with their heat and battery; a real HDMI adapter
 and AirPlay; a full play-through past the opening (tasks, bosses and vehicle sections); and a shareable
 build. The plan is in [`docs/GOAL_LOOP.md`](docs/GOAL_LOOP.md) and the running log in
 [`docs/STATUS.md`](docs/STATUS.md).

@@ -14,8 +14,9 @@ Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
   ([evidence](evidence/G3/upstream-gl-renderer-title-2026-09-24.md)). The Metal renderer is deleted (last: `df31425`).
 - G1: all 518 code modules signed; `OTTSEL_STRICT_EXEC` makes runtime code loading fatal; the whole intro
   plays to Geyser Rock in strict mode with 0 aborts ([evidence](evidence/G1/g1-all-code-signed-strict-2026-09-24.md)).
-- Device: waiting on the user. Sign in to Xcode with an Apple ID (Personal Team), connect and trust the
-  iPad, enable Developer Mode, then run `scripts/install-ios-device.sh /tmp/ottsel-user-pack-strict1`.
+- Device (G2): runs on a physical iPad Pro 12.9-inch (M2), iPadOS 27.0.1, at 2732x2048 and 60 fps, by
+  touch and with an Xbox Series X controller, 0 faults ([evidence](evidence/G2/g2-first-ipad-hardware-run-2026-10-10.md)).
+  Open: iPhone hardware, long sessions (heat, battery), a full play-through on device.
 - Touch: SunPad's controller and three-dot menu in UIKit (`src/shell/touch_controls.mm`): sticks with
   dead zone, slide-between face buttons and D-pad diagonals, haptics, SunPad's Touch Control Settings
   panel and move/resize editor; menu: Display, FPS counter, Controls, Game Data (import), Diagnostics.
@@ -25,7 +26,6 @@ Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
 
 ## Log (last eight lines)
 
-2026-09-26 Sandover pause-menu save -> cold relaunch -> Load resumes village1-hut; leaving the app now returns to the pause menu; audio mixing (peak ~2500).
 2026-09-26 L2/R2 touch buttons (button cheat codes now possible by touch); ••• → Cheats toggles OpenGOAL's 14 cheats, checked live.
 2026-09-26 Metal pass breaks: sky + time-of-day palettes rotate, palettes upload in one call, unchanged eyes not redrawn. Swamp 34 -> 44 fps.
 2026-09-26 Texture packs proven: extractor fixed (tcc assert); apply-texture-pack.sh builds a modded pack and restores the original.
@@ -33,3 +33,4 @@ Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
 2026-09-26 Sprite/shadow buffers updated in place (no Metal buffer per flush). Sweep: 16 levels 47-59 fps, 0 faults.
 2026-09-26 Audio dump clean (menu silence is the game pausing sound); TV cold/unplug/replug re-checked; README in the KartPad style with Discord.
 2026-09-26 Sprites no longer stall on ANGLE restart scans; one 60 Hz pacer; palettes upload only when time of day moves. 12 of 16 levels at 60 fps; the rest are Simulator-GPU bound (51-57). 0 faults.
+2026-10-10 First physical iPad run (iPad Pro 12.9 M2): intro, Geyser Rock, Sandover at 60 fps, 0 faults; controller hides/shows the touch controls; START drags in the editor; ••• menu in BlueWake order; new ottsel icon.
