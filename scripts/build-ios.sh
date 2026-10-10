@@ -103,7 +103,7 @@ if $SHELL_ONLY; then
   echo "== Reusing existing runtime, dependency libraries, and AOT slice =="
 fi
 
-SDK=iphonesimulator26.5
+SDK=iphonesimulator  # the installed Xcode's Simulator SDK (the device build uses iphoneos the same way)
 DEPLOY=18.5
 TARGET=arm64-apple-ios$DEPLOY-simulator
 if [ "$PLATFORM" = device ]; then

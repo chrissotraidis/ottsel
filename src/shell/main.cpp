@@ -920,6 +920,13 @@ int main(int argc, char** argv) {
           g_input.keyboard(SDLK_SPACE, SDL_SCANCODE_SPACE, false);
           fprintf(stderr, "ottsel BOT22: latched Cross tap (file trigger)\n");
         }
+        std::string triangle_trig = trigger_path("ottsel-press-triangle");
+        if (access(triangle_trig.c_str(), F_OK) == 0) {
+          unlink(triangle_trig.c_str());
+          g_input.keyboard(SDLK_R, SDL_SCANCODE_R, true);
+          g_input.keyboard(SDLK_R, SDL_SCANCODE_R, false);
+          fprintf(stderr, "ottsel BOT22: latched Triangle tap (file trigger)\n");
+        }
         std::string left_trig = trigger_path("ottsel-press-left");
         if (access(left_trig.c_str(), F_OK) == 0) {
           unlink(left_trig.c_str());

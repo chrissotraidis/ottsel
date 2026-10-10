@@ -2484,6 +2484,10 @@ static void ottsel_ios_run_boot_impl() {
   // compares against s7-0xa, so such lists never terminate and the walk runs
   // past the end into near-null (game-info get-continue-by-name fault).
   init_crc();
+  // goal_main also sets the machine volume that scf-get-volume reports; skipping it left 0. The game
+  // scales its movie and hint duck levels from that value (settings.gc), so with 0 every voice hint
+  // ducked music, effects and its own dialogue to silence until the line ended.
+  masterConfig.volume = 100;
 
   // ---- boot the kernel (IOP/gfx/listener remain OTTSEL_IOS-stubbed) ----
   MasterDebug = 0;

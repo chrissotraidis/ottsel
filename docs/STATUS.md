@@ -26,7 +26,6 @@ Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
 
 ## Log (last eight lines)
 
-2026-09-26 L2/R2 touch buttons (button cheat codes now possible by touch); ••• → Cheats toggles OpenGOAL's 14 cheats, checked live.
 2026-09-26 Metal pass breaks: sky + time-of-day palettes rotate, palettes upload in one call, unchanged eyes not redrawn. Swamp 34 -> 44 fps.
 2026-09-26 Texture packs proven: extractor fixed (tcc assert); apply-texture-pack.sh builds a modded pack and restores the original.
 2026-09-26 Crash on quit fixed (audio pause after static teardown); iPhone 16 Pro Simulator boots to title with the full touch layout.
@@ -34,3 +33,4 @@ Current gate: **G2 - runs on a physical iPad** (G1 met in the Simulator).
 2026-09-26 Audio dump clean (menu silence is the game pausing sound); TV cold/unplug/replug re-checked; README in the KartPad style with Discord.
 2026-09-26 Sprites no longer stall on ANGLE restart scans; one 60 Hz pacer; palettes upload only when time of day moves. 12 of 16 levels at 60 fps; the rest are Simulator-GPU bound (51-57). 0 faults.
 2026-10-10 First physical iPad run (iPad Pro 12.9 M2): intro, Geyser Rock, Sandover at 60 fps, 0 faults; controller hides/shows the touch controls; START drags in the editor; ••• menu in BlueWake order; new ottsel icon.
+2026-10-11 Voice hints silenced all audio (heard on iPad): the iOS boot skipped goal_main's masterConfig.volume = 100, so scf-get-volume gave 0 and every hint ducked music, effects and dialogue to 0. Fixed in ios_boot.cpp; the same Geyser Rock hint now plays at full level (Simulator, per-second PCM peaks 4900-5700 vs 0).
