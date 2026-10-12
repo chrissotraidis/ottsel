@@ -1348,7 +1348,40 @@ UIColor* border_color(bool selected) {
              [self action:@"Ottsel on GitHub" symbol:@"safari" handler:^{ [weakSelf openURL:kGitHubURL]; }],
            ]];
   return [UIMenu menuWithTitle:@"Ottsel"
-                      children:@[ display, [self cheatsMenu], controls, data, help, diagnostics ]];
+                      children:@[ display, [self cheatsMenu], [self modsMenu], controls, data, help, diagnostics ]];
+}
+
+// Mods that run inside the game. Play as Mario needs the player's own US Super Mario 64 ROM in
+// Ottsel's folder (the Files app, or the app container), as the game needs their disc.
+- (UIMenu*)modsMenu {
+  __weak OttselTouchOverlay* weakSelf = self;
+  // Built each time it opens, so a ROM added through Files shows up without a restart.
+  UIDeferredMenuElement* list = [UIDeferredMenuElement elementWithUncachedProvider:^(
+                                                           void (^completion)(NSArray<UIMenuElement*>*)) {
+    UIAction* mario = [weakSelf action:@"Play as Mario" symbol:@"figure.run" handler:^{
+      set_setting("mario", setting("mario") ? 0 : 1);
+    }];
+    mario.state = setting("mario") ? UIMenuElementStateOn : UIMenuElementStateOff;
+    if (!setting("mario_rom")) {
+      mario.attributes = UIMenuElementAttributesDisabled;
+      mario.subtitle = @"Add your Super Mario 64 (US) ROM to Ottsel's files";
+    }
+    // His triple jump and sideflip, made from Jak's own jumps so every level stays the same.
+    UIAction* moves = [weakSelf action:@"Mario's Moves" symbol:@"sparkles" handler:^{
+      set_setting("mario_moves", setting("mario_moves") ? 0 : 1);
+    }];
+    moves.state = setting("mario_moves") ? UIMenuElementStateOn : UIMenuElementStateOff;
+    moves.subtitle = @"Triple jump and sideflip on Jak's controls";
+    if (!setting("mario")) {
+      moves.attributes = UIMenuElementAttributesDisabled;
+    }
+    completion(@[ mario, moves ]);
+  }];
+  return [UIMenu menuWithTitle:@"Mods"
+                         image:[UIImage systemImageNamed:@"puzzlepiece.extension"]
+                    identifier:nil
+                       options:0
+                      children:@[ list ]];
 }
 
 // OpenGOAL's own cheats (Secrets → Cheats in the game), switched on without typing a button code. The

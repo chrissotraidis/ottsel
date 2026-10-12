@@ -13,6 +13,21 @@ which needs its own build.
   then enter the sequence) work by touch as well as on a controller.
 - **Jump to Level (Testing).** **••• → Diagnostics** starts play at any hub or level.
 
+## Play as Mario
+
+**••• → Mods → Play as Mario** draws Super Mario 64's Mario in Jak's place. Jak still plays the game, so
+every control, eco power, attack, platform and level works as before; Mario is posed from what Jak is doing
+(running, jumps, punch, spin, dive, swimming, ledges) with his own animations, voice and a round shadow.
+It needs your own US Super Mario 64 ROM (`.z64`, `.v64` or `.n64`) in Ottsel's folder: on the iPad,
+Ottsel's folder in the Files app; on the Mac, **Mods → Add Super Mario 64 (US) ROM…**. Nothing from either
+game is in this repository; Mario comes from [libsm64](https://github.com/libsm64/libsm64) (CC0) with
+`patches/libsm64-ottsel-pose.patch`.
+
+**Mario's Moves** adds his triple jump (three running jumps, each within a quarter second of landing) and
+his sideflip (jump while reversing direction). Both are Jak's own flip jump with Mario's timing and
+animation, so they reach nothing Jak cannot. The Zoomer, the Flut Flut, the minigames and animated
+cutscenes show Jak.
+
 ## Texture packs
 
 OpenGOAL's extractor replaces a game texture with a PNG of the same name while it builds your level data.

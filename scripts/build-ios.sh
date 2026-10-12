@@ -22,6 +22,10 @@
 # and OTTSEL_PROVISIONING_PROFILE (a .mobileprovision file) to produce an
 # installable bundle; without them the device build is ad-hoc signed.
 #
+# OTTSEL_PLATFORM=macos builds the same app for Apple Silicon Macs (macosx SDK) into out/macos/app/Ottsel.app:
+# the same shell, game code, renderer, Mario mod and settings, with the iPad's three-dot menu as the menu bar
+# (src/shell/mac_menu.mm). Signed with OTTSEL_SIGN_IDENTITY when set, ad hoc otherwise.
+#
 # The app runs OpenGOAL's real IOP/OVERLORD thread (level, cutscene and audio
 # streaming) exactly as desktop does (game/ottsel_ios_iop.cpp).
 
@@ -45,7 +49,8 @@ PLATFORM="${OTTSEL_PLATFORM:-simulator}"
 case "$PLATFORM" in
   simulator) IOS_OUT="$WORKTREE/out/ios" ;;
   device) IOS_OUT="$WORKTREE/out/ios-device" ;;
-  *) echo "OTTSEL_PLATFORM must be simulator or device" >&2; exit 2 ;;
+  macos) IOS_OUT="$WORKTREE/out/macos" ;;
+  *) echo "OTTSEL_PLATFORM must be simulator, device or macos" >&2; exit 2 ;;
 esac
 export OTTSEL_IOS_OUT="$IOS_OUT"
 # SDL without its UIKit OpenGL ES (EAGL) backend: ANGLE provides OpenGL ES (ottsel_gl_attach).
@@ -56,6 +61,18 @@ ZSTD_LIB="$ZSTD_BUILD/zstd/liblibzstd_static.a"
 APP_BUILD="$IOS_OUT/app"
 OBJ="$APP_BUILD/obj"
 APP="$APP_BUILD/OttselShell.app"
+# Where the bundle keeps its executable, frameworks and resources (a Mac app nests them under Contents).
+APP_EXE_DIR="$APP"
+APP_FRAMEWORKS="$APP/Frameworks"
+APP_RES="$APP"
+APP_PLIST="$APP/Info.plist"
+if [ "$PLATFORM" = macos ]; then
+  APP="$APP_BUILD/Ottsel.app"
+  APP_EXE_DIR="$APP/Contents/MacOS"
+  APP_FRAMEWORKS="$APP/Contents/Frameworks"
+  APP_RES="$APP/Contents/Resources"
+  APP_PLIST="$APP/Contents/Info.plist"
+fi
 # Optional canonical JSON module list; full KERNEL is not whole-game coverage.
 SIGNED_GSTATE="${OTTSEL_SIGNED_GSTATE_EXPERIMENT:-0}"
 SIGNED_MODULE_LIST="${OTTSEL_SIGNED_MODULE_LIST:-}"
@@ -110,6 +127,15 @@ if [ "$PLATFORM" = device ]; then
   SDK=iphoneos
   TARGET=arm64-apple-ios$DEPLOY
 fi
+MIN_FLAG="-mios-version-min=$DEPLOY"
+CMAKE_PLATFORM=(-DCMAKE_SYSTEM_NAME=iOS)
+if [ "$PLATFORM" = macos ]; then
+  SDK=macosx
+  DEPLOY=13.0
+  TARGET=arm64-apple-macos$DEPLOY
+  MIN_FLAG="-mmacos-version-min=$DEPLOY"
+  CMAKE_PLATFORM=()
+fi
 SDKROOT="$(xcrun --sdk "$SDK" --show-sdk-path)"
 
 # OpenGL ES comes from ANGLE (OpenGL ES on Metal): Apple's own OpenGL ES is deprecated and, in the
@@ -117,16 +143,29 @@ SDKROOT="$(xcrun --sdk "$SDK" --show-sdk-path)"
 ANGLE_VERSION=chromium-7151_rev1
 ANGLE_PLATFORM=iphonesimulator-arm64
 if [ "$PLATFORM" = device ]; then ANGLE_PLATFORM=iphoneos-arm64; fi
+if [ "$PLATFORM" = macos ]; then ANGLE_PLATFORM=macos-arm64; fi
 ANGLE_DIR="$WORKTREE/out/angle/$ANGLE_VERSION/$ANGLE_PLATFORM"
-if [ ! -f "$ANGLE_DIR/libGLESv2.framework/libGLESv2" ]; then
+if [ ! -f "$ANGLE_DIR/libGLESv2.framework/libGLESv2" ] && [ ! -f "$ANGLE_DIR/libGLESv2.dylib" ]; then
   mkdir -p "$ANGLE_DIR"
   curl -fsSL "https://github.com/kivy/angle-builder/releases/download/$ANGLE_VERSION/angle-$ANGLE_PLATFORM.tar.gz" |
     tar xz -C "$ANGLE_DIR"
 fi
+# The iOS packages are frameworks; the macOS one is two dylibs named ./lib*.dylib, renamed here to load from
+# the app's Frameworks folder.
+ANGLE_LINK=(-F"$ANGLE_DIR" -framework libEGL -framework libGLESv2)
+if [ "$PLATFORM" = macos ]; then
+  ANGLE_LIBS="$APP_BUILD/angle"
+  mkdir -p "$ANGLE_LIBS"
+  for lib in libEGL libGLESv2; do
+    cp -f "$ANGLE_DIR/$lib.dylib" "$ANGLE_LIBS/$lib.dylib"
+    install_name_tool -id "@rpath/$lib.dylib" "$ANGLE_LIBS/$lib.dylib" 2>/dev/null
+  done
+  ANGLE_LINK=(-L"$ANGLE_LIBS" -lEGL -lGLESv2)
+fi
 
 COMMON_FLAGS=(-std=c++20 -O2 -fno-omit-frame-pointer -D_CRT_SECURE_NO_WARNINGS -D_XOPEN_SOURCE \
   -DOTTSEL_NO_EMIT -DOTTSEL_IOS \
-  -target "$TARGET" -isysroot "$SDKROOT" -mios-version-min="$DEPLOY")
+  -target "$TARGET" -isysroot "$SDKROOT" "$MIN_FLAG")
 if $SIGNED_ENABLED; then
   COMMON_FLAGS+=(-DOTTSEL_SIGNED_GSTATE_EXPERIMENT)
 fi
@@ -136,7 +175,7 @@ fi
 # Strict exec: any code object that is not signed aborts instead of being made executable at
 # runtime. Always on for devices (iOS refuses runtime executable pages); opt-in on the Simulator.
 STRICT_EXEC="${OTTSEL_STRICT_EXEC:-0}"
-if [ "$PLATFORM" = device ]; then STRICT_EXEC=1; fi
+if [ "$PLATFORM" = device ] || [ "$PLATFORM" = macos ]; then STRICT_EXEC=1; fi
 if [ "$STRICT_EXEC" = 1 ]; then
   COMMON_FLAGS+=(-DOTTSEL_STRICT_EXEC)
 fi
@@ -166,14 +205,60 @@ FRAMEWORKS=(-framework UIKit -framework Foundation -framework CoreGraphics \
   -framework CoreMedia -framework CoreVideo \
   -framework VideoToolbox -framework CoreImage -framework Vision \
   -framework MetalKit)
+if [ "$PLATFORM" = macos ]; then
+  FRAMEWORKS=(-framework Cocoa -framework Foundation -framework CoreGraphics -framework QuartzCore \
+    -framework Metal -framework MetalKit -framework AudioToolbox -framework CoreAudio \
+    -framework CoreHaptics -framework AVFoundation -framework GameController -framework IOKit \
+    -framework ForceFeedback -framework Carbon -framework CoreVideo -framework CoreMedia -framework CoreServices \
+    -framework UniformTypeIdentifiers)
+fi
 
 compile() {
   local src="$1" out="$2"
   local extra=()
   # The ES compatibility header only belongs in the upstream renderer sources.
   case "$src" in */game/graphics/*) extra=(${GLES_INCLUDE[@]+"${GLES_INCLUDE[@]}"}) ;; esac
+  # The Mario mod draws with the renderer's GL and calls libsm64.
+  case "$src" in */src/shell/mario.cpp) extra=(${GLES_INCLUDE[@]+"${GLES_INCLUDE[@]}"} -I"$SM64_DIR/src") ;; esac
   xcrun --sdk "$SDK" clang++ "${COMMON_FLAGS[@]}" ${extra[@]+"${extra[@]}"} "${INCS[@]}" -c "$src" -o "$out"
 }
+
+# libsm64 (CC0): Super Mario 64's Mario, built from the SM64 decompilation, for the "Play as Mario" mod.
+# Mario's model comes from the decompilation; his animations and textures come from the player's own ROM
+# at run time, so nothing from the game is in this repository or the app.
+# patches/libsm64-ottsel-pose.patch poses Mario without his physics: Jak plays the game, Mario is drawn.
+SM64_COMMIT=fd11813208272b4271d92bd92feb8f3fdbe61be5
+SM64_DIR="$REPO_DIR/out/third_party/libsm64"
+SM64_PATCH="$REPO_DIR/patches/libsm64-ottsel-pose.patch"
+SM64_LIB="$APP_BUILD/libsm64-$(shasum "$SM64_PATCH" | cut -c1-12).a"  # a changed patch builds a new library
+if [ ! -f "$SM64_DIR/src/decomp/mario/geo.inc.c" ]; then
+  git clone -q https://github.com/libsm64/libsm64 "$SM64_DIR" 2>/dev/null || true
+  git -C "$SM64_DIR" checkout -q "$SM64_COMMIT"
+  (cd "$SM64_DIR" && python3 ./import-mario-geo.py)
+fi
+if [ ! -f "$SM64_LIB" ]; then
+  git -C "$SM64_DIR" checkout -q -- src
+  git -C "$SM64_DIR" apply "$SM64_PATCH"
+  mkdir -p "$APP_BUILD/sm64"
+  SM64_SRC="$(cd "$SM64_DIR" && find src src/decomp src/decomp/engine src/decomp/game src/decomp/pc \
+    src/decomp/mario src/decomp/tools src/decomp/audio -maxdepth 1 -name '*.c' | sort -u)"
+  jobs_started=0
+  for src in $SM64_SRC; do
+    xcrun --sdk "$SDK" clang -O2 -target "$TARGET" -isysroot "$SDKROOT" "$MIN_FLAG" \
+      -fno-strict-aliasing -w -DGBI_FLOATS -DVERSION_US -DNO_SEGMENTED_MEMORY \
+      -DSTB_IMAGE_STATIC -DSTB_IMAGE_WRITE_STATIC -Dstbi_write_png_to_mem=sm64_stbi_write_png_to_mem \
+      -Dstbi_zlib_compress=sm64_stbi_zlib_compress \
+      -I"$SM64_DIR/src/decomp/include" -I"$SM64_DIR/src" \
+      -c "$SM64_DIR/$src" -o "$APP_BUILD/sm64/$(echo "$src" | tr / _).o" &
+    jobs_started=$((jobs_started + 1))
+    if [ $((jobs_started % 8)) = 0 ]; then wait; fi
+  done
+  wait
+  [ "$(ls "$APP_BUILD"/sm64/*.o | wc -l)" -eq "$(echo "$SM64_SRC" | wc -l)" ] ||
+    { echo "libsm64: some sources failed to compile" >&2; exit 1; }
+  ar rcs "$SM64_LIB" "$APP_BUILD"/sm64/*.o
+  echo "libsm64: $SM64_LIB ($(ls "$APP_BUILD"/sm64/*.o | wc -l | tr -d ' ') objects)"
+fi
 
 compile_objc() {
   local src="$1" out="$2"
@@ -185,7 +270,7 @@ if ! $SHELL_ONLY; then
 echo "== [1/4] SDL3 static (iOS Simulator) =="
 if [ ! -f "$SDL_BUILD/libSDL3.a" ]; then
   cmake -S "$SDL_SRC" -B "$SDL_BUILD" -G Ninja \
-    -DCMAKE_SYSTEM_NAME=iOS \
+    ${CMAKE_PLATFORM[@]+"${CMAKE_PLATFORM[@]}"} \
     -DCMAKE_OSX_SYSROOT="$SDK" \
     -DCMAKE_OSX_ARCHITECTURES=arm64 \
     -DCMAKE_OSX_DEPLOYMENT_TARGET="$DEPLOY" \
@@ -203,7 +288,7 @@ mkdir -p "$ZSTD_PROJECT"
   'project(OttselIOSZstd C)' 'add_subdirectory(../../../third-party/zstd zstd)' > "$ZSTD_PROJECT/CMakeLists.txt"
 if [ ! -f "$ZSTD_BUILD/build.ninja" ]; then
   cmake -S "$ZSTD_PROJECT" -B "$ZSTD_BUILD" -G Ninja \
-    -DCMAKE_SYSTEM_NAME=iOS \
+    ${CMAKE_PLATFORM[@]+"${CMAKE_PLATFORM[@]}"} \
     -DCMAKE_OSX_SYSROOT="$SDK" \
     -DCMAKE_OSX_ARCHITECTURES=arm64 \
     -DCMAKE_OSX_DEPLOYMENT_TARGET="$DEPLOY"
@@ -403,7 +488,7 @@ OBJS=()
   echo "builddir = $APP_BUILD"
   echo "cxx = $(xcrun --sdk "$SDK" -f clang++) $(ninja_quote "${COMMON_FLAGS[@]}" "${INCS[@]}")"
   echo "cc = $(xcrun --sdk "$SDK" -f clang) $(ninja_quote -O2 -target "$TARGET" -isysroot "$SDKROOT" \
-    -mios-version-min="$DEPLOY" -I"$WORKTREE/third-party/glad/include")"
+    "$MIN_FLAG" -I"$WORKTREE/third-party/glad/include")"
   echo "gles = $(ninja_quote ${GLES_INCLUDE[@]+"${GLES_INCLUDE[@]}"})"
   printf 'rule cxx\n  command = $cxx $extra -MMD -MF $out.d -c $in -o $out\n  depfile = $out.d\n  deps = gcc\n  description = $in\n'
   printf 'rule cc\n  command = $cc -MMD -MF $out.d -c $in -o $out\n  depfile = $out.d\n  deps = gcc\n  description = $in\n'
@@ -505,61 +590,96 @@ PYTHON
 fi
 compile "$REPO_DIR/src/shell/main.cpp" "$OBJ/shell_main.o"
 compile "$REPO_DIR/src/shell/ios_boot.cpp" "$OBJ/ios_boot.o"
-compile_objc "$REPO_DIR/src/shell/touch_controls.mm" "$OBJ/touch_controls.o"
-compile_objc "$REPO_DIR/src/shell/external_display.mm" "$OBJ/external_display.o"
+compile "$REPO_DIR/src/shell/mario.cpp" "$OBJ/mario.o"
+if [ "$PLATFORM" = macos ]; then
+  # The menu bar stands in for the touch overlay and its three-dot menu; a Mac has no TV mode.
+  compile_objc "$REPO_DIR/src/shell/mac_menu.mm" "$OBJ/mac_menu.o"
+  SHELL_UI_OBJECTS=("$OBJ/mac_menu.o")
+  RPATH=@executable_path/../Frameworks
+else
+  compile_objc "$REPO_DIR/src/shell/touch_controls.mm" "$OBJ/touch_controls.o"
+  compile_objc "$REPO_DIR/src/shell/external_display.mm" "$OBJ/external_display.o"
+  SHELL_UI_OBJECTS=("$OBJ/touch_controls.o" "$OBJ/external_display.o")
+  RPATH=@executable_path/Frameworks
+fi
 
 xcrun --sdk "$SDK" clang++ "${COMMON_FLAGS[@]}" \
   ${SIGNED_OBJECTS[@]+"${SIGNED_OBJECTS[@]}"} \
-  "$OBJ/shell_main.o" "$OBJ/ios_boot.o" "$OBJ/touch_controls.o" "$OBJ/external_display.o" \
-  "$APP_BUILD/libottsel-runtime.a" "$ZSTD_LIB" "$SDL_BUILD/libSDL3.a" \
-  "${FRAMEWORKS[@]}" -F"$ANGLE_DIR" -framework libEGL -framework libGLESv2 \
-  -Wl,-rpath,@executable_path/Frameworks -lobjc \
+  "$OBJ/shell_main.o" "$OBJ/ios_boot.o" "$OBJ/mario.o" "${SHELL_UI_OBJECTS[@]}" \
+  "$APP_BUILD/libottsel-runtime.a" "$SM64_LIB" "$ZSTD_LIB" "$SDL_BUILD/libSDL3.a" \
+  "${FRAMEWORKS[@]}" "${ANGLE_LINK[@]}" \
+  -Wl,-rpath,"$RPATH" -lobjc \
   -o "$APP_BUILD/OttselShell"
 
 echo "== [4/4] assemble + sign bundle =="
-mkdir -p "$APP"
+mkdir -p "$APP" "$APP_EXE_DIR" "$APP_RES"
 # The bundle must contain exactly what this step copies: the runtime loads KERNEL.CGO
 # and GAME.CGO only, and an earlier round left an 18 MB stale ENGINE.CGO in the app
 # that then rode along in every bundle since.  Clear the containers first.
-rm -f "$APP"/*.CGO
-cp "$APP_BUILD/OttselShell" "$APP/"
-cp "$REPO_DIR/src/shell/Info.plist" "$APP/"
-# App icon: actool renders every size from the one 1024-pixel image and reports the icon keys.
-xcrun actool "$REPO_DIR/src/shell/Assets.xcassets" --compile "$APP" --platform "${SDK%%[0-9]*}" \
-  --minimum-deployment-target "$DEPLOY" --app-icon AppIcon --target-device iphone --target-device ipad \
-  --output-partial-info-plist "$APP_BUILD/assets-info.plist" >/dev/null
-/usr/libexec/PlistBuddy -c "Merge $APP_BUILD/assets-info.plist" "$APP/Info.plist" >/dev/null
-rm -rf "$APP/Frameworks"
-mkdir -p "$APP/Frameworks"
-cp -R "$ANGLE_DIR/libEGL.framework" "$ANGLE_DIR/libGLESv2.framework" "$APP/Frameworks/"
+rm -f "$APP_RES"/*.CGO
+cp "$APP_BUILD/OttselShell" "$APP_EXE_DIR/"
+if [ "$PLATFORM" = macos ]; then
+  cp "$REPO_DIR/src/shell/Info-macOS.plist" "$APP_PLIST"
+  # The Mac icon: every size from the same 1024-pixel image the iPad icon uses.
+  ICONSET="$APP_BUILD/Ottsel.iconset"
+  rm -rf "$ICONSET"
+  mkdir -p "$ICONSET"
+  for spec in 16:16x16 32:16x16@2x 32:32x32 64:32x32@2x 128:128x128 256:128x128@2x 256:256x256 \
+    512:256x256@2x 512:512x512 1024:512x512@2x; do
+    sips -s format png -z "${spec%%:*}" "${spec%%:*}" "$REPO_DIR/src/shell/Assets.xcassets/AppIcon.appiconset/AppIcon.png" \
+      --out "$ICONSET/icon_${spec#*:}.png" >/dev/null
+  done
+  iconutil -c icns "$ICONSET" -o "$APP_RES/Ottsel.icns"
+  rm -rf "$APP_FRAMEWORKS"
+  mkdir -p "$APP_FRAMEWORKS"
+  cp "$ANGLE_LIBS/libEGL.dylib" "$ANGLE_LIBS/libGLESv2.dylib" "$APP_FRAMEWORKS/"
+else
+  cp "$REPO_DIR/src/shell/Info.plist" "$APP_PLIST"
+  # App icon: actool renders every size from the one 1024-pixel image and reports the icon keys.
+  xcrun actool "$REPO_DIR/src/shell/Assets.xcassets" --compile "$APP" --platform "${SDK%%[0-9]*}" \
+    --minimum-deployment-target "$DEPLOY" --app-icon AppIcon --target-device iphone --target-device ipad \
+    --output-partial-info-plist "$APP_BUILD/assets-info.plist" >/dev/null
+  /usr/libexec/PlistBuddy -c "Merge $APP_BUILD/assets-info.plist" "$APP_PLIST" >/dev/null
+  rm -rf "$APP_FRAMEWORKS"
+  mkdir -p "$APP_FRAMEWORKS"
+  cp -R "$ANGLE_DIR/libEGL.framework" "$ANGLE_DIR/libGLESv2.framework" "$APP_FRAMEWORKS/"
+fi
 # The renderer's GLSL 4.10 shaders, cross-compiled to GLSL ES 3.00 (brew install glslang spirv-cross).
-mkdir -p "$APP/game/graphics/opengl_renderer"
-rm -rf "$APP/game/graphics/opengl_renderer/shaders"
+mkdir -p "$APP_RES/game/graphics/opengl_renderer"
+rm -rf "$APP_RES/game/graphics/opengl_renderer/shaders"
 python3 "$REPO_DIR/scripts/translate-gl-shaders.py" "$WORKTREE/game/graphics/opengl_renderer/shaders" \
-  "$APP/game/graphics/opengl_renderer/shaders"
-cp "$WORKTREE/out/jak1/iso/KERNEL.CGO" "$APP/KERNEL.CGO"
-cp "$WORKTREE/out/jak1/iso/GAME.CGO" "$APP/GAME.CGO"
+  "$APP_RES/game/graphics/opengl_renderer/shaders"
+cp "$WORKTREE/out/jak1/iso/KERNEL.CGO" "$APP_RES/KERNEL.CGO"
+cp "$WORKTREE/out/jak1/iso/GAME.CGO" "$APP_RES/GAME.CGO"
 # Local Simulator research bundle only: the DGO/TEXT resources copied below
 # include user-derived game assets. This is not a data-free distribution package.
 # The release path must separate generated code from assets supplied via F1 import.
-rm -rf "$APP/iso_data"
-mkdir -p "$APP/iso_data"
+rm -rf "$APP_RES/iso_data"
+mkdir -p "$APP_RES/iso_data"
 # These complete containers mix recompiled title/start-sequence code with
 # texture, art, and visibility objects. Keep the resulting bundle local.
-mkdir -p "$APP/iso_data/DGO"
+mkdir -p "$APP_RES/iso_data/DGO"
 for dgo in TIT.DGO VI1.DGO; do
   if [ -f "$WORKTREE/out/jak1/iso/$dgo" ]; then
-    cp "$WORKTREE/out/jak1/iso/$dgo" "$APP/iso_data/DGO/$dgo"
+    cp "$WORKTREE/out/jak1/iso/$dgo" "$APP_RES/iso_data/DGO/$dgo"
   fi
 done
-mkdir -p "$APP/iso_data/TEXT"
+mkdir -p "$APP_RES/iso_data/TEXT"
 for text in "$WORKTREE"/out/jak1/iso/*.TXT; do
   if [ -f "$text" ]; then
-    cp "$text" "$APP/iso_data/TEXT/"
+    cp "$text" "$APP_RES/iso_data/TEXT/"
   fi
 done
-plutil -lint "$APP/Info.plist" >/dev/null
-if [ "$PLATFORM" = device ] && [ -n "${OTTSEL_SIGN_IDENTITY:-}" ] && [ -n "${OTTSEL_PROVISIONING_PROFILE:-}" ]; then
+plutil -lint "$APP_PLIST" >/dev/null
+if [ "$PLATFORM" = macos ]; then
+  # A Mac app needs no profile: the developer identity when given (as for the iPad), ad hoc otherwise.
+  MAC_IDENTITY="${OTTSEL_SIGN_IDENTITY:--}"
+  for lib in "$APP_FRAMEWORKS"/*.dylib; do
+    codesign --force --sign "$MAC_IDENTITY" "$lib"
+  done
+  codesign --force --sign "$MAC_IDENTITY" "$APP"
+  echo "signed for macOS with $MAC_IDENTITY"
+elif [ "$PLATFORM" = device ] && [ -n "${OTTSEL_SIGN_IDENTITY:-}" ] && [ -n "${OTTSEL_PROVISIONING_PROFILE:-}" ]; then
   # The bundle id and entitlements come from the profile so they always match it.
   cp "$OTTSEL_PROVISIONING_PROFILE" "$APP/embedded.mobileprovision"
   security cms -D -i "$OTTSEL_PROVISIONING_PROFILE" > "$APP_BUILD/profile.plist"

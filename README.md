@@ -203,6 +203,12 @@ in and launches it. Later you can import a pack from Files with **••• → 
 then `xcrun simctl install booted out/jak-project/out/ios/app/OttselShell.app`,
 `scripts/import-ios-user-data.sh <udid> /tmp/ottsel-pack` and `xcrun simctl launch booted com.ottsel.shell`.
 
+**Mac (Apple Silicon):** build with `OTTSEL_PLATFORM=macos` and the same signed-module settings, then open
+`out/jak-project/out/macos/app/Ottsel.app` and choose your pack with **Game Data → Import Game Data…**.
+It is the same app, with the three-dot menu as the menu bar; see the
+[Mac guide](docs/macos-settings-and-packaging.md). It runs on Macs you build it on (no Developer ID
+signing or notarization yet).
+
 **Logs:** the app writes `ottsel-runtime.log` and `ottsel-fault.log` to
 `Library/Application Support/local.ottsel/OttselShell/` in its container. Share them from
 **••• → Help & Feedback → Share Logs…**, or copy them to the Mac with `xcrun devicectl device copy from`.
@@ -251,7 +257,8 @@ tested with the Simulator's external display; a real adapter has not been tried 
 
 Cheats are built in (**••• → Cheats**). Texture packs and replacement models go into your data pack on
 the Mac; code mods and custom levels each need their own build. The [mods guide](docs/MODS.md) covers all
-three. The game runs at 60 fps; OpenGOAL's experimental 100 and 150 fps modes can break Jak 1's
+three, and **Play as Mario** (**••• → Mods**, with your own Super Mario 64 ROM). The game runs at 60 fps;
+OpenGOAL's experimental 100 and 150 fps modes can break Jak 1's
 physics, so Ottsel does not offer them.
 
 </details>

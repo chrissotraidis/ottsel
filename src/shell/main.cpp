@@ -31,6 +31,7 @@
 #include "game/graphics/pipelines/ottsel_gl_view.h"
 #include "touch_controls.h"
 #include "external_display.h"
+#include "mario.h"
 
 #include <atomic>
 extern std::atomic<int> g_ottsel_pause_request;  // game/sce/libpad.cpp
@@ -81,6 +82,10 @@ struct ShellSettings {
   // VIDEO: the drawable the game renders into, as a percent of the native resolution.  The shell owns the
   // CAMetalLayer's drawable size, so this is a real render-resolution change (the layer scales it back up).
   int render_scale = 100;
+  // MODS: play as Super Mario 64's Mario (needs the player's US ROM; see mario.h).
+  int mario = 0;
+  // MODS: Mario's own jumps (triple jump, sideflip) on Jak's controls.
+  int mario_moves = 0;
 };
 ShellSettings g_settings;
 std::string g_settings_path;
@@ -104,7 +109,7 @@ void save_settings() {
   }
   file << "2\n" << g_settings.surface_visibility << "\n" << g_settings.log_overlay << "\n"
        << g_settings.camera_sensitivity << "\n" << g_settings.invert_camera_y << "\n"
-       << g_settings.render_scale << "\n";
+       << g_settings.render_scale << "\n" << g_settings.mario << "\n" << g_settings.mario_moves << "\n";
   lg::info("OTTSEL SETTINGS: saved visible={} log={} sens={} invert={} scale={} path={}",
            surface_visibility_name(g_settings.surface_visibility),
            g_settings.log_overlay, g_settings.camera_sensitivity, g_settings.invert_camera_y,
@@ -138,6 +143,8 @@ void load_settings() {
   const int sensitivity = read_int(g_settings.camera_sensitivity);
   const int invert = read_int(g_settings.invert_camera_y);
   const int scale = read_int(g_settings.render_scale);
+  const int mario = read_int(g_settings.mario);
+  const int mario_moves = read_int(g_settings.mario_moves);
   if (visibility < 0 || visibility > 2 ||
       (log_overlay != 0 && log_overlay != 1) || sensitivity < 50 || sensitivity > 200 ||
       (invert != 0 && invert != 1) || (scale != 50 && scale != 75 && scale != 100)) {
@@ -148,6 +155,8 @@ void load_settings() {
   g_settings.camera_sensitivity = sensitivity;
   g_settings.invert_camera_y = invert;
   g_settings.render_scale = scale;
+  g_settings.mario = mario ? 1 : 0;
+  g_settings.mario_moves = mario_moves ? 1 : 0;
   lg::info("OTTSEL SETTINGS: loaded visible={} log={} sens={} invert={} scale={} path={}",
            surface_visibility_name(g_settings.surface_visibility),
            g_settings.log_overlay, g_settings.camera_sensitivity, g_settings.invert_camera_y,
@@ -512,9 +521,13 @@ void refresh_settings_path() {
   if (g_writable_dir.empty()) {
     return;
   }
+#if TARGET_OS_OSX
+  const std::string want = g_writable_dir + "settings-mac.cfg";
+#else
   const std::string want =
       g_writable_dir +
       (ottsel_ios_shell_is_phone() ? "settings-phone.cfg" : "settings-tablet.cfg");
+#endif
   if (want == g_settings_path) {
     return;
   }
@@ -684,6 +697,9 @@ int shell_setting(const char* key) {
   if (k == "camera_sensitivity") return g_settings.camera_sensitivity;
   if (k == "invert_camera_y") return g_settings.invert_camera_y;
   if (k == "log_overlay") return g_settings.log_overlay;
+  if (k == "mario") return ottsel_mario_enabled() ? 1 : 0;
+  if (k == "mario_rom") return ottsel_mario_rom_present() ? 1 : 0;
+  if (k == "mario_moves") return ottsel_mario_moves() ? 1 : 0;
   return 0;
 }
 
@@ -696,6 +712,14 @@ void set_shell_setting(const char* key, int value) {
   }
   if (k == "camera_sensitivity") g_settings.camera_sensitivity = std::clamp(value, 50, 200);
   if (k == "invert_camera_y") g_settings.invert_camera_y = value ? 1 : 0;
+  if (k == "mario") {
+    ottsel_mario_set_enabled(value != 0);
+    g_settings.mario = ottsel_mario_enabled() ? 1 : 0;
+  }
+  if (k == "mario_moves") {
+    ottsel_mario_set_moves(value != 0);
+    g_settings.mario_moves = value ? 1 : 0;
+  }
   if (k == "log_overlay") {
     g_settings.log_overlay = value ? 1 : 0;
     if (!value) ottsel_gl_set_status(nullptr, 0, 0);
@@ -771,7 +795,13 @@ int main(int argc, char** argv) {
   select_mobile_gamepad();
 
   // The game renders with OpenGL ES (ANGLE on Metal) into this window's Metal layer (ottsel_gl_attach).
+#if TARGET_OS_OSX
+  // On a Mac: an ordinary resizable window (full screen from the Display menu or the green button).
+  g_win = SDL_CreateWindow("Ottsel", 1280, 960,
+                           SDL_WINDOW_METAL | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_RESIZABLE);
+#else
   g_win = SDL_CreateWindow("Ottsel Shell", 1024, 768, SDL_WINDOW_METAL | SDL_WINDOW_HIGH_PIXEL_DENSITY);
+#endif
   if (!g_win) {
     fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
     return 1;
@@ -806,9 +836,18 @@ int main(int argc, char** argv) {
                                shell_setting, set_shell_setting, [] { return g_presented_fps; },
                                [] { return ottsel_ios_has_user_data(); }, g_writable_dir.c_str()});
   ottsel_external_display_install();  // a connected TV shows the game; the iPad keeps the controls
+  ottsel_mario_install(g_writable_dir);
+  ottsel_mario_set_moves(g_settings.mario_moves != 0);
+  if (g_settings.mario) {
+    ottsel_mario_set_enabled(true);  // waits for Jak; the game is not running yet
+  }
   // With the real IOP, OVERLORD's InitSound starts the sound system (game/overlord/jak1/ssound.cpp).
 
-  std::thread boot(ottsel_ios_run_boot);
+  static std::atomic<bool> boot_done{false};
+  std::thread boot([] {
+    ottsel_ios_run_boot();
+    boot_done = true;
+  });
 
   lg::info("OTTSEL SHELL: frame loop enter");
   while (!g_quit) {
@@ -961,6 +1000,7 @@ int main(int argc, char** argv) {
       };
       static bool hold_start = false;
       static bool hold_cross = false;
+      static bool hold_square = false;
       static bool hold_left = false;
       static bool hold_right = false;
       static bool hold_down = false;
@@ -977,6 +1017,7 @@ int main(int argc, char** argv) {
       static const HoldTrigger hold_triggers[] = {
           {"ottsel-hold-start", SDLK_RETURN, SDL_SCANCODE_RETURN, &hold_start},
           {"ottsel-hold-cross", SDLK_SPACE, SDL_SCANCODE_SPACE, &hold_cross},
+          {"ottsel-hold-square", SDLK_F, SDL_SCANCODE_F, &hold_square},
           {"ottsel-hold-left", SDLK_LEFT, SDL_SCANCODE_LEFT, &hold_left},
           {"ottsel-hold-right", SDLK_RIGHT, SDL_SCANCODE_RIGHT, &hold_right},
           {"ottsel-hold-down", SDLK_DOWN, SDL_SCANCODE_DOWN, &hold_down},
@@ -1188,6 +1229,16 @@ int main(int argc, char** argv) {
   extern void ottsel_ios_stop_dispatch();
   ottsel_ios_stop_dispatch();
   ottsel_gl_shutdown();
+  // The game thread finishes its frame and returns. If it is instead waiting for a frame that will never
+  // come, leave after two seconds rather than hang: a Mac quits with Command-Q (iOS ends the process itself).
+  for (int i = 0; i < 200 && !boot_done; i++) {
+    SDL_Delay(10);
+  }
+  if (!boot_done) {
+    lg::warn("OTTSEL SHELL: game thread did not stop within 2 s; exiting");
+    lg::finish();
+    std::_Exit(0);
+  }
   boot.join();
 
   snd_StopSoundSystem();

@@ -9,6 +9,7 @@
 // no-emit linker; code pages flip RW -> RX exactly like the host H3 proof.
 
 #include "ios_boot.h"
+#include <TargetConditionals.h>
 #include "goal_pointer_policy.h"
 #include "game/sound/sdshim.h"
 #include "ottsel_fault_state.h"
@@ -268,7 +269,13 @@ std::string select_ios_iso_data_dir() {
     lg::info("OTTSEL F1: HOME unavailable; using diagnostic bundle data");
     return bundle_data_fallback();
   }
+#if TARGET_OS_OSX
+  // The Mac app's Game Data menu copies a pack here, in its own folder (no Documents permission prompt);
+  // a pack is imported once, then lives in the durable folder below.
+  const fs::path imported = fs::path(g_writable_dir) / "OttselUserData.import";
+#else
   const fs::path imported = fs::path(home) / "Documents" / "OttselUserData";
+#endif
   const fs::path durable = fs::path(g_writable_dir) / "OttselUserData";
   const fs::path staging = fs::path(g_writable_dir) / "OttselUserData.staging";
 
@@ -351,6 +358,9 @@ std::string select_ios_iso_data_dir() {
   }
   g_has_user_data = true;
   lg::info("OTTSEL F1: imported validated user pack into {}", durable.string());
+#if TARGET_OS_OSX
+  fs::remove_all(imported, error);
+#endif
   return durable.string();
 }
 

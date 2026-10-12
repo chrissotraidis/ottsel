@@ -11,6 +11,7 @@ the build, and inside the ANGLE download.
 | [OpenGOAL](https://github.com/open-goal/jak-project) (pinned `641fb572e`, patched by `patches/ottsel-jak-project.patch`) | GOAL compiler, runtime, renderer, sound and the game's decompiled source | ISC |
 | [ANGLE](https://chromium.googlesource.com/angle/angle), prebuilt by [kivy/angle-builder](https://github.com/kivy/angle-builder) `chromium-7151_rev1` | OpenGL ES 3.0 on Metal (`libEGL`, `libGLESv2`, embedded in the app) | BSD-3-Clause |
 | [SDL 3](https://github.com/libsdl-org/SDL) | Window, events, controllers, audio output | zlib |
+| [libsm64](https://github.com/libsm64/libsm64) (pinned `fd11813`, patched by `patches/libsm64-ottsel-pose.patch`) | Mario for the Play as Mario mod, built from the Super Mario 64 decompilation; his animations, textures and sounds come from the player's own ROM at run time | CC0-1.0 |
 | [Zstandard](https://github.com/facebook/zstd) | Decompression | BSD-3-Clause (dual-licensed with GPL-2.0) |
 | [{fmt}](https://github.com/fmtlib/fmt) | Text formatting | MIT |
 | [Dear ImGui](https://github.com/ocornut/imgui) | OpenGOAL's debug interface | MIT |

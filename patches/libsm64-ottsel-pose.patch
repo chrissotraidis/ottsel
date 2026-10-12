@@ -1,0 +1,68 @@
+diff --git a/src/libsm64.c b/src/libsm64.c
+index b7db0b1..f31b133 100644
+--- a/src/libsm64.c
++++ b/src/libsm64.c
+@@ -20,6 +20,7 @@
+ #include "decomp/memory.h"
+ #include "decomp/global_state.h"
+ #include "decomp/game/mario.h"
++#include "decomp/include/mario_geo_switch_case_ids.h"
+ #include "decomp/game/object_stuff.h"
+ #include "decomp/engine/surface_collision.h"
+ #include "decomp/engine/graph_node.h"
+@@ -268,6 +269,39 @@ SM64_LIB_FN void sm64_mario_tick( int32_t marioId, const struct SM64MarioInputs
+     outState->invincTimer = gMarioState->invincTimer;
+ }
+ 
++void mario_reset_bodystate(struct MarioState *m); // decomp/game/mario.c
++
++SM64_LIB_FN bool sm64_mario_pose( int32_t marioId, int16_t faceYaw, int32_t animID, int32_t animAccel, bool restart, struct SM64MarioGeometryBuffers *outBuffers )
++{
++    if( marioId >= s_mario_instance_pool.size || s_mario_instance_pool.objects[marioId] == NULL )
++    {
++        DEBUG_PRINT("Tried to pose non-existant Mario with ID: %u", marioId);
++        return false;
++    }
++
++    global_state_bind( ((struct MarioInstance *)s_mario_instance_pool.objects[ marioId ])->globalState );
++    struct MarioState *m = gMarioState;
++
++    vec3f_set( m->pos, 0.0f, 0.0f, 0.0f );
++    vec3f_copy( m->marioObj->header.gfx.pos, m->pos );
++    m->faceAngle[1] = faceYaw;
++    vec3s_set( m->marioObj->header.gfx.angle, 0, faceYaw, 0 );
++    vec3f_set( m->marioObj->header.gfx.cameraToObject, 0.0f, 0.0f, 0.0f );
++
++    if( restart )
++        m->marioObj->header.gfx.animInfo.animID = -1;
++    set_mario_anim_with_accel( m, animID, animAccel );
++    mario_reset_bodystate( m );
++    m->marioBodyState->capState = MARIO_HAS_DEFAULT_CAP_ON; // the reset takes it off; his update puts it back
++
++    // The animation advances while his body is drawn (rendering_graph_node.c), once per update counter.
++    gfx_adapter_bind_output_buffers( outBuffers );
++    geo_process_root_hack_single_node( s_mario_graph_node );
++    gAreaUpdateCounter++;
++
++    return is_anim_at_end( m );
++}
++
+ SM64_LIB_FN void sm64_mario_delete( int32_t marioId )
+ {
+     if( marioId >= s_mario_instance_pool.size || s_mario_instance_pool.objects[marioId] == NULL )
+diff --git a/src/libsm64.h b/src/libsm64.h
+index 1f6c5e4..5323ebc 100644
+--- a/src/libsm64.h
++++ b/src/libsm64.h
+@@ -157,6 +157,11 @@ extern SM64_LIB_FN void sm64_static_surfaces_load( const struct SM64Surface *sur
+ 
+ extern SM64_LIB_FN int32_t sm64_mario_create( float x, float y, float z );
+ extern SM64_LIB_FN void sm64_mario_tick( int32_t marioId, const struct SM64MarioInputs *inputs, struct SM64MarioState *outState, struct SM64MarioGeometryBuffers *outBuffers );
++// Ottsel: Mario as a puppet for a host game that moves him itself, so his own physics never run. Faces
++// him (an SM64 angle, 0x10000 to the turn), plays an animation (animAccel 0x10000 = one animation frame
++// per call; restart starts it over even if it is playing) and writes his triangles with (0, 0, 0) at his
++// feet. Returns whether the animation has reached its last frame.
++extern SM64_LIB_FN bool sm64_mario_pose( int32_t marioId, int16_t faceYaw, int32_t animID, int32_t animAccel, bool restart, struct SM64MarioGeometryBuffers *outBuffers );
+ extern SM64_LIB_FN void sm64_mario_delete( int32_t marioId );
+ 
+ extern SM64_LIB_FN void sm64_set_mario_action(int32_t marioId, uint32_t action);

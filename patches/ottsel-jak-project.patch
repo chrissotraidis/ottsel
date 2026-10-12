@@ -539,6 +539,18 @@ index 2a7b5c400..173afcb4e 100644
  if(WIN32)
      set_target_properties(gk PROPERTIES VS_DPI_AWARE "PerMonitor")
  endif()
+diff --git a/game/graphics/opengl_renderer/BucketRenderer.h b/game/graphics/opengl_renderer/BucketRenderer.h
+index 207f00318..b058ea800 100644
+--- a/game/graphics/opengl_renderer/BucketRenderer.h
++++ b/game/graphics/opengl_renderer/BucketRenderer.h
+@@ -160,3 +160,7 @@ class PrintRenderer : public BucketRenderer {
+   bool empty() const override { return true; }
+   void draw_debug_window() override {}
+ };
++
++// Ottsel: the iOS shell draws extra world geometry (the "Play as Mario" mod) at the point in the frame
++// where the collision debug mesh is drawn, with the same camera and depth buffer. Null when unused.
++extern void (*g_ottsel_world_draw_hook)(SharedRenderState* render_state);
 diff --git a/game/graphics/opengl_renderer/DirectRenderer.cpp b/game/graphics/opengl_renderer/DirectRenderer.cpp
 index 02653cb00..9c026ca6e 100644
 --- a/game/graphics/opengl_renderer/DirectRenderer.cpp
@@ -816,7 +828,7 @@ index d59ce4ff6..bed30f719 100644
 +  void run_gpu_draws(const std::vector<SingleEyeDraws>& draws, SharedRenderState* render_state);
  };
 diff --git a/game/graphics/opengl_renderer/OpenGLRenderer.cpp b/game/graphics/opengl_renderer/OpenGLRenderer.cpp
-index cc19099d4..0989623ab 100644
+index cc19099d4..df4120dcc 100644
 --- a/game/graphics/opengl_renderer/OpenGLRenderer.cpp
 +++ b/game/graphics/opengl_renderer/OpenGLRenderer.cpp
 @@ -1,8 +1,12 @@
@@ -862,7 +874,16 @@ index cc19099d4..0989623ab 100644
  }
  
  /*!
-@@ -982,6 +1002,45 @@ void OpenGLRenderer::blit_display(ScopedProfilerNode& prof) {
+@@ -69,6 +89,8 @@ void GLAPIENTRY opengl_error_callback(GLenum source,
+   }
+ }
+ 
++void (*g_ottsel_world_draw_hook)(SharedRenderState* render_state) = nullptr;
++
+ OpenGLRenderer::OpenGLRenderer(std::shared_ptr<TexturePool> texture_pool,
+                                std::shared_ptr<Loader> loader,
+                                GameVersion version)
+@@ -982,6 +1004,45 @@ void OpenGLRenderer::blit_display(ScopedProfilerNode& prof) {
   * Main render function. This is called from the gfx loop with the chain passed from the game.
   */
  void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
@@ -908,7 +929,7 @@ index cc19099d4..0989623ab 100644
    m_profiler.clear();
    m_render_state.reset();
    m_render_state.ee_main_memory = g_ee_main_mem;
-@@ -994,6 +1053,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+@@ -994,6 +1055,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
      if (settings.gpu_sync) {
        glFinish();
      }
@@ -916,7 +937,7 @@ index cc19099d4..0989623ab 100644
    }
  
    {
-@@ -1006,6 +1066,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+@@ -1006,6 +1068,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
      } else {
        m_render_state.loader->update(*m_render_state.texture_pool);
      }
@@ -924,7 +945,7 @@ index cc19099d4..0989623ab 100644
    }
  
    // render the buckets!
-@@ -1024,6 +1085,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+@@ -1024,6 +1087,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
      g_current_renderer = "blit-display";
      auto prof = m_profiler.root()->make_scoped_child("blit-display");
      blit_display(prof);
@@ -932,7 +953,7 @@ index cc19099d4..0989623ab 100644
    }
  
    // apply effects done with PCRTC registers, as well as blit the framebuffer to the window and
-@@ -1036,6 +1098,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+@@ -1036,6 +1100,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
      if (settings.gpu_sync) {
        glFinish();
      }
@@ -940,7 +961,7 @@ index cc19099d4..0989623ab 100644
    }
  
    m_last_pmode_alp = settings.pmode_alp_register;
-@@ -1111,6 +1174,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+@@ -1111,6 +1176,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
      m_small_profiler.draw(m_render_state.load_status_debug, stats);
    }
  
@@ -948,7 +969,7 @@ index cc19099d4..0989623ab 100644
    if (settings.draw_subtitle_editor_window) {
      g_current_renderer = "subtitle-editor-window";
      if (m_subtitle_editor == nullptr) {
-@@ -1118,6 +1182,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
+@@ -1118,6 +1184,7 @@ void OpenGLRenderer::render(DmaFollower dma, const RenderOptions& settings) {
      }
      m_subtitle_editor->draw_window();
    }
@@ -956,7 +977,7 @@ index cc19099d4..0989623ab 100644
  
    if (settings.draw_filters_window) {
      g_current_renderer = "filters-window";
-@@ -1291,6 +1356,25 @@ void OpenGLRenderer::setup_frame(const RenderOptions& settings) {
+@@ -1291,6 +1358,25 @@ void OpenGLRenderer::setup_frame(const RenderOptions& settings) {
  void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
                                             ScopedProfilerNode& prof,
                                             bool sync_after_buckets) {
@@ -982,7 +1003,7 @@ index cc19099d4..0989623ab 100644
    // The first thing the DMA chain should be a call to a common default-registers chain.
    // this chain resets the state of the GS. After this is buckets
    m_category_times.fill(0);
-@@ -1323,15 +1407,61 @@ void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
+@@ -1323,15 +1409,61 @@ void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
    ASSERT(dma.current_tag_offset() == m_render_state.next_bucket);
    m_render_state.next_bucket += 16;
  
@@ -1044,19 +1065,22 @@ index cc19099d4..0989623ab 100644
        glFinish();
      }
  
-@@ -1349,6 +1479,11 @@ void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
+@@ -1347,6 +1479,14 @@ void OpenGLRenderer::dispatch_buckets_jak1(DmaFollower dma,
+       auto p = prof.make_scoped_child("collision-draw");
+       m_collide_renderer.render(&m_render_state, p);
      }
-   }
- 
++    if (bucket_id == 31 - 1 && g_ottsel_world_draw_hook) {
++      g_ottsel_world_draw_hook(&m_render_state);
++    }
++  }
++
 +  if (ottsel_trace_active) {
 +    lg::info("OTTSEL BUCKET TRACE: frame={} complete", ottsel_trace_frame);
 +    --ottsel_trace_frames;
-+  }
-+
-   // TODO ending data.
- }
+   }
  
-@@ -1370,6 +1505,7 @@ void OpenGLRenderer::dispatch_buckets_jak2(DmaFollower dma,
+   // TODO ending data.
+@@ -1370,6 +1510,7 @@ void OpenGLRenderer::dispatch_buckets_jak2(DmaFollower dma,
      g_current_renderer = renderer->name_and_id();
      // lg::info("Render: {} start", g_current_renderer);
      renderer->render(dma, &m_render_state, bucket_prof);
@@ -1064,7 +1088,7 @@ index cc19099d4..0989623ab 100644
      if (sync_after_buckets) {
        auto pp = scoped_prof("finish");
        glFinish();
-@@ -1412,6 +1548,7 @@ void OpenGLRenderer::dispatch_buckets_jak3(DmaFollower dma,
+@@ -1412,6 +1553,7 @@ void OpenGLRenderer::dispatch_buckets_jak3(DmaFollower dma,
      g_current_renderer = renderer->name_and_id();
      // lg::info("Render: {} start", g_current_renderer);
      renderer->render(dma, &m_render_state, bucket_prof);
@@ -10385,7 +10409,7 @@ index 4f7cc5e18..40de75561 100644
    if (version != GameVersion::Jak3 && version != GameVersion::JakX) {
      jak1::dma_init_globals();
 diff --git a/game/sce/libpad.cpp b/game/sce/libpad.cpp
-index 085d80d2f..ed9a5317a 100644
+index 085d80d2f..9bcc85861 100644
 --- a/game/sce/libpad.cpp
 +++ b/game/sce/libpad.cpp
 @@ -1,17 +1,61 @@
@@ -10450,7 +10474,7 @@ index 085d80d2f..ed9a5317a 100644
  namespace ee {
  
  int scePadPortOpen(int port, int slot, void*) {
-@@ -92,6 +136,503 @@ int scePadRead(int port, int /*slot*/, u8* rdata) {
+@@ -92,6 +136,509 @@ int scePadRead(int port, int /*slot*/, u8* rdata) {
      for (size_t i = 0; i < pad_data.value()->button_data.size(); i++) {
        cpad->button0 |= pad_data.value()->button_data.at(i) << i;
      }
@@ -10667,6 +10691,9 @@ index 085d80d2f..ed9a5317a 100644
 +    // Ottsel testing: a file named ottsel-warp in the app's writable directory holds a continue-point
 +    // name ("village1-hut"); main.gc's display loop starts play there. See ••• → Diagnostics.
 +    if ((ottsel_pad_reads % 60) == 5) {
++      // A request already waiting at the first look is left over from an earlier run: starting play
++      // before the title has finished loading its own levels crashes the level code, so drop it.
++      static bool warp_seen_once = false;
 +#ifdef OTTSEL_IOS
 +      const std::string warp_path = ottsel_ios_writable_dir() + "ottsel-warp";
 +#else
@@ -10681,12 +10708,15 @@ index 085d80d2f..ed9a5317a 100644
 +        while (!continue_name.empty() && isspace((unsigned char)continue_name.back())) {
 +          continue_name.pop_back();
 +        }
-+        if (!continue_name.empty()) {
++        if (!warp_seen_once) {
++          lg::info("OTTSEL WARP: ignored {} left from an earlier run", continue_name);
++        } else if (!continue_name.empty()) {
 +          jak1::intern_from_c("*ottsel-warp-request*")->value =
 +              (u32)jak1::make_string_from_c(continue_name.c_str());
 +          lg::info("OTTSEL WARP: requested {}", continue_name);
 +        }
 +      }
++      warp_seen_once = true;
 +    }
 +    // It deliberately discards title sequencing and enables all-visible
 +    // fallback rendering, so it must not substitute for title/New Game tests.
@@ -10956,10 +10986,10 @@ index 085d80d2f..ed9a5317a 100644
    return 32;
 diff --git a/game/sce/ottsel_platform_input.cpp b/game/sce/ottsel_platform_input.cpp
 new file mode 100644
-index 000000000..9af579692
+index 000000000..01e26efdd
 --- /dev/null
 +++ b/game/sce/ottsel_platform_input.cpp
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,173 @@
 +#include "ottsel_platform_input.h"
 +
 +#include <algorithm>
@@ -10974,6 +11004,8 @@ index 000000000..9af579692
 +  std::array<PadState, kPadCount> states;
 +  std::array<u16, kPadCount> latched_buttons;
 +  std::array<int, kPadCount> latched_reads;
++  u16 game_mask_buttons = 0;
++  bool game_mask_left_stick = false;
 +  std::mutex mutex;
 +};
 +
@@ -11029,11 +11061,8 @@ index 000000000..9af579692
 +  input_state().states.at(port) = state;
 +}
 +
-+PadState get_pad_state(int port) {
-+  std::lock_guard lock(input_state().mutex);
-+  if (!valid_port(port)) {
-+    return PadState{};
-+  }
++namespace {
++PadState snapshot_locked(int port) {
 +  auto result = input_state().states.at(port);
 +  const auto latched = input_state().latched_buttons.at(port);
 +  result.buttons |= latched;
@@ -11044,11 +11073,47 @@ index 000000000..9af579692
 +      result.pressure.at(index) = 255;
 +    }
 +  }
++  return result;
++}
++}  // namespace
++
++PadState get_pad_state(int port) {
++  std::lock_guard lock(input_state().mutex);
++  if (!valid_port(port)) {
++    return PadState{};
++  }
++  auto result = snapshot_locked(port);
++  if (port == 0 && input_state().game_mask_buttons) {
++    for (int bit = 0; bit < 16; ++bit) {
++      const auto button = static_cast<Button>(1u << bit);
++      if (input_state().game_mask_buttons & button) {
++        set_button(&result, button, false);
++      }
++    }
++  }
++  if (port == 0 && input_state().game_mask_left_stick) {
++    result.leftx = 127;
++    result.lefty = 127;
++  }
 +  if (input_state().latched_reads.at(port) > 0 &&
 +      --input_state().latched_reads.at(port) == 0) {
 +    input_state().latched_buttons.at(port) = 0;
 +  }
 +  return result;
++}
++
++PadState peek_pad_state(int port) {
++  std::lock_guard lock(input_state().mutex);
++  if (!valid_port(port)) {
++    return PadState{};
++  }
++  return snapshot_locked(port);
++}
++
++void set_game_mask(u16 buttons, bool center_left_stick) {
++  std::lock_guard lock(input_state().mutex);
++  input_state().game_mask_buttons = buttons;
++  input_state().game_mask_left_stick = center_left_stick;
 +}
 +
 +void latch_button(int port, Button button, int pad_reads) {
@@ -11100,10 +11165,10 @@ index 000000000..9af579692
 +}  // namespace ottsel::platform_input
 diff --git a/game/sce/ottsel_platform_input.h b/game/sce/ottsel_platform_input.h
 new file mode 100644
-index 000000000..943a984a7
+index 000000000..ff92cd5f4
 --- /dev/null
 +++ b/game/sce/ottsel_platform_input.h
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,105 @@
 +#pragma once
 +
 +#include <algorithm>
@@ -11191,6 +11256,11 @@ index 000000000..943a984a7
 +// mutable reference to the shared state.
 +void set_pad_state(int port, const PadState& state);
 +PadState get_pad_state(int port);
++// The same snapshot without consuming latched taps, for a host-side reader (the Mario mod).
++PadState peek_pad_state(int port);
++// While a host-side player (the Mario mod) owns them, GOAL's reads of port 0 see these buttons
++// released and, if asked, the left stick centred. Zero and false give GOAL everything again.
++void set_game_mask(u16 buttons, bool center_left_stick);
 +// Keep a short digital edge alive across the asynchronous host/UI and EE
 +// polling boundary. This is for event-driven keyboard taps; held input stays
 +// in PadState and is unaffected.
@@ -13082,10 +13152,10 @@ index a43bd6ae7..4327e159b 100644
    (process-drawable-from-entity! this (the-as entity-actor arg0))
    (initialize-skeleton this arg1 '())
 diff --git a/goal_src/jak1/engine/game/main.gc b/goal_src/jak1/engine/game/main.gc
-index ed98a8320..c2562a6a4 100644
+index ed98a8320..142bcd19d 100644
 --- a/goal_src/jak1/engine/game/main.gc
 +++ b/goal_src/jak1/engine/game/main.gc
-@@ -234,6 +234,17 @@
+@@ -234,6 +234,170 @@
  
  (define *master-exit* #f)
  
@@ -13100,10 +13170,172 @@ index ed98a8320..c2562a6a4 100644
 +;; back to a paused game instead of live action.
 +(define *ottsel-pause-request* #f)
 +
++;; Ottsel mod "Play as Mario": Jak keeps playing the game (his controls, powers, collision, attacks and
++;; camera; Daxter's lines), and the iOS runtime draws Super Mario 64's Mario in his place, posed from what
++;; Jak is doing (src/shell/mario.cpp). Jak and Daxter skip only drawing their bodies (skip-bones), so
++;; their skeletons, attacks and eco effects still run.
++(define *ottsel-mario-on* #f) ;; set by the runtime
++(define *ottsel-mario-jak* (new 'global 'vector)) ;; where Mario stands (w = 1 while he stands in for Jak)
++(define *ottsel-mario-dir* (new 'global 'vector)) ;; the way Jak faces
++(define *ottsel-mario-state* (new 'global 'vector)) ;; x: pose, y: ground speed, z: rise speed, w: 1 on a surface
++(define *ottsel-mario-shadow* (new 'global 'vector)) ;; the ground under Jak (w = 1 when there is ground)
++(define *ottsel-mario-shadow-normal* (new 'global 'vector))
++(define *ottsel-mario-shown* #f)
++;; Mario's Moves (Mods): his chained jumps, made from Jak's own. A running jump off a fresh landing is his
++;; second jump (1.2 times Jak's), the next his triple jump, and a jump out of a turn-around his sideflip;
++;; those two are Jak's flip jump (the one after a dive attack lands), so no level changes.
++(define *ottsel-mario-moves* #f) ;; set by the runtime
++(define *ottsel-mario-move* #f) ;; what Jak's current jump is: 'second, 'triple, 'sideflip or #f
++(define *ottsel-mario-chain* 0) ;; jumps in the current chain
++(define *ottsel-mario-land-time* (the-as time-frame 0))
++(define *ottsel-mario-airborne* #f)
++(define *ottsel-mario-turning* #f) ;; Jak was turning around last frame
++
++(defun ottsel-mario-chain-jump ((jak target))
++  "What this running jump of Jak's becomes under Mario's Moves (#f: Jak's own jump)."
++  (set! *ottsel-mario-move*
++        (when (and *ottsel-mario-on* *ottsel-mario-moves*)
++          (let ((chained (and (< (meters 5) (-> jak control ctrl-xz-vel))
++                              (not (time-elapsed? *ottsel-mario-land-time* (seconds 0.25))))))
++            (cond
++              (*ottsel-mario-turning* 'sideflip)
++              ((and chained (= *ottsel-mario-chain* 2)) 'triple)
++              ((and chained (= *ottsel-mario-chain* 1)) 'second)
++              (else #f)))))
++  (set! *ottsel-mario-chain*
++        (case *ottsel-mario-move*
++          (('second) 2)
++          (('triple 'sideflip) 0)
++          (else 1)))
++  *ottsel-mario-move*)
++
++(defun ottsel-mario-pose ((jak target))
++  "Mario's pose for Jak's state (the numbers are src/shell/mario.cpp's). 0: the game draws Jak himself, for
++the Zoomer, the Flut Flut, the minigames, warps and the cutscenes that animate him."
++  (case (-> jak state name)
++    (('target-stance 'target-stance-ambient 'target-stance-look-around 'target-look-around 'target-wade-stance
++      'target-ice-stance 'target-grab 'target-eco-powerup 'target-continue 'target-load-wait 'target-startup)
++     1)
++    (('target-walk 'target-wade-walk 'target-ice-walk 'target-turn-around) 2)
++    (('target-jump) (if (= *ottsel-mario-move* 'second) 4 3))
++    (('target-jump-forward 'target-swim-jump 'target-edge-grab-jump 'target-pole-flip-up-jump
++      'target-pole-flip-forward-jump 'target-tube-jump)
++     3)
++    (('target-double-jump 'target-swim-jump-jump) 4)
++    (('target-high-jump)
++     (case *ottsel-mario-move*
++       (('triple) 29)
++       (('sideflip) 30)
++       (else 5)))
++    (('target-duck-high-jump 'target-duck-high-jump-jump) 5)
++    (('target-falling 'target-edge-grab-off) 6)
++    (('target-hit-ground 'target-hit-ground-hard) 7)
++    (('target-flop) 8)
++    (('target-flop-hit-ground) 9)
++    (('target-running-attack) 10)
++    (('target-attack) 11)
++    (('target-attack-air) 12)
++    (('target-attack-uppercut 'target-attack-uppercut-jump) 13)
++    (('target-duck-stance) 14)
++    (('target-duck-walk) 15)
++    (('target-swim-stance) 16)
++    (('target-swim-walk) 17)
++    (('target-swim-down 'target-swim-up) 18)
++    (('target-edge-grab) 19)
++    (('target-pole-cycle) 20)
++    (('target-pole-flip-up 'target-pole-flip-forward) 21)
++    (('target-hit 'target-tube-hit) 22)
++    (('target-death 'target-tube-death) 23)
++    (('target-slide-down 'target-tube 'target-tube-start) 24)
++    (('target-launch) 25)
++    (('target-wheel) 26)
++    (('target-wheel-flip) 27)
++    (('target-yellow-blast 'target-yellow-jump-blast) 28)
++    (else 0)))
++
++(defun ottsel-mario-draw-jak ((jak target) (draw symbol))
++  (let ((dax (the-as process-drawable (ppointer->process (-> jak sidekick)))))
++    (cond
++      (draw
++       (logclear! (-> jak draw status) (draw-status skip-bones))
++       (if dax (logclear! (-> dax draw status) (draw-status skip-bones))))
++      (else
++       (logior! (-> jak draw status) (draw-status skip-bones))
++       (if dax (logior! (-> dax draw status) (draw-status skip-bones))))))
++  0)
++
++(defun ottsel-mario-update ()
++  (let ((jak *target*))
++    (cond
++      ((and *ottsel-mario-on* jak)
++       (let* ((pose (ottsel-mario-pose jak))
++              ;; Where the game hides Jak (the flicker after a hit, a warp), Mario is hidden too.
++              (show (and (nonzero? pose) (not (logtest? (-> jak draw status) (draw-status hidden))))))
++         (vector-copy! *ottsel-mario-jak* (-> jak control trans))
++         (set! (-> *ottsel-mario-jak* w) (if show 1.0 0.0))
++         (vector-z-quaternion! *ottsel-mario-dir* (-> jak control quat))
++         ;; Mario's Moves keep time from Jak's landings and turn-arounds.
++         (let ((airborne (not (logtest? (-> jak control status) (cshape-moving-flags onsurf)))))
++           (when (and *ottsel-mario-airborne* (not airborne))
++             (set! *ottsel-mario-land-time* (current-time))
++             (set! *ottsel-mario-move* #f))
++           (set! *ottsel-mario-airborne* airborne))
++         (set! *ottsel-mario-turning* (= (-> jak state name) 'target-turn-around))
++         ;; Where Mario's feet go when they are not Jak's: SM64 swims him 80 units under the surface (Jak
++         ;; swims about 1.8 m under it), and hangs him from the top of a ledge, 60 units in from the edge.
++         (case pose
++           ((16 17) (set! (-> *ottsel-mario-jak* y) (- (-> jak water surface-height) 3276.8)))
++           ((19)
++            (let ((hold (-> *edge-grab-info* center-hold)))
++              (set! (-> *ottsel-mario-jak* x) (+ (-> hold x) (* 2457.6 (-> *ottsel-mario-dir* x))))
++              (set! (-> *ottsel-mario-jak* y) (-> hold y))
++              (set! (-> *ottsel-mario-jak* z) (+ (-> hold z) (* 2457.6 (-> *ottsel-mario-dir* z)))))))
++         (set-vector! *ottsel-mario-state*
++                      (the float pose)
++                      (vector-xz-length (-> jak control transv))
++                      (-> jak control transv y)
++                      (if (logtest? (-> jak control status) (cshape-moving-flags onsurf)) 1.0 0.0))
++         ;; The ground under him, for Mario's shadow (Jak's own is part of the body he no longer draws).
++         (let ((from (new 'stack-no-clear 'vector))
++               (hit (new 'stack-no-clear 'collide-tri-result)))
++           (vector-copy! from (-> jak control trans))
++           (+! (-> from y) 2048.0)
++           (cond
++             ((and show
++                   (>= (fill-and-probe-using-y-probe *collide-cache*
++                                                     from
++                                                     (meters 20)
++                                                     (-> (the-as collide-shape-prim (-> jak control root-prim)) collide-with)
++                                                     jak
++                                                     hit
++                                                     (new 'static 'pat-surface :noentity #x1))
++                       0.0))
++              (vector-copy! *ottsel-mario-shadow* (-> hit intersect))
++              (vector-copy! *ottsel-mario-shadow-normal* (-> hit normal))
++              (set! (-> *ottsel-mario-shadow* w) 1.0))
++             (else (set! (-> *ottsel-mario-shadow* w) 0.0))))
++         (cond
++           (show (ottsel-mario-draw-jak jak #f) (set! *ottsel-mario-shown* #t))
++           (*ottsel-mario-shown* (ottsel-mario-draw-jak jak #t) (set! *ottsel-mario-shown* #f)))))
++      (*ottsel-mario-shown*
++       (set! *ottsel-mario-shown* #f)
++       (set! (-> *ottsel-mario-jak* w) 0.0)
++       (if jak (ottsel-mario-draw-jak jak #t)))))
++  0)
++
  (define *progress-cheat* #f)
  
  (define *first-boot* #t) ;; PAL
-@@ -566,6 +577,23 @@
+@@ -418,6 +582,8 @@
+       (with-profiler "camera"
+         (update-camera))
+       (add-ee-profile-frame 'draw :r #x40 :b #x40)
++      ;; Ottsel: after every process ran (some, like the hit flicker, unhide Jak) and before drawing.
++      (ottsel-mario-update)
+       (with-profiler "draw-hook"
+         (*draw-hook*))
+       (add-ee-profile-frame 'draw :g #x80)
+@@ -566,6 +732,23 @@
        (with-profiler "update-pc"
          (#when PC_PORT
            (update *pc-settings*)))
@@ -13880,6 +14112,34 @@ index c4cf46516..2407fa804 100644
      (('get-attack-count)
       (set! v0-0 (+ (-> self control attack-count) (-> arg3 param 0)))
       (set! (-> self control attack-count) (the-as int v0-0))
+diff --git a/goal_src/jak1/engine/target/target.gc b/goal_src/jak1/engine/target/target.gc
+index d9a32ebb3..888b911fc 100644
+--- a/goal_src/jak1/engine/target/target.gc
++++ b/goal_src/jak1/engine/target/target.gc
+@@ -829,6 +829,9 @@
+         (suspend)))
+   :post target-post)
+ 
++;; Ottsel: Mario's Moves (engine/game/main.gc).
++(define-extern ottsel-mario-chain-jump (function target symbol))
++
+ (defstate target-jump (target)
+   :event target-jump-event-handler
+   :enter
+@@ -846,6 +849,13 @@
+               (a2-5 (-> self control unknown-vector102)))
+           (set! (-> a2-5 quad) (-> (the-as vector (-> self control unknown-dword62)) quad))
+           (go target-launch (the-as float a0-9) (the-as symbol a1-5) a2-5 (-> self control unknown-dword63))))
++      ;; Ottsel: under Mario's Moves a standard ground jump may chain into his second jump, triple jump or
++      ;; sideflip; the last two are Jak's own flip jump, so they reach nothing Jak cannot.
++      (when (= arg1 (-> *TARGET-bank* jump-height-max))
++        (case (ottsel-mario-chain-jump self)
++          (('triple 'sideflip)
++           (go target-high-jump (-> *TARGET-bank* flip-jump-height-min) (-> *TARGET-bank* flip-jump-height-max) 'flip))
++          (('second) (set! arg0 (* 1.2 arg0)) (set! arg1 (* 1.2 arg1)))))
+       (set-time! (-> self state-time))
+       (sound-play "jump" :vol 70)
+       (init-var-jump arg0 arg1 (the-as vector #t) (the-as vector #t) (-> self control transv))
 diff --git a/goal_src/jak1/engine/ui/progress/progress.gc b/goal_src/jak1/engine/ui/progress/progress.gc
 index 1ff70d357..5b92f05c6 100644
 --- a/goal_src/jak1/engine/ui/progress/progress.gc

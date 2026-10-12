@@ -1,32 +1,42 @@
-# Ottsel macOS packaging and settings
+# Ottsel on the Mac
 
-## Package
+The Mac app is the iPad app built for Apple Silicon Macs: the same shell, game code, renderer (OpenGL ES
+from ANGLE on Metal), Mario mod and settings. The iPad's three-dot menu is the menu bar.
 
-After building `out/jak-project/build/h1/game/gk`, run:
+## Build
 
 ```sh
-./scripts/package-macos.sh
-open out/Ottsel.app
+OTTSEL_PLATFORM=macos OTTSEL_SIGN_IDENTITY="Apple Development: …" \
+OTTSEL_SIGNED_GSTATE_EXPERIMENT=0 OTTSEL_SIGNED_MODULE_LIST=config/signed-game-strict.json \
+OTTSEL_SIGNED_EXPORT_BANKS=1 bash scripts/build-ios.sh
+open out/jak-project/out/macos/app/Ottsel.app
 ```
 
-The script creates `out/Ottsel.app`, generates `Ottsel.icns` from the existing
-Jak 1 artwork, and launches the current checkout's `gk` with external game
-data. Game data remains external and is never packaged or committed.
+Without `OTTSEL_SIGN_IDENTITY` the app is signed ad hoc, which runs on the Mac that built it.
+Settings, saves, logs and game data live in `~/Library/Application Support/local.ottsel/OttselShell/`.
 
-## In-game Ottsel settings
+## Game data and Mario
 
-Press Left Alt to show the existing debug toolbar, then choose `Settings →
-Ottsel`:
+- **Game Data → Import Game Data…** takes the `OttselUserData` folder made by
+  `scripts/prepare-user-data-pack.sh` from your own disc. Ottsel validates it on the next launch and
+  keeps it.
+- **Mods → Add Super Mario 64 (US) ROM…** copies your own ROM in; then **Play as Mario**.
 
-- `Upscaling`: Native, 2x, 3x, or 4x internal render resolution.
-- `Mute game audio`: toggles the Jak 1 master audio group at runtime.
+## Menus
 
-The menu changes are deliberately runtime-only until a later settings-storage
-gate proves safe persistence. The macOS launcher defaults audio to the local
-`MacBook Air Speakers`; set `OTTSEL_AUDIO_OUTPUT_DEVICE` explicitly for a
-remote or different output route.
+Display (Full Screen ⌃⌘F, Render Resolution, FPS counter in the window title), Cheats, Mods,
+Controls (camera speed, invert camera, keyboard and mouse help), Game Data, Diagnostics (log overlay,
+Show Logs in Finder, Jump to Level), Help.
 
-## Acceptance boundary
+## Controls
 
-The macOS build still requires fresh visible gameplay, input/lifecycle/fault
-evidence, and human audible confirmation before the iPadOS/iOS loop is promoted.
+A game controller works as on the iPad. Keyboard: W A S D move, Space jump, F punch, E spin kick,
+R triangle, O crouch/roll (R1), Q L1, Return Start, arrow keys D-pad; click the game to steer the camera
+with the mouse.
+
+## Status (2026-10-12)
+
+M3 Max, macOS 26.6: Geyser Rock with Mario at a steady 60 fps at 2560x1920 (2 ms of drawing per frame).
+Another GPU-heavy app (the iOS Simulator) cut it to 25–45 fps. Quitting waits up to 2 s for the game thread,
+then exits. Not yet: Developer ID signing and notarization for other people's Macs, or keyboard
+remapping.
