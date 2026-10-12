@@ -72,10 +72,12 @@ extract)
   # Extract and check the disc first: a bad dump stops here, before the long decompile.
   "$extractor" --extract --validate "$disc" ||
     die "OpenGOAL's extractor could not read $disc as a good Jak and Daxter disc image"
-  elf="$(sed -n 's/.*"elf_hash": *\([0-9]*\).*/\1/p' "$game/iso_data/jak1/buildinfo.json")"
-  [ "$elf" = "$black_label_elf" ] || die "this is not the disc Ottsel builds from. Ottsel needs \
+  info="$game/iso_data/jak1/buildinfo.json"
+  elf="$(sed -n 's/.*"elf_hash": *\([0-9]*\).*/\1/p' "$info")"
+  serial="$(sed -n 's/.*"serial": *"\([^"]*\)".*/\1/p' "$info")"
+  [ "$serial" = SCUS-97124 ] && [ "$elf" = "$black_label_elf" ] || die "this is not the disc Ottsel builds from. Ottsel needs \
 Jak and Daxter: The Precursor Legacy for PS2, USA, SCUS-97124, the original Black Label release \
-(OpenGOAL ntsc_v1). Greatest Hits, PAL and Japanese discs are not supported yet"
+(OpenGOAL ntsc_v1). Greatest Hits, PAL, Japanese and Korean discs are not supported yet"
   "$extractor" --decompile "$disc"
   ;;
 compile)

@@ -617,6 +617,8 @@ mkdir -p "$APP" "$APP_EXE_DIR" "$APP_RES"
 # and GAME.CGO only, and an earlier round left an 18 MB stale ENGINE.CGO in the app
 # that then rode along in every bundle since.  Clear the containers first.
 rm -f "$APP_RES"/*.CGO
+# A profile from an earlier signed build must never ride along in an unsigned (Sideloadly) build.
+rm -f "$APP/embedded.mobileprovision"
 cp "$APP_BUILD/OttselShell" "$APP_EXE_DIR/"
 if [ "$PLATFORM" = macos ]; then
   cp "$REPO_DIR/src/shell/Info-macOS.plist" "$APP_PLIST"
