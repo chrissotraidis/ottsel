@@ -1,0 +1,248 @@
+{
+  "schema_version": 1,
+  "id": "ottsel",
+  "name": "Ottsel",
+  "game": "Jak and Daxter: The Precursor Legacy (PS2, USA, SCUS-97124 Black Label)",
+  "kind": "decomp-patches",
+  "status": "experimental",
+  "inputs": [
+    {
+      "type": "ps2-disc",
+      "formats": [
+        "iso"
+      ],
+      "when": "build",
+      "description": "Your own disc image of Jak and Daxter: The Precursor Legacy for PS2, USA (SCUS-97124), the original Black Label release. The build checks the disc and stops on Greatest Hits, PAL or Japanese versions.",
+      "verified_sha256": [
+        "139086ffd50b5713ea71d3faa3d4cb1793291e3c575c0fb5418131d116481e7b"
+      ]
+    }
+  ],
+  "targets": {
+    "ios": {
+      "hosts": {
+        "macos-arm64": "experimental"
+      },
+      "output": "ipa",
+      "check": "ipa",
+      "steps": [
+        {
+          "stage": "preflight",
+          "command": [
+            "{repo}/scripts/build-personal.sh",
+            "preflight",
+            "ios"
+          ]
+        },
+        {
+          "stage": "source",
+          "command": [
+            "{repo}/scripts/build-personal.sh",
+            "source"
+          ]
+        },
+        {
+          "stage": "tools",
+          "command": [
+            "{repo}/scripts/build-personal.sh",
+            "tools",
+            "{jobs}"
+          ]
+        },
+        {
+          "stage": "extract",
+          "command": [
+            "{repo}/scripts/build-personal.sh",
+            "extract",
+            "{disc}"
+          ]
+        },
+        {
+          "stage": "compile",
+          "command": [
+            "{repo}/scripts/build-personal.sh",
+            "compile"
+          ]
+        },
+        {
+          "stage": "game-data",
+          "command": [
+            "{repo}/scripts/build-personal.sh",
+            "pack",
+            "{output}.data"
+          ]
+        },
+        {
+          "stage": "app",
+          "command": [
+            "{repo}/scripts/build-personal.sh",
+            "app",
+            "ios"
+          ]
+        },
+        {
+          "stage": "package",
+          "command": [
+            "{repo}/scripts/build-personal.sh",
+            "package",
+            "ios",
+            "{output}"
+          ]
+        }
+      ]
+    },
+    "macos": {
+      "hosts": {
+        "macos-arm64": "experimental"
+      },
+      "output": "zip",
+      "check": "none",
+      "steps": [
+        {
+          "stage": "preflight",
+          "command": [
+            "{repo}/scripts/build-personal.sh",
+            "preflight",
+            "macos"
+          ]
+        },
+        {
+          "stage": "source",
+          "command": [
+            "{repo}/scripts/build-personal.sh",
+            "source"
+          ]
+        },
+        {
+          "stage": "tools",
+          "command": [
+            "{repo}/scripts/build-personal.sh",
+            "tools",
+            "{jobs}"
+          ]
+        },
+        {
+          "stage": "extract",
+          "command": [
+            "{repo}/scripts/build-personal.sh",
+            "extract",
+            "{disc}"
+          ]
+        },
+        {
+          "stage": "compile",
+          "command": [
+            "{repo}/scripts/build-personal.sh",
+            "compile"
+          ]
+        },
+        {
+          "stage": "game-data",
+          "command": [
+            "{repo}/scripts/build-personal.sh",
+            "pack",
+            "{output}.data"
+          ]
+        },
+        {
+          "stage": "app",
+          "command": [
+            "{repo}/scripts/build-personal.sh",
+            "app",
+            "macos"
+          ]
+        },
+        {
+          "stage": "package",
+          "command": [
+            "{repo}/scripts/build-personal.sh",
+            "package",
+            "macos",
+            "{output}"
+          ]
+        }
+      ]
+    }
+  },
+  "requirements": {
+    "disk_gb": 20,
+    "tools": [
+      {
+        "name": "git",
+        "version_args": [
+          "--version"
+        ]
+      },
+      {
+        "name": "cmake",
+        "version_args": [
+          "--version"
+        ],
+        "player": true,
+        "note": "Install it with Homebrew: brew install cmake ninja ripgrep glslang spirv-cross"
+      },
+      {
+        "name": "ninja",
+        "version_args": [
+          "--version"
+        ],
+        "player": true,
+        "note": "Install it with Homebrew: brew install cmake ninja ripgrep glslang spirv-cross"
+      },
+      {
+        "name": "rg",
+        "version_args": [
+          "--version"
+        ],
+        "label": "ripgrep",
+        "player": true,
+        "note": "Install it with Homebrew: brew install cmake ninja ripgrep glslang spirv-cross"
+      },
+      {
+        "name": "glslangValidator",
+        "version_args": [
+          "--version"
+        ],
+        "label": "glslang",
+        "player": true,
+        "note": "Install it with Homebrew: brew install cmake ninja ripgrep glslang spirv-cross"
+      },
+      {
+        "name": "spirv-cross",
+        "version_args": [
+          "--help"
+        ],
+        "player": true,
+        "note": "Install it with Homebrew: brew install cmake ninja ripgrep glslang spirv-cross"
+      },
+      {
+        "name": "python3",
+        "version_args": [
+          "--version"
+        ]
+      },
+      {
+        "name": "xcodebuild",
+        "version_args": [
+          "-version"
+        ],
+        "player": true,
+        "note": "Install full Xcode and its iOS platform, then select that Xcode in Xcode Settings > Locations > Command Line Tools; Command Line Tools alone are not enough."
+      }
+    ]
+  },
+  "stages": [
+    "preflight",
+    "source",
+    "tools",
+    "extract",
+    "compile",
+    "game-data",
+    "app",
+    "package"
+  ],
+  "publication": {
+    "public_binaries": false,
+    "reason": "Personal builds contain game code compiled with files from the player's own disc, and the game-data folder is made from that disc; public releases are source only."
+  }
+}

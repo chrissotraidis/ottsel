@@ -1146,8 +1146,8 @@ UIColor* border_color(bool selected) {
   }
   if (scoped) [source stopAccessingSecurityScopedResource];
   NSString* message =
-      !looks_like_pack ? @"That folder is not an Ottsel game-data pack. Choose the OttselUserData folder "
-                         @"made by scripts/prepare-user-data-pack.sh from your own Jak and Daxter disc."
+      !looks_like_pack ? @"That folder is not Ottsel game data. Choose the folder made from your own Jak and "
+                         @"Daxter disc: \"Ottsel game data\" from PadMint, or OttselUserData from the build scripts."
       : error ? [NSString stringWithFormat:@"Copying failed: %@", error.localizedDescription]
               : @"Close and reopen Ottsel. It checks the pack on launch and keeps it for later launches.";
   UIAlertController* alert =

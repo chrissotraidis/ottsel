@@ -671,6 +671,10 @@ for text in "$WORKTREE"/out/jak1/iso/*.TXT; do
   fi
 done
 plutil -lint "$APP_PLIST" >/dev/null
+if [ "$PLATFORM" = device ]; then
+  /usr/libexec/PlistBuddy -c 'Add :CFBundleSupportedPlatforms array' \
+    -c 'Add :CFBundleSupportedPlatforms:0 string iPhoneOS' "$APP/Info.plist"
+fi
 if [ "$PLATFORM" = macos ]; then
   # A Mac app needs no profile: the developer identity when given (as for the iPad), ad hoc otherwise.
   MAC_IDENTITY="${OTTSEL_SIGN_IDENTITY:--}"
@@ -692,8 +696,6 @@ elif [ "$PLATFORM" = device ] && [ -n "${OTTSEL_SIGN_IDENTITY:-}" ] && [ -n "${O
     /usr/libexec/PlistBuddy -c "Set :application-identifier ${APP_ID%%.*}.$BUNDLE_ID" "$APP_BUILD/entitlements.plist" ;;
   esac
   /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$APP/Info.plist"
-  /usr/libexec/PlistBuddy -c 'Add :CFBundleSupportedPlatforms array' \
-    -c 'Add :CFBundleSupportedPlatforms:0 string iPhoneOS' "$APP/Info.plist"
   for framework in "$APP"/Frameworks/*.framework; do
     codesign --force --sign "$OTTSEL_SIGN_IDENTITY" "$framework"
   done
@@ -705,7 +707,7 @@ else
   done
   codesign --force --sign - "$APP"
   if [ "$PLATFORM" = device ]; then
-    echo "NOTE: ad-hoc signed; set OTTSEL_SIGN_IDENTITY and OTTSEL_PROVISIONING_PROFILE to install on a device" >&2
+    echo "NOTE: ad-hoc signed; sign it with Sideloadly or Xcode, or set OTTSEL_SIGN_IDENTITY and OTTSEL_PROVISIONING_PROFILE" >&2
   fi
 fi
 codesign --verify --deep --strict "$APP"

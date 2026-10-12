@@ -245,14 +245,14 @@ static void OpenURL(NSString* url) {
   NSOpenPanel* panel = [NSOpenPanel openPanel];
   panel.canChooseDirectories = YES;
   panel.canChooseFiles = NO;
-  panel.message = @"Choose the OttselUserData folder made from your own Jak and Daxter disc.";
+  panel.message = @"Choose the game-data folder made from your own Jak and Daxter disc (\"Ottsel game data\" from PadMint).";
   if ([panel runModal] != NSModalResponseOK || !panel.URL) return;
   NSFileManager* files = NSFileManager.defaultManager;
   NSURL* source = panel.URL;
   if (![files fileExistsAtPath:[source URLByAppendingPathComponent:@"manifest.txt"].path]) {
     Alert(@"Game Data Not Imported",
-          @"That folder is not an Ottsel game-data pack. Choose the OttselUserData folder made by "
-          @"scripts/prepare-user-data-pack.sh from your own Jak and Daxter disc.");
+          @"That folder is not Ottsel game data. Choose the folder made from your own Jak and Daxter disc: "
+          @"\"Ottsel game data\" from PadMint, or OttselUserData from the build scripts.");
     return;
   }
   NSString* destination = [writable_dir() stringByAppendingPathComponent:@"OttselUserData.import"];

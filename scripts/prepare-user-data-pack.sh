@@ -18,8 +18,11 @@ output_dir=$(mkdir -p "$2" && cd "$2" && pwd)
 
 case "$output_dir" in
   "$repo_dir"|"$repo_dir"/*)
-    echo "F1: refusing to create a user pack inside the repository" >&2
-    exit 1
+    # Inside the checkout only an ignored folder (out/, or PadMint's build/) may hold a pack.
+    if ! git -C "$repo_dir" check-ignore -q "$output_dir/"; then
+      echo "F1: refusing to create a user pack inside the repository" >&2
+      exit 1
+    fi
     ;;
 esac
 
