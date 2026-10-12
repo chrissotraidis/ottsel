@@ -131,8 +131,8 @@ You need:
   app with Sideloadly or Xcode (a free Apple ID works, but its apps expire after seven days)
 
 > [!NOTE]
-> PadMint shows Ottsel under **Not available yet** until Ottsel publishes its first release. Until then,
-> run the same recipe ([`padmint.json`](padmint.json)) on a checkout of this repository:
+> If your PadMint still lists Ottsel under **Not available yet**, update PadMint, or run the same recipe
+> ([`padmint.json`](padmint.json)) on a checkout of this repository:
 >
 > ```sh
 > git clone https://github.com/chrissotraidis/padmint
