@@ -22,6 +22,7 @@ board). The product requirement is [../jak1-researchloop.md](../jak1-researchloo
 | [12-research-confidence.md](12-research-confidence.md) | Confidence ratings and falsifiers |
 | [SIGNED_AOT_RECOVERY.md](SIGNED_AOT_RECOVERY.md) | How the signed module loader works |
 | [macos-settings-and-packaging.md](macos-settings-and-packaging.md) | macOS build, settings and packaging |
+| [MODS.md](MODS.md) | Cheats, Play as Mario, texture packs, model replacements and code mods |
 
 ## Evidence
 

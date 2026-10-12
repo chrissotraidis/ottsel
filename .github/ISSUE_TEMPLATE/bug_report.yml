@@ -16,7 +16,7 @@ body:
         - Building from source
         - iPad or iPhone Simulator
         - Physical iPad or iPhone
-        - Mac test build
+        - Mac app
     validations:
       required: true
   - type: input

@@ -12,7 +12,7 @@
         "iso"
       ],
       "when": "build",
-      "description": "Your own disc image of Jak and Daxter: The Precursor Legacy for PS2, USA (SCUS-97124), the original Black Label release. The build checks the disc and stops on Greatest Hits, PAL or Japanese versions.",
+      "description": "Your own disc image of Jak and Daxter: The Precursor Legacy for PS2, USA (SCUS-97124), the original Black Label release. The build checks the disc and stops on the Greatest Hits, PAL, Japanese and Korean versions.",
       "verified_sha256": [
         "139086ffd50b5713ea71d3faa3d4cb1793291e3c575c0fb5418131d116481e7b"
       ]

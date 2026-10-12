@@ -17,3 +17,8 @@ scripts/snapshot-jak-project.sh verify   # PASS iff pin + patch == live nested t
 ```
 
 The per-change overlay patches used before 2026-09-24 are in git history.
+
+`libsm64-ottsel-pose.patch` changes [libsm64](https://github.com/libsm64/libsm64) at
+`fd11813208272b4271d92bd92feb8f3fdbe61be5` so Mario can be posed from Jak's state without his own physics
+(`sm64_mario_pose`) and keeps his cap on. `scripts/build-ios.sh` clones libsm64 at that commit into
+`out/third_party/libsm64` and applies the patch; edit the patch itself to change it.

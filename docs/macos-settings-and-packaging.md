@@ -5,6 +5,10 @@ from ANGLE on Metal), Mario mod and settings. The iPad's three-dot menu is the m
 
 ## Build
 
+The easiest route is PadMint or `scripts/build-personal.sh` with `macos` (see the README's
+[Build your own](../README.md#build-your-own-with-padmint)): it makes a zipped Ottsel.app and the game-data
+folder. By hand, after the game is compiled:
+
 ```sh
 OTTSEL_PLATFORM=macos OTTSEL_SIGN_IDENTITY="Apple Development: …" \
 OTTSEL_SIGNED_GSTATE_EXPERIMENT=0 OTTSEL_SIGNED_MODULE_LIST=config/signed-game-strict.json \
@@ -17,9 +21,9 @@ Settings, saves, logs and game data live in `~/Library/Application Support/local
 
 ## Game data and Mario
 
-- **Game Data → Import Game Data…** takes the `OttselUserData` folder made by
-  `scripts/prepare-user-data-pack.sh` from your own disc. Ottsel validates it on the next launch and
-  keeps it.
+- **Game Data → Import Game Data…** takes the game-data folder made from your own disc (PadMint's
+  **Ottsel game data**, or the folder `scripts/prepare-user-data-pack.sh` makes). Ottsel validates it on
+  the next launch and keeps it.
 - **Mods → Add Super Mario 64 (US) ROM…** copies your own ROM in; then **Play as Mario**.
 
 ## Menus
@@ -37,6 +41,7 @@ with the mouse.
 ## Status (2026-10-12)
 
 M3 Max, macOS 26.6: Geyser Rock with Mario at a steady 60 fps at 2560x1920 (2 ms of drawing per frame).
-Another GPU-heavy app (the iOS Simulator) cut it to 25–45 fps. Quitting waits up to 2 s for the game thread,
-then exits. Not yet: Developer ID signing and notarization for other people's Macs, or keyboard
-remapping.
+Another GPU-heavy app (the iOS Simulator) cut it to 25–45 fps, and hand play has shown uneven frame pacing
+that is still open. Quitting waits up to 2 s for the game thread, then exits. A PadMint-built zipped app
+opens and plays the intro. Not yet: Developer ID signing and notarization for other people's Macs, or
+keyboard remapping.

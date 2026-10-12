@@ -14,12 +14,13 @@ player supplies. Then the same on a physical iPhone. This is the original PRD
 
 Out of scope: Jak 2/3, App Store submission, a new engine, and polish that no playtest has asked for.
 
-## Where it stands (2026-09-24)
+## Where it stands (2026-10-12)
 
-Proven in the **Simulator only**: all 518 code modules are signed, `OTTSEL_STRICT_EXEC` makes runtime code
-loading fatal, and the strict build plays the whole intro to Geyser Rock on OpenGOAL's real IOP/OVERLORD
-with a 0-byte fault log. The `iphoneos` build compiles and links; installing it needs the user's Apple ID
-and iPad (G2).
+G1 is met in the Simulator, and G2 and G3 on a physical iPad Pro 12.9-inch (M2): all 518 code modules are
+signed, runtime code loading is fatal, and the game plays at 60 fps by touch or controller with a 0-byte
+fault log. The current gate is G4, a recorded playtest. The same app also builds for Apple Silicon Macs
+(`OTTSEL_PLATFORM=macos`), and `padmint.json` with `scripts/build-personal.sh` is the G7 build path.
+[STATUS.md](STATUS.md) has the details.
 
 Renderer: OpenGOAL's **own OpenGL renderer** is the only renderer, on OpenGL ES 3.0. Its 92 shaders are
 cross-compiled at build time by
@@ -28,7 +29,7 @@ cross-compiled at build time by
 macOS build and the whole intro plays to Geyser Rock on it ([evidence](evidence/G3/upstream-gl-renderer-title-2026-09-24.md)).
 The custom Metal renderer (~25k lines, CPU VU1 emulation, broken particles) was deleted on 2026-09-24; its
 last state is commit `df31425`. OpenGL ES comes from ANGLE on Metal, on the Simulator and the device alike; the Simulator runs
-Training at ~58 fps, and the product frame rate is still measured on the device (G3).
+Training at ~58 fps and the iPad holds 60 fps (G3).
 
 ## One round
 
@@ -97,9 +98,9 @@ list waits.
 **G6 iPhone device parity** - G2 to G4 on one physical iPhone.
 
 **G7 Reproducible delivery** - a fresh clone + pin + `patches/ottsel-jak-project.patch` + the user's own
-disc data builds and runs by following `README.md` alone, and the app bundle carries no game data. Known
-gap: the bundle still copies generated TIT/VI1 DGOs and TEXT from `out/jak1/iso`; the README path is
-unverified on a clean machine.
+disc data builds and runs by following `README.md` alone, and the app bundle carries no game data. PadMint
+runs that path from `padmint.json` (`scripts/build-personal.sh`). Known gap: the bundle still copies
+generated TIT/VI1 DGOs and TEXT from `out/jak1/iso`, so builds stay personal.
 
 ## Held until G4 passes
 

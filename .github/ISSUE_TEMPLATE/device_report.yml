@@ -1,5 +1,5 @@
 name: Device report
-description: Tell us how Ottsel ran on a physical iPad or iPhone.
+description: Tell us how Ottsel ran on a physical iPad, iPhone or Mac.
 title: "[Device] "
 labels: ["device report"]
 body:
@@ -11,13 +11,13 @@ body:
     id: device
     attributes:
       label: Device
-      description: Model and storage, for example "iPad Pro 11-inch (M4), 256 GB".
+      description: Model and storage, for example "iPad Pro 11-inch (M4), 256 GB" or "MacBook Pro (M3 Max)".
     validations:
       required: true
   - type: input
     id: ios
     attributes:
-      label: iOS or iPadOS version
+      label: iOS, iPadOS or macOS version
       placeholder: "26.0"
     validations:
       required: true
@@ -45,7 +45,7 @@ body:
     id: fps
     attributes:
       label: Frame rate
-      description: From ••• → Show FPS Counter, during play. Say where you measured it.
+      description: From ••• → Display → Show FPS Counter (on a Mac, Display → Show FPS Counter), during play. Say where you measured it.
   - type: dropdown
     id: input
     attributes:
@@ -64,5 +64,5 @@ body:
     id: log
     attributes:
       label: Log excerpt
-      description: From ••• → Diagnostics → Share Logs…, only the lines around the problem.
+      description: From ••• → Help & Feedback → Share Logs…, only the lines around the problem.
       render: text

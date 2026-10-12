@@ -1,12 +1,12 @@
 # Ottsel
 
 <p align="center">
-  <strong>Jak and Daxter: The Precursor Legacy, running natively on iPad and iPhone.</strong><br>
-  Naughty Dog's own game code, recovered by OpenGOAL and compiled ahead of time to signed ARM64. OpenGOAL's renderer on Metal, touch controls, controllers, TV output, cheats and texture packs.
+  <strong>Jak and Daxter: The Precursor Legacy, running natively on iPad, iPhone and Mac.</strong><br>
+  Naughty Dog's own game code, recovered by OpenGOAL and compiled ahead of time to signed ARM64. OpenGOAL's renderer on Metal, touch controls, controllers, TV output, cheats, texture packs and a Play as Mario mod.
 </p>
 
 <p align="center">
-  <img alt="iPhone and iPad" src="https://img.shields.io/badge/platform-iPhone%20%2F%20iPad-0A84FF?logo=apple">
+  <img alt="iPad, iPhone and Mac" src="https://img.shields.io/badge/platform-iPad%20%7C%20iPhone%20%7C%20Mac-0A84FF?logo=apple">
   <img alt="iOS and iPadOS 18.5+" src="https://img.shields.io/badge/iOS%20%2F%20iPadOS-18.5%2B-0A84FF?logo=apple">
   <img alt="Runs on a physical iPad at 60 fps" src="https://img.shields.io/badge/iPad%20hardware-60%20fps-34C759">
   <img alt="OpenGL ES 3.0 on Metal through ANGLE" src="https://img.shields.io/badge/renderer-Metal%20(ANGLE)-5E5CE6">
@@ -14,18 +14,23 @@
   <img alt="Developer preview" src="https://img.shields.io/badge/status-developer%20preview-FFD60A">
   <a href="LICENSE"><img alt="ISC License" src="https://img.shields.io/badge/license-ISC-34C759"></a>
   <img alt="Game data not included" src="https://img.shields.io/badge/game%20data-not%20included-FF453A">
+  <a href="https://github.com/chrissotraidis/padmint"><img alt="Build Ottsel with PadMint" src="https://img.shields.io/badge/PadMint-build%20your%20own-3EB489"></a>
   <a href="https://discord.gg/xwHfUD2bxW"><img alt="Join the Discord" src="https://img.shields.io/badge/Discord-Join%20the%20community-5865F2?logo=discord&amp;logoColor=white"></a>
 </p>
 
 ![Jak running through Geyser Rock's training course on iPad, steered by the floating move stick](docs/readme/ottsel-training-touch.jpg)
 
 > [!IMPORTANT]
-> **Bring your own game data.** Ottsel needs your own Jak and Daxter: The Precursor Legacy disc image
-> (NTSC-U `SCUS-97124`). This repository contains no disc image, extracted game files or saves.
+> **Bring your own disc.** Ottsel builds from your own disc image of *Jak and Daxter: The Precursor
+> Legacy* for PlayStation 2: **USA, `SCUS-97124`, the original Black Label release**. The build checks
+> the disc and stops on the Greatest Hits, PAL, Japanese and Korean versions
+> ([which disc exactly](#which-disc-you-need)). This repository contains no disc image, extracted game
+> files or saves.
 >
 > **Developer preview.** Ottsel runs on a physical iPad Pro 12.9-inch (M2) at the iPad's full resolution
-> and 60 fps, by touch or with a controller. It has not run on a physical iPhone yet, and there is no
-> downloadable IPA: you build it on a Mac and install it on your own device.
+> and 60 fps, by touch or with a controller, and on Apple Silicon Macs. It has not run on a physical iPhone
+> yet. There is no download: you build your own copy on an Apple Silicon Mac, with
+> [PadMint](#build-your-own-with-padmint) or the scripts in this repository.
 >
 > **AI disclosure:** Ottsel uses substantial AI assistance for code, tests, documentation, debugging and
 > maintenance. There is no audited percentage of AI-generated code. Status and test records describe
@@ -40,52 +45,105 @@ runtime and an OpenGL renderer so it runs natively on PC. The gameplay you play 
 code, neither emulated nor remade; the parts that once talked to PS2 hardware (graphics, sound, input,
 memory card) are OpenGOAL's replacements.
 
-Ottsel takes that to iPad and iPhone. OpenGOAL normally compiles and loads the game's code while it
+Ottsel takes that to iPad, iPhone and Mac. OpenGOAL normally compiles and loads the game's code while it
 runs, and iOS does not allow an app to create executable code. Ottsel therefore compiles all of it to
 ARM64 on your Mac, ahead of time, and signs every module into the app like ordinary app code; loading
 code at run time is fatal by design. OpenGOAL's renderer runs on Metal through ANGLE, and Ottsel wraps
-the game in an iOS app: touch controls, controller and keyboard input, TV output, the ••• menu, saves and
-logging.
+the game in an app: touch controls, controller and keyboard input, TV output, the ••• menu (the menu bar
+on a Mac), saves and logging.
 
 Your disc supplies everything that is art and data rather than code: levels, textures, models, music,
 sound and text. OpenGOAL's extractor pulls these out of your disc image on your Mac, and they travel to
-your device in a game-data pack that never enters this repository.
+your device in a game-data folder that never enters this repository.
 
 ```mermaid
 flowchart LR
   src["OpenGOAL's game source<br/>(decompiled GOAL, goal_src/jak1)"] --> goalc["goalc with Ottsel's<br/>ARM64 backend"]
   goalc --> code["518 signed ARM64<br/>code modules"]
   disc["Your disc image"] --> extractor["OpenGOAL extractor"]
-  extractor --> pack["Game-data pack<br/>levels, textures, audio, text"]
-  shell["Ottsel's iOS app<br/>(src/shell)"] --> app["Ottsel on iPad or iPhone"]
+  extractor --> pack["Game-data folder<br/>levels, textures, audio, text"]
+  shell["Ottsel's app<br/>(src/shell)"] --> app["Ottsel on iPad, iPhone or Mac"]
   code --> app
   pack --> app
 ```
 
 | Piece | Where it comes from |
 | --- | --- |
-| The game's code (534 GOAL source files) | OpenGOAL's repository at a pinned commit, cloned by the build into `out/` |
-| Ottsel's changes to OpenGOAL | [`patches/ottsel-jak-project.patch`](patches/ottsel-jak-project.patch): the ARM64 compiler backend, the signed-module loader, the iOS runtime, renderer, sound and input work, and small changes to 29 of the game's GOAL files |
-| The iOS app | [`src/shell/`](src/shell/): boot, touch controls, the ••• menu, TV output, logging and the icon |
-| Levels, textures, audio and text | Your disc, through OpenGOAL's extractor, into your data pack |
+| The game's code (534 GOAL source files) | OpenGOAL's repository at a pinned commit, fetched by the build into `out/` |
+| Ottsel's changes to OpenGOAL | [`patches/ottsel-jak-project.patch`](patches/ottsel-jak-project.patch): the ARM64 compiler backend, the signed-module loader, the iOS and Mac runtime, renderer, sound and input work, and small changes to 30 of the game's GOAL files |
+| The app | [`src/shell/`](src/shell/): boot, touch controls, the ••• menu and Mac menu bar, TV output, the Mario mod, logging and the icon |
+| Levels, textures, audio and text | Your disc, through OpenGOAL's extractor, into your game-data folder |
+| Mario, for Play as Mario | [libsm64](https://github.com/libsm64/libsm64) at a pinned commit with [`patches/libsm64-ottsel-pose.patch`](patches/libsm64-ottsel-pose.patch); his animations, textures and voice come from your own Super Mario 64 ROM when you play |
 | OpenGL ES on Metal | [ANGLE](https://chromium.googlesource.com/angle/angle), downloaded prebuilt by the build |
 
-This repository holds Ottsel's own code, its build scripts and its one patch against OpenGOAL.
-Everything else is cloned, downloaded or extracted from your disc when you build.
+This repository holds Ottsel's own code, its build scripts and its patches. Everything else is fetched,
+downloaded or extracted from your disc when you build.
 
 ## Get Ottsel
 
-| Platform | Status | Setup |
+| You play on | Status | What to do |
 | --- | --- | --- |
-| iPad | Build from source; runs on an iPad Pro 12.9-inch (M2) | [Build from source](#build-from-source), then `scripts/install-ios-device.sh` |
-| iPhone | Build from source; Simulator-tested | Same build (the app is universal) |
-| Downloadable IPA | Not available yet | Waits until every game-derived file lives in your data pack |
+| **iPad** | Runs on an iPad Pro 12.9-inch (M2) at 60 fps | [Build your own](#build-your-own-with-padmint), then install it with Sideloadly or Xcode |
+| **iPhone** | The same app; tested in the Simulator, not yet on a physical iPhone | Same as iPad |
+| **Mac** (Apple silicon) | Runs at 60 fps on an M3 Max; not yet played start to finish | [Build your own](#build-your-own-with-padmint) Mac app |
+| Ready-made download | Not available | The app you build holds files made from your disc. **It is yours alone: never share or upload it.** |
 
 **Need help or found a bug?** Join the [Discord](https://discord.gg/xwHfUD2bxW), use
 **••• → Help & Feedback → Report a Problem** in the app, or open a
 [device report](https://github.com/chrissotraidis/ottsel/issues/new?template=device_report.yml) or
 [bug report](https://github.com/chrissotraidis/ottsel/issues/new?template=bug_report.yml). A report from
-an iPad or iPhone not listed here is the most useful thing you can send right now.
+an iPad, iPhone or Mac not listed here is the most useful thing you can send right now.
+
+## Which disc you need
+
+| | What Ottsel needs | Details |
+| --- | --- | --- |
+| **Jak and Daxter** | Your own PS2 disc image (`.iso`): *Jak and Daxter: The Precursor Legacy*, USA, serial `SCUS-97124`, the original Black Label release (OpenGOAL calls it `ntsc_v1`) | Tested with `Jak and Daxter - The Precursor Legacy (USA) (En,Fr,De,Es,It).iso`: 1,460,535,296 bytes, SHA-256 `139086ffd50b5713ea71d3faa3d4cb1793291e3c575c0fb5418131d116481e7b`. The build checks the game's files rather than the image's hash, so another clean dump of the same disc should work too |
+| Not supported yet | Greatest Hits (also `SCUS-97124`, OpenGOAL `ntsc_v2`), PAL (`SCES-50361`), Japan (`SCPS-15021`), Korea (`SCPS-56003`) | The build stops with a message naming the disc it needs |
+| **Super Mario 64** (optional) | Your own US ROM (`.z64`, `.v64` or `.n64`, 8 MB) | Only for **Play as Mario**, added in the app, never at build time. Tested with the US `.z64` whose SHA-1 is `9bef1128717f958171a4afac3ed78ee2bb4e86ce` |
+
+## Build your own with PadMint
+
+[PadMint](https://github.com/chrissotraidis/padmint) builds Ottsel on an Apple Silicon Mac from your own
+disc. It makes two things: the app (an `.ipa` for iPhone and iPad, or a zipped Mac app) and an
+**Ottsel game data** folder made from your disc, which you import in the app once.
+
+You need:
+
+- a Mac with Apple silicon, full Xcode with its iOS platform, and about 20 GB of free space
+- `brew install cmake ninja ripgrep glslang spirv-cross`
+- your disc image ([which one](#which-disc-you-need))
+- for iPhone and iPad: iOS or iPadOS 18.5 or later with Developer Mode on, and an Apple ID to sign the
+  app with Sideloadly or Xcode (a free Apple ID works, but its apps expire after seven days)
+
+> [!NOTE]
+> PadMint shows Ottsel under **Not available yet** until Ottsel publishes its first release. Until then,
+> run the same recipe ([`padmint.json`](padmint.json)) on a checkout of this repository:
+>
+> ```sh
+> git clone https://github.com/chrissotraidis/padmint
+> git clone https://github.com/chrissotraidis/ottsel
+> cd padmint
+> python3 -m padmint build ottsel --target ios --repo ../ottsel \
+>   --revision "$(git -C ../ottsel rev-parse HEAD)" --disc "/path/to/your/jak1.iso"
+> ```
+>
+> Use `--target macos` for the Mac app. PadMint prints where it saved the app; the game-data folder sits
+> beside it with `.data` added to the name.
+
+**On iPhone or iPad:**
+
+1. Install the `.ipa` with [Sideloadly](https://sideloadly.io), AltStore or Xcode.
+2. Copy the game-data folder to the device: iCloud Drive, a USB drive, or Finder (select the device,
+   open **Files** and drag the folder onto **Ottsel**).
+3. Open Ottsel, choose **••• → Game Data → Import Game Data…**, pick that folder, then close and reopen
+   Ottsel. It checks the folder on launch and keeps it.
+
+**On a Mac:** unzip the app, move **Ottsel** to Applications and open it. Choose **Game Data → Import Game
+Data…** in the menu bar, pick the game-data folder, then quit and reopen Ottsel.
+
+Install updates over the existing app (on iPhone and iPad, with the same Apple ID): your saves, settings
+and game data stay. Deleting the app deletes its saves.
 
 ## Playing
 
@@ -107,11 +165,16 @@ an iPad or iPhone not listed here is the most useful thing you can send right no
   relaunch. Leaving the app pauses the game and its sound, and you come back to the pause menu.
 - **Help and logs.** **••• → Help & Feedback** opens a GitHub device report with your device, OS version
   and frame rate filled in, shares the app's logs, and links the Discord and this repository.
+- **Play as Mario.** **••• → Mods → Play as Mario** draws Super Mario 64's Mario in Jak's place, with his
+  animations and voice, from your own US Super Mario 64 ROM. Jak still plays the game underneath, so every
+  control, eco power and level works as before; **Mario's Moves** adds his triple jump and sideflip. See the
+  [mods guide](docs/MODS.md#play-as-mario).
 - **Texture packs.** `scripts/apply-texture-pack.sh` builds a data pack with any OpenGOAL-format texture
   pack. See the [mods guide](docs/MODS.md).
 
-The ••• menu holds Display (render resolution, FPS counter), Cheats, Touch Controls, Game Data, Help &
-Feedback, and Diagnostics (log overlay, jump to a level for testing).
+The ••• menu holds Display (render resolution, FPS counter), Cheats, Mods, Touch Controls, Game Data,
+Help & Feedback, and Diagnostics (log overlay, jump to a level for testing). On the Mac the same menus
+are the menu bar, and the keyboard, mouse and controllers play ([Mac guide](docs/macos-settings-and-packaging.md)).
 
 <table>
   <tr>
@@ -146,7 +209,12 @@ Feedback, and Diagnostics (log overlay, jump to a level for testing).
 | Sound | Music, effects, voice hints and cutscene dialogue all play; voice hints no longer silence the rest of the game |
 | Input | Touch and an Xbox Series X controller both play; the touch controls hide and return with the controller, and can be moved and resized |
 | Saves | OpenGOAL PC saves copied onto the iPad fill slots 2–4 (the Citadel, Rock Village and Volcanic Crater, all with 100 power cells); Rock Village loads and plays at 60 fps |
+| Play as Mario | Mario drawn in Jak's place with his voice and shadow while Jak's controls and powers play the game; still being tuned |
 | Updates | Reinstalling over the app keeps saves and settings |
+
+**On a Mac** (M3 Max, macOS 26.6): the same app with the menu bar plays Geyser Rock with Mario at a steady
+60 fps at 2560×1920, and quits cleanly. Another GPU-heavy app running at the same time cut it to 25–45 fps,
+and hand play has shown uneven frame pacing that is still being looked into.
 
 **In the Simulators** (iPad Pro 11-inch M4 and iPhone 16 Pro, native resolution):
 
@@ -159,59 +227,56 @@ Feedback, and Diagnostics (log overlay, jump to a level for testing).
 | Touch | A scripted real-touch run plays title → Load Game → the saved level, walks, jump-attacks, and opens the ••• menu and the layout editor |
 | iPhone | Boots to the title with the full touch layout fitted to the screen |
 
-Not yet tested: a physical iPhone, a real HDMI adapter or AirPlay, long sessions (heat and battery),
-and a full play-through on a device.
+**With PadMint** (0.5.0): PadMint's player check (Apple's Python 3.9, an empty PadMint folder and a fresh
+clone) built the iPhone/iPad IPA from scratch in 22 minutes on an M3 Max. It passed PadMint's IPA check and
+publication gate and carries no provisioning profile, and its game-data folder validated. A PadMint Mac build
+made a zipped app that opens and plays the intro. Sideloading a PadMint-built IPA onto a device has not been
+tried yet.
+
+Not yet tested: a physical iPhone, a real HDMI adapter or AirPlay, long sessions (heat and battery), a full
+play-through on a device, a sideloaded PadMint-built app, and Developer ID signing for other people's Macs.
 
 ## Build from source
 
-You need an Apple Silicon Mac with Xcode, `brew install cmake ninja ripgrep glslang spirv-cross xcodegen`,
-an Apple ID signed in to Xcode for a physical device (a free Personal Team is enough), and your disc image.
-Everything the build generates stays under the ignored `out/` directory; keep your disc image outside
-the repository or in the ignored `ref/` folder.
+PadMint runs the stages of [`scripts/build-personal.sh`](scripts/build-personal.sh); you can run them
+yourself with the same tools as above. Everything the build generates stays in the ignored `out/` folder;
+keep your disc image outside the repository or in the ignored `ref/` folder.
 
 ~~~sh
-# 1. OpenGOAL at the pinned commit, plus Ottsel's patch
 git clone https://github.com/chrissotraidis/ottsel && cd ottsel
-git clone https://github.com/open-goal/jak-project out/jak-project
-git -C out/jak-project checkout 641fb572e876750d8618434d9f7c1a531b43b366
-git -C out/jak-project apply --binary ../../patches/ottsel-jak-project.patch
-
-# 2. Host tools, your disc's art and data, and the game's code compiled for arm64
-cd out/jak-project
-cmake -S . -B build/h1 -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang \
-  -DCMAKE_CXX_COMPILER=clang++ -DSTATICALLY_LINK=OFF -DINSTALL_GTEST=OFF -DOTTSEL_NO_EMIT=ON
-ninja -C build/h1 goalc extractor ottsel-a11-slice
-./build/h1/decompiler/extractor --extract --decompile /path/to/jak1.iso
-./build/h1/goalc/goalc --game jak1 --isa arm64 -c '(mi)'
-cd ../..
-
-# 3. A game-data pack from your disc, outside the repository
-scripts/prepare-user-data-pack.sh out/jak-project/iso_data/jak1 /tmp/ottsel-pack out/jak-project/out/jak1/fr3
+scripts/build-personal.sh preflight ios                     # or macos
+scripts/build-personal.sh source                            # OpenGOAL at the pinned commit, plus the patch
+scripts/build-personal.sh tools                             # goalc and the extractor
+scripts/build-personal.sh extract "/path/to/your/jak1.iso"  # checks the disc, then extracts it
+scripts/build-personal.sh compile                           # the game's code, compiled to ARM64
+scripts/build-personal.sh pack /tmp/ottsel-pack             # the game-data folder
 ~~~
 
-Step 2's extractor reads your disc's levels, textures and text (it does not decompile code; that source
-is already in OpenGOAL), and `goalc` compiles the game's GOAL source to ARM64. A first build takes
-about 10 to 15 minutes on an M-series Mac; later builds take a few minutes.
+`extract` reads your disc's levels, textures and text (the game's code is already source in OpenGOAL),
+and `compile` compiles the game's GOAL source to ARM64. A first build takes about 10 to 15 minutes on an
+M-series Mac; later builds take a few minutes.
 
-**iPad or iPhone:** connect the device by cable, trust the Mac, turn on Developer Mode, then run
-`scripts/install-ios-device.sh /tmp/ottsel-pack`. It finds your signing identity and a development
-profile (creating one through Xcode if needed), builds and signs the app, installs it, copies your pack
-in and launches it. Later you can import a pack from Files with **••• → Game Data → Import Game Data…**.
+**Straight onto an iPad or iPhone:** connect the device by cable, trust the Mac, turn on Developer Mode,
+`brew install xcodegen`, then run `scripts/install-ios-device.sh /tmp/ottsel-pack`. It finds your signing
+identity and a development profile (creating one through Xcode if needed), builds and signs the app,
+installs it, copies your pack in and launches it.
+
+**An unsigned IPA** for Sideloadly: `scripts/build-personal.sh app ios`, then
+`scripts/build-personal.sh package ios ~/Desktop/Ottsel.ipa`.
+
+**Mac:** `scripts/build-personal.sh app macos`, then open `out/jak-project/out/macos/app/Ottsel.app` and
+choose your pack with **Game Data → Import Game Data…**. It is signed ad hoc, so it runs on the Mac that
+built it; see the [Mac guide](docs/macos-settings-and-packaging.md).
 
 **Simulator:** build with
-`OTTSEL_STRICT_EXEC=1 OTTSEL_SIGNED_GSTATE_EXPERIMENT=0 OTTSEL_SIGNED_EXPORT_BANKS=1 OTTSEL_SIGNED_MODULE_LIST=config/signed-game-strict.json bash scripts/build-ios.sh`,
+`OTTSEL_STRICT_EXEC=1 OTTSEL_SIGNED_GSTATE_EXPERIMENT=0 OTTSEL_SIGNED_EXPORT_BANKS=1 OTTSEL_SIGNED_MODULE_LIST=config/signed-game-strict.json scripts/build-ios.sh`,
 then `xcrun simctl install booted out/jak-project/out/ios/app/OttselShell.app`,
 `scripts/import-ios-user-data.sh <udid> /tmp/ottsel-pack` and `xcrun simctl launch booted com.ottsel.shell`.
 
-**Mac (Apple Silicon):** build with `OTTSEL_PLATFORM=macos` and the same signed-module settings, then open
-`out/jak-project/out/macos/app/Ottsel.app` and choose your pack with **Game Data → Import Game Data…**.
-It is the same app, with the three-dot menu as the menu bar; see the
-[Mac guide](docs/macos-settings-and-packaging.md). It runs on Macs you build it on (no Developer ID
-signing or notarization yet).
-
 **Logs:** the app writes `ottsel-runtime.log` and `ottsel-fault.log` to
-`Library/Application Support/local.ottsel/OttselShell/` in its container. Share them from
-**••• → Help & Feedback → Share Logs…**, or copy them to the Mac with `xcrun devicectl device copy from`.
+`Library/Application Support/local.ottsel/OttselShell/` in its container (on a Mac, under your home
+folder). Share them from **••• → Help & Feedback → Share Logs…**, or copy them to the Mac with
+`xcrun devicectl device copy from`.
 
 ## Frequently asked questions
 
@@ -235,11 +300,21 @@ at run time. See [How Ottsel works](#how-ottsel-works).
 </details>
 
 <details>
-<summary>Can I download an IPA?</summary>
+<summary>Can I download an IPA or a Mac app?</summary>
 
-Not yet. The app you build contains a few files generated from your disc (the compiled `KERNEL.CGO` and
-`GAME.CGO`, the title and village DGO files, and the text files), so it is for your own devices only. A
-shareable build waits until all of those move into the data pack.
+No. The app you build contains files generated from your disc (the compiled `KERNEL.CGO` and
+`GAME.CGO`, the title and village DGO files, and the text files), so it is for your own devices only.
+PadMint builds your own on an Apple Silicon Mac. A shareable build waits until all of those move into the
+game-data folder.
+
+</details>
+
+<details>
+<summary>I have the Greatest Hits or a PAL disc. Will it work?</summary>
+
+Not yet. Ottsel compiles the game for the original USA Black Label release, and the build stops on any
+other version rather than make an app that misbehaves. OpenGOAL itself supports the other releases, so
+they are possible later.
 
 </details>
 
@@ -296,9 +371,10 @@ resumes when you close the menu.
 <summary>Is everything finished?</summary>
 
 No. Still open: a physical iPhone; long iPad sessions with their heat and battery; a real HDMI adapter
-and AirPlay; a full play-through past the opening (tasks, bosses and vehicle sections) on a device; and a
-shareable build. The plan is in [`docs/GOAL_LOOP.md`](docs/GOAL_LOOP.md) and the running log in
-[`docs/STATUS.md`](docs/STATUS.md).
+and AirPlay; a full play-through past the opening (tasks, bosses and vehicle sections) on a device;
+smoother Mac frame pacing and Developer ID signing; a fresh-Mac PadMint build and a sideloaded
+PadMint-built app; and a shareable build. The plan is in [`docs/GOAL_LOOP.md`](docs/GOAL_LOOP.md) and the
+running log in [`docs/STATUS.md`](docs/STATUS.md).
 
 </details>
 
@@ -306,19 +382,21 @@ shareable build. The plan is in [`docs/GOAL_LOOP.md`](docs/GOAL_LOOP.md) and the
 
 | Path | Purpose |
 | --- | --- |
-| [`src/shell/`](src/shell/) | The iOS app: boot, touch controls, the ••• menu, TV output, logging and the icon |
-| [`patches/ottsel-jak-project.patch`](patches/ottsel-jak-project.patch) | Every change to the pinned OpenGOAL commit ([refreshing it](patches/README.md)) |
-| [`scripts/build-ios.sh`](scripts/build-ios.sh) | Builds the runtime, signs the game modules, translates shaders, assembles the app |
+| [`src/shell/`](src/shell/) | The app: boot, touch controls, the ••• menu and Mac menu bar, TV output, the Mario mod, logging and the icon |
+| [`patches/`](patches/) | Every change to the pinned OpenGOAL and libsm64 commits ([refreshing them](patches/README.md)) |
+| [`padmint.json`](padmint.json) | PadMint's recipe: the stages below, for iPhone/iPad and Mac |
+| [`scripts/build-personal.sh`](scripts/build-personal.sh) | Builds your own app and game-data folder from your disc, one stage at a time |
+| [`scripts/build-ios.sh`](scripts/build-ios.sh) | Builds the runtime, signs the game modules, translates shaders, assembles the app (Simulator, device or Mac) |
 | [`scripts/install-ios-device.sh`](scripts/install-ios-device.sh) | Builds, signs, installs and launches on a connected iPad or iPhone |
-| [`scripts/prepare-user-data-pack.sh`](scripts/prepare-user-data-pack.sh) | Builds a game-data pack from your extracted disc |
-| [`scripts/apply-texture-pack.sh`](scripts/apply-texture-pack.sh) | Builds a data pack with a texture pack applied |
+| [`scripts/prepare-user-data-pack.sh`](scripts/prepare-user-data-pack.sh) | Builds a game-data folder from your extracted disc |
+| [`scripts/apply-texture-pack.sh`](scripts/apply-texture-pack.sh) | Builds a game-data folder with a texture pack applied |
 | [`scripts/test-ios-touch.sh`](scripts/test-ios-touch.sh) | Plays title → Load Game → training course with real touches |
 | [`config/`](config/) | Which game modules are compiled and signed into the app |
-| [`docs/`](docs/) | The plan, the status log, evidence for each tested gate, the mods guide and the original research |
+| [`docs/`](docs/) | The plan, the status log, evidence for each tested gate, the mods and Mac guides and the original research |
 
 Changes to OpenGOAL go through `patches/ottsel-jak-project.patch`; refresh it with
-`scripts/snapshot-jak-project.sh write`. For a bug report, include the exact commit, device, iOS version
-and steps. Never attach game data, extracted files, a built app or saves.
+`scripts/snapshot-jak-project.sh write`. For a bug report, include the exact commit, device, OS version
+and steps. Never attach game data, extracted files, a built app, ROMs or saves.
 
 ## Credits and license
 
@@ -326,13 +404,14 @@ Ottsel stands on [OpenGOAL](https://github.com/open-goal/jak-project), whose tea
 wrote the GOAL compiler and runtime, and built the renderer Ottsel uses. ANGLE comes from
 [kivy/angle-builder](https://github.com/kivy/angle-builder); [SDL](https://github.com/libsdl-org/SDL)
 provides the window and input; [glslang](https://github.com/KhronosGroup/glslang) and
-[SPIRV-Cross](https://github.com/KhronosGroup/SPIRV-Cross) translate the shaders. The touch controls and
-menu follow [SunPad](https://github.com/chrissotraidis/sunpad) and
+[SPIRV-Cross](https://github.com/KhronosGroup/SPIRV-Cross) translate the shaders;
+[libsm64](https://github.com/libsm64/libsm64) (CC0) brings Mario for the Play as Mario mod. The touch
+controls and menu follow [SunPad](https://github.com/chrissotraidis/sunpad) and
 [BlueWake](https://github.com/chrissotraidis/bluewake). See
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for every component and its license.
 
 Ottsel is released under the [ISC License](LICENSE), the same license as OpenGOAL, so its changes can flow
 back upstream; the patch's changes to OpenGOAL's files stay under OpenGOAL's license and copyright.
 Ottsel is an unofficial community project and is not affiliated with or endorsed by Sony Interactive
-Entertainment or Naughty Dog. Jak and Daxter names and screenshots are used only to identify the game.
-The Ottsel app icon is original artwork.
+Entertainment, Naughty Dog or Nintendo. Jak and Daxter and Super Mario 64 names and screenshots are used
+only to identify the games. The Ottsel app icon is original artwork.
