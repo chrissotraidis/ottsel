@@ -1,13 +1,14 @@
 # Ottsel
 
 <p align="center">
-  <strong>Jak and Daxter: The Precursor Legacy, running natively on iPad, iPhone and Mac.</strong><br>
-  Naughty Dog's own game code, recovered by OpenGOAL and compiled ahead of time to signed ARM64. OpenGOAL's renderer on Metal, touch controls, controllers, TV output, cheats, texture packs and a Play as Mario mod.
+  <strong>A native iPad, iPhone and Mac port of Jak and Daxter: The Precursor Legacy, built on OpenGOAL's decompilation of the game.</strong><br>
+  Naughty Dog's original game code, decompiled into source by OpenGOAL and compiled ahead of time to signed ARM64. No emulator, no JIT. Touch controls, controllers, TV output, cheats, texture packs and a Play as Mario mod.
 </p>
 
 <p align="center">
   <img alt="iPad, iPhone and Mac" src="https://img.shields.io/badge/platform-iPad%20%7C%20iPhone%20%7C%20Mac-0A84FF?logo=apple">
   <img alt="iOS and iPadOS 18.5+" src="https://img.shields.io/badge/iOS%20%2F%20iPadOS-18.5%2B-0A84FF?logo=apple">
+  <a href="https://github.com/open-goal/jak-project"><img alt="A port of OpenGOAL's decompilation" src="https://img.shields.io/badge/decompilation-OpenGOAL-8E44AD"></a>
   <img alt="Runs on a physical iPad at 60 fps" src="https://img.shields.io/badge/iPad%20hardware-60%20fps-34C759">
   <img alt="OpenGL ES 3.0 on Metal through ANGLE" src="https://img.shields.io/badge/renderer-Metal%20(ANGLE)-5E5CE6">
   <img alt="Game code compiled ahead of time, no JIT" src="https://img.shields.io/badge/GOAL-ahead--of--time%20ARM64-FF9F0A">
@@ -36,14 +37,27 @@
 > maintenance. There is no audited percentage of AI-generated code. Status and test records describe
 > what was checked. This disclosure concerns Ottsel's workflow, not the authorship of OpenGOAL.
 
+## What is Ottsel?
+
+Ottsel is a **decompilation port**. The [OpenGOAL](https://github.com/open-goal/jak-project) project
+decompiled Jak and Daxter's PlayStation 2 code back into readable source and rebuilt the game natively for
+PC. Ottsel compiles that same source for iPad, iPhone and Mac and wraps it in an app made for them.
+
+| Question | Answer |
+| --- | --- |
+| Is it a decompilation? | Yes. The game's code is OpenGOAL's decompiled source of Naughty Dog's original code, compiled for Apple's ARM64 chips |
+| Is it an emulator? | No. Nothing emulates a PlayStation 2; the game runs as native code |
+| Is it a static recompilation? | No. Static recompilations such as [BlueWake](https://github.com/chrissotraidis/bluewake) translate a disc's machine code directly. Ottsel compiles human-readable source |
+| Is it a remake? | No. The gameplay is the original game's own logic; only the parts that once talked to PS2 hardware (graphics, sound, input, memory card) are OpenGOAL's replacements |
+| Who made what? | OpenGOAL's team decompiled the game and wrote its compiler, runtime and renderer. Ottsel adds the ARM64 compiler backend, the signed-code loader that iOS requires, and the iPad, iPhone and Mac app |
+| Is the game in this repository? | No. The decompiled source comes from OpenGOAL's repository when you build, and the levels, textures, music and voices come from your own disc |
+
 ## How Ottsel works
 
 Naughty Dog wrote Jak and Daxter in GOAL, their own Lisp-based language, and shipped it as compiled
-PlayStation 2 code. [OpenGOAL](https://github.com/open-goal/jak-project) turned that compiled code back
-into readable GOAL source with a decompiler, cleaned it up by hand, and wrote a new GOAL compiler, a C++
-runtime and an OpenGL renderer so it runs natively on PC. The gameplay you play is the original game's
-code, neither emulated nor remade; the parts that once talked to PS2 hardware (graphics, sound, input,
-memory card) are OpenGOAL's replacements.
+PlayStation 2 code. OpenGOAL turned that compiled code back into readable GOAL source with a decompiler,
+cleaned it up by hand, and wrote a new GOAL compiler, a C++ runtime and an OpenGL renderer so it runs
+natively on PC.
 
 Ottsel takes that to iPad, iPhone and Mac. OpenGOAL normally compiles and loads the game's code while it
 runs, and iOS does not allow an app to create executable code. Ottsel therefore compiles all of it to
@@ -69,7 +83,7 @@ flowchart LR
 
 | Piece | Where it comes from |
 | --- | --- |
-| The game's code (534 GOAL source files) | OpenGOAL's repository at a pinned commit, fetched by the build into `out/` |
+| The game's code (534 decompiled GOAL source files) | OpenGOAL's repository at a pinned commit, fetched by the build into `out/` |
 | Ottsel's changes to OpenGOAL | [`patches/ottsel-jak-project.patch`](patches/ottsel-jak-project.patch): the ARM64 compiler backend, the signed-module loader, the iOS and Mac runtime, renderer, sound and input work, and small changes to 30 of the game's GOAL files |
 | The app | [`src/shell/`](src/shell/): boot, touch controls, the ••• menu and Mac menu bar, TV output, the Mario mod, logging and the icon |
 | Levels, textures, audio and text | Your disc, through OpenGOAL's extractor, into your game-data folder |
@@ -290,12 +304,12 @@ links in issues or on Discord.
 </details>
 
 <details>
-<summary>Is this really the original game, or an emulator?</summary>
+<summary>Is this a decompilation or an emulator?</summary>
 
-It is the original game's code, running natively. OpenGOAL decompiled Naughty Dog's GOAL code into
-source and rebuilt the compiler and runtime around it; Ottsel compiles that source to ARM64 ahead of time.
-Nothing emulates a PlayStation 2, there is no JIT, no writable-and-executable memory and no code patching
-at run time. See [How Ottsel works](#how-ottsel-works).
+A decompilation. OpenGOAL decompiled Naughty Dog's GOAL code into source and rebuilt the compiler and
+runtime around it; Ottsel compiles that source to ARM64 ahead of time, so the original game's code runs
+natively. Nothing emulates a PlayStation 2, and there is no JIT, no writable-and-executable memory and no
+code patching at run time. See [What is Ottsel?](#what-is-ottsel).
 
 </details>
 
