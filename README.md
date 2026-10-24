@@ -130,9 +130,12 @@ You need:
 - for iPhone and iPad: iOS or iPadOS 18.5 or later with Developer Mode on, and an Apple ID to sign the
   app with Sideloadly or Xcode (a free Apple ID works, but its apps expire after seven days)
 
+Download [PadMint](https://github.com/chrissotraidis/padmint/releases/latest) (0.5.2 or newer), unzip it,
+double-click `PadMint.command`, choose Ottsel and your disc image, and click **Make my copy**.
+
 > [!NOTE]
-> PadMint's window lists Ottsel from PadMint's next release (after 0.5.1). Until then, run the same recipe
-> ([`padmint.json`](padmint.json)) from a checkout of PadMint and of this repository:
+> To run the same recipe ([`padmint.json`](padmint.json)) by hand, use a checkout of PadMint and of this
+> repository:
 >
 > ```sh
 > git clone https://github.com/chrissotraidis/padmint
