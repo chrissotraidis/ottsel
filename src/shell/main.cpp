@@ -28,6 +28,7 @@
 
 #include "font5x7.h"
 #include "ios_boot.h"
+#include "log_retention.h"
 #include "game/graphics/pipelines/ottsel_gl_view.h"
 #include "touch_controls.h"
 #include "external_display.h"
@@ -823,7 +824,9 @@ int main(int argc, char** argv) {
 
   // All runtime log output (lg:: + kernel Msg/printstd) goes to this file;
   // the surface renders its tail.  The iOS app bundle is read-only.
-  lg::set_file("ottsel-runtime.log", false, false, writable);
+  const bool runtime_log_preserved =
+      ottsel_preserve_previous_log(g_log_path, writable + "ottsel-runtime.previous.log");
+  lg::set_file("ottsel-runtime.log", false, !runtime_log_preserved, writable);
   lg::info("OTTSEL RUNTIME BOOT: pid={} writable={}", (u32)getpid(), writable);
 
   // OpenGOAL's renderer reads level files from the user-data root as soon as it exists.

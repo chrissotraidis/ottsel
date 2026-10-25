@@ -182,6 +182,8 @@ and game data stay. Deleting the app deletes its saves.
   relaunch. Leaving the app pauses the game and its sound, and you come back to the pause menu.
 - **Help and logs.** **••• → Help & Feedback** opens a GitHub device report with your device, OS version
   and frame rate filled in, shares the app's logs, and links the Discord and this repository.
+  **Share Logs…** includes the current and previous sessions. After a crash, reopen once and share
+  the logs before launching again; another launch replaces the previous session.
 - **Play as Mario.** **••• → Mods → Play as Mario** draws Super Mario 64's Mario in Jak's place, with his
   animations and voice, from your own US Super Mario 64 ROM. Jak still plays the game underneath, so every
   control, eco power and level works as before; **Mario's Moves** adds his triple jump and sideflip. See the

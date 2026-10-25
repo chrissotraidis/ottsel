@@ -1164,7 +1164,8 @@ UIColor* border_color(bool selected) {
 - (void)shareLogs {
   NSString* dir = g_hooks.log_dir ? @(g_hooks.log_dir) : @"";
   NSMutableArray* items = [NSMutableArray array];
-  for (NSString* name in @[ @"ottsel-runtime.log", @"ottsel-fault.log" ]) {
+  for (NSString* name in @[ @"ottsel-runtime.log", @"ottsel-fault.log",
+                            @"ottsel-runtime.previous.log", @"ottsel-fault.previous.log" ]) {
     NSString* path = [dir stringByAppendingPathComponent:name];
     if ([NSFileManager.defaultManager fileExistsAtPath:path]) [items addObject:[NSURL fileURLWithPath:path]];
   }
