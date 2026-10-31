@@ -118,6 +118,14 @@ an iPad, iPhone or Mac not listed here is the most useful thing you can send rig
 
 ## Build your own with PadMint
 
+**No Mac?** Building Ottsel for iPhone or iPad needs an Apple Silicon Mac today.
+Ottsel reads your own disc image while it builds, so it can't use [GitHub's
+Mac](https://github.com/chrissotraidis/padmint#no-mac-build-on-githubs-mac) the
+way some other ports do: that would mean uploading your game file. A Windows
+build is planned; [PadMint's Windows
+list](https://github.com/chrissotraidis/padmint/blob/main/docs/WINDOWS.md) shows
+where it stands.
+
 [PadMint](https://github.com/chrissotraidis/padmint) builds Ottsel on an Apple Silicon Mac from your own
 disc. It makes two things: the app (an `.ipa` for iPhone and iPad, or a zipped Mac app) and an
 **Ottsel game data** folder made from your disc, which you import in the app once.
