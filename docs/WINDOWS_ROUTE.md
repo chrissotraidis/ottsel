@@ -51,19 +51,30 @@ shell.
   the supported disc produced all 321 `out/jak1/iso` files byte-identical with
   and without them, including `KERNEL.CGO` (`c370e1c6…53590`) and `GAME.CGO`
   (`f8184914…66459`).
-- **The disc pipeline gets partway on ARM64 Windows.** With the owner's Black
+- **The disc pipeline completes on ARM64 Windows.** With the owner's Black
   Label disc, the Windows ARM64 extractor validated it (serial SCUS-97124, ELF
-  hash 7280758013604870207) and the decompiler finished. `goalc --isa arm64`
-  then stopped at 22% with an access violation while compiling
-  `goal_src/jak1/engine/dma/dma-disasm.gc` (38 object files written). The Mac
-  compiles the same input completely, so this is a Windows-specific compiler
-  bug to find next; a 32-bit `long` on Windows is the first suspect.
+  hash 7280758013604870207) and the decompiler finished. `goalc --isa arm64` at
+  first crashed with an access violation in `dma-disasm.gc`, the first file
+  that declares `(declare-file (debug))`. The compiler throws an exception for
+  that declaration and recompiled the whole file inside the `catch` block. On
+  Windows a `catch` block runs as a separate funclet, and doing that much work
+  inside it corrupted memory in the optimized ARM64 build. The patch now leaves
+  the handler first and retries afterwards, with the same result. With that
+  change `goalc` built all 1,068 targets. The Mac output is unchanged.
+- **Windows output is close to the Mac's, not identical.** Of 321 `out/jak1/iso`
+  files, 304 match the Mac byte for byte, and so do 959 of 1,039 object files.
+  The other 80 objects, which make up the 17 code containers including
+  `KERNEL.CGO` and `GAME.CGO`, have the same sizes and differ in a few
+  instruction fields: register choices and stack-slot offsets. That points to
+  the compiler visiting something in a different order on Windows. It should
+  behave the same, but that is unproven until the source of the difference is
+  found or a Windows-built game is tested on a device.
 
 ## Next steps
 
-1. Fix the Windows `goalc` crash in `dma-disasm.gc`, then compare all
-   `out/jak1/iso` files and the data pack with the Mac build above, on ARM64
-   and on a real x64 PC.
+1. Find why register and stack-slot choices differ between Windows and Mac
+   (likely container iteration order), make the 80 objects identical, then
+   repeat the comparison on a real x64 PC.
 2. Design the module boundary: which symbols the signed modules need from the
    app and which the app needs from them, the loader and identity check, and
    how `build-ios.sh` builds the game-free shell.

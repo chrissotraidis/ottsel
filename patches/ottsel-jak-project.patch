@@ -15087,7 +15087,7 @@ index f7e06690a..2f5078e99 100644
  
   private:
 diff --git a/goalc/compiler/Compiler.cpp b/goalc/compiler/Compiler.cpp
-index e61c302f7..dab1d9889 100644
+index e61c302f7..f29843163 100644
 --- a/goalc/compiler/Compiler.cpp
 +++ b/goalc/compiler/Compiler.cpp
 @@ -32,6 +32,8 @@ Compiler::Compiler(GameVersion version,
@@ -15099,7 +15099,24 @@ index e61c302f7..dab1d9889 100644
    m_listener.add_debugger(&m_debugger);
    m_listener.set_default_port(version);
    m_ts.add_builtin_types(m_version);
-@@ -307,6 +309,15 @@ void Compiler::color_object_file(FileEnv* env) {
+@@ -160,9 +162,15 @@ std::unique_ptr<FunctionEnv> Compiler::compile_top_level_function(const std::str
+   fe->set_segment(TOP_LEVEL_SEGMENT);
+ 
+   Val* result = nullptr;
++  bool debug_file = false;
+   try {
+     result = compile_error_guard(code, fe.get());
+-  } catch (DebugFileDeclareException& de) {
++  } catch (DebugFileDeclareException&) {
++    // Retry after the handler: compiling a whole file inside a catch block crashes
++    // optimized Windows ARM64 builds (the handler runs as a funclet).
++    debug_file = true;
++  }
++  if (debug_file) {
+     // (declare-file (debug)) will throw this exception. the reason for this is so that we can
+     // wrap the entire source code in a (when *debug-segment* ... ) and compile that version
+     // instead. therefore, it is recommended to put that declaration as early as possible so that
+@@ -307,6 +315,15 @@ void Compiler::color_object_file(FileEnv* env) {
    m_debug_stats.num_spills += num_spills_in_file;
  }
  
