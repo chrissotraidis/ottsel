@@ -1,14 +1,20 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index f6ddddf93..89772bf1c 100644
+index f6ddddf93..efef2fc17 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -6,6 +6,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
+@@ -6,6 +6,23 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
  project(jak)
  include(CTest)
  
 +# Ottsel H2: allow assembling the ARM64 kernel asm helpers for host bridge proofs.
-+if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
++if(CMAKE_SYSTEM_PROCESSOR MATCHES "[Aa][Rr][Mm]64|aarch64")
 +  enable_language(ASM)
++endif()
++
++# Windows reports ARM64 in capitals. Its CRC32C intrinsics (common/util/crc32.h)
++# need ARMv8.1, which clang-cl enables only when asked.
++if(WIN32 AND CMAKE_SYSTEM_PROCESSOR MATCHES "[Aa][Rr][Mm]64")
++  add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:/clang:-march=armv8.1-a>")
 +endif()
 +
 +# Ottsel H2: no-emit product flag.
@@ -20,15 +26,15 @@ index f6ddddf93..89772bf1c 100644
  # Include third-party modules
  set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/third-party/cmake/modules/)
  
-@@ -51,12 +62,20 @@ endif()
+@@ -51,12 +68,20 @@ endif()
  # Setup compiler flags
  if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
      message(STATUS "Clang Detected - Setting Defaults")
-+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64" OR CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
++    if(CMAKE_SYSTEM_PROCESSOR MATCHES "[Aa][Rr][Mm]64|aarch64" OR CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
 +        set(OG_ARCH_FLAGS "")
 +    else()
 +        set(OG_ARCH_FLAGS "")
-+    if(NOT (CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64" OR CMAKE_OSX_ARCHITECTURES MATCHES "arm64"))
++    if(NOT (CMAKE_SYSTEM_PROCESSOR MATCHES "[Aa][Rr][Mm]64|aarch64" OR CMAKE_OSX_ARCHITECTURES MATCHES "arm64"))
 +        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx")
 +    endif()
 +    endif()
@@ -42,6 +48,48 @@ index f6ddddf93..89772bf1c 100644
          -Wall \
          -Wno-c++11-narrowing \
          -Wno-c++98-compat \
+diff --git a/common/cross_os_debug/xdbg.cpp b/common/cross_os_debug/xdbg.cpp
+index 69758605c..754e9d873 100644
+--- a/common/cross_os_debug/xdbg.cpp
++++ b/common/cross_os_debug/xdbg.cpp
+@@ -24,7 +24,7 @@
+ #include <sys/types.h>
+ #include <sys/user.h>
+ #include <sys/wait.h>
+-#elif _WIN32
++#elif defined(_WIN32) && defined(_M_X64)
+ #define NOMINMAX
+ #define WIN32_LEAN_AND_MEAN
+ #include <Windows.h>
+@@ -309,7 +309,7 @@ bool single_step_now(const ThreadID& tid) {
+   return true;
+ }
+ 
+-#elif _WIN32
++#elif defined(_WIN32) && defined(_M_X64)
+ 
+ ThreadID::ThreadID(DWORD _pid, DWORD _tid) : pid(_pid), tid(_tid) {}
+ 
+@@ -725,7 +725,7 @@ bool set_regs_now(const ThreadID& tid, const Regs& out) {
+   // todo, set fprs.
+   return true;
+ }
+-#elif __APPLE__
++#elif defined(__APPLE__) || defined(_WIN32)  // ARM64 Windows: no debugger yet
+ ThreadID::ThreadID(const std::string& str) {}
+ 
+ std::string ThreadID::to_string() const {
+@@ -736,7 +736,9 @@ ThreadID get_current_thread_id() {
+   return ThreadID("not implemented on macOS");
+ }
+ 
+-bool attach_and_break(const ThreadID& tid);
++bool attach_and_break(const ThreadID& tid) {
++  return false;
++}
+ 
+ void allow_debugging() {
+   printf("allow_debugging not implemented on macOS\n");
 diff --git a/common/dma/gs.h b/common/dma/gs.h
 index f5171d3fd..7bd0bc608 100644
 --- a/common/dma/gs.h
@@ -475,6 +523,19 @@ index 2ce52cace..b7887956e 100644
      return;
    }
    size_t my_idx = (m_next_idx++ % m_nodes.size());
+diff --git a/common/util/os.cpp b/common/util/os.cpp
+index 45506835e..d06f8f916 100644
+--- a/common/util/os.cpp
++++ b/common/util/os.cpp
+@@ -36,7 +36,7 @@ size_t get_peak_rss() {
+ }
+ #endif
+ 
+-#ifdef _WIN32
++#if defined(_WIN32) && defined(_M_X64)
+ // windows has a __cpuid
+ #include <intrin.h>
+ #elif __x86_64__
 diff --git a/decompiler/level_extractor/extract_merc.cpp b/decompiler/level_extractor/extract_merc.cpp
 index 7e5af62b2..c5a6dcd0c 100644
 --- a/decompiler/level_extractor/extract_merc.cpp
@@ -500,9 +561,16 @@ index 7e5af62b2..c5a6dcd0c 100644
        }
        u32 new_tex = remap_texture(shader.original_tex, map);
 diff --git a/game/CMakeLists.txt b/game/CMakeLists.txt
-index 2a7b5c400..173afcb4e 100644
+index 2a7b5c400..ef81be9de 100644
 --- a/game/CMakeLists.txt
 +++ b/game/CMakeLists.txt
+@@ -1,5 +1,5 @@
+ # Set a more convenient ARM flag
+-if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64")
++if(CMAKE_SYSTEM_PROCESSOR MATCHES "[Aa][Rr][Mm]64")
+     set(ARM64_ARCH TRUE)
+     message(STATUS "ARM64 architecture detected")
+ else()
 @@ -7,6 +7,13 @@ else()
      message(STATUS "Non-ARM64 architecture detected")
  endif()
@@ -16755,6 +16823,36 @@ index b3c703c2a..e9d469e23 100644
  
    if (m_settings.emit_move_after_return) {
      auto result_reg = env->make_ireg(return_reg->type(), ret_reg_class);
+diff --git a/goalc/emitter/CodeTester.cpp b/goalc/emitter/CodeTester.cpp
+index bfe3c8d79..fe8b2b432 100644
+--- a/goalc/emitter/CodeTester.cpp
++++ b/goalc/emitter/CodeTester.cpp
+@@ -16,6 +16,13 @@
+ #ifdef OS_POSIX
+ #include <sys/mman.h>
+ #elif _WIN32
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#ifndef WIN32_LEAN_AND_MEAN
++#define WIN32_LEAN_AND_MEAN
++#endif
++#include <Windows.h>
+ #include "third-party/mman/mman.h"
+ #endif
+ 
+@@ -167,7 +174,11 @@ u64 CodeTester::execute() {
+ #if defined(__aarch64__)
+   // allegedly needed because ARM requires flushing after writing new instructions
+   // on x86 it does nothing
++#if defined(_WIN32)
++  FlushInstructionCache(GetCurrentProcess(), code_buffer, code_buffer_size);
++#else
+   __builtin___clear_cache((char*)code_buffer, (char*)code_buffer + code_buffer_size);
++#endif
+ #endif
+   // clang-format off
+ #if defined(__APPLE__) && defined(__aarch64__)
 diff --git a/goalc/emitter/IGen.cpp b/goalc/emitter/IGen.cpp
 index 61e0d9210..a01f1ec85 100644
 --- a/goalc/emitter/IGen.cpp

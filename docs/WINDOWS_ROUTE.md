@@ -40,17 +40,30 @@ shell.
   and starts them, using public code only. Both print their options, and
   `goalc.exe` offers Ottsel's `--isa arm64` code generation. The runner's git must
   not convert the patch to CRLF line endings.
-- **Native ARM64 Windows does not configure yet.** The pinned
-  `game/CMakeLists.txt` matches `CMAKE_SYSTEM_PROCESSOR` against lowercase
-  `arm64`, but Windows reports `ARM64`, so it falls back to the x64 NASM path.
-  The ARM64 path also assembles an Apple-style `.s` file with `-arch arm64`.
-  An ARM64 Windows host would need both changed.
+- **Native ARM64 Windows host tools build and run.** The patch now carries five
+  small Windows changes: case-insensitive `ARM64` checks (Windows reports it in
+  capitals), `-march=armv8.1-a` for clang-cl so the CRC32C intrinsics compile,
+  the x64-only debugger and `__cpuidex` paths limited to `_M_X64` (ARM64 Windows
+  uses the existing stubs), and `FlushInstructionCache` instead of
+  `__clear_cache` in `CodeTester.cpp`. With them, `goalc.exe` and
+  `extractor.exe` build natively on Windows 11 ARM64 with Visual Studio 2022's
+  clang-cl and run there. These changes do not affect the Mac: Mac builds from
+  the supported disc produced all 321 `out/jak1/iso` files byte-identical with
+  and without them, including `KERNEL.CGO` (`c370e1c6…53590`) and `GAME.CGO`
+  (`f8184914…66459`).
+- **The disc pipeline gets partway on ARM64 Windows.** With the owner's Black
+  Label disc, the Windows ARM64 extractor validated it (serial SCUS-97124, ELF
+  hash 7280758013604870207) and the decompiler finished. `goalc --isa arm64`
+  then stopped at 22% with an access violation while compiling
+  `goal_src/jak1/engine/dma/dma-disasm.gc` (38 object files written). The Mac
+  compiles the same input completely, so this is a Windows-specific compiler
+  bug to find next; a 32-bit `long` on Windows is the first suspect.
 
 ## Next steps
 
-1. Run extraction and `goalc --isa arm64` on a real x64 PC with the supported
-   Black Label disc and compare `KERNEL.CGO`, `GAME.CGO` and the data pack with
-   a Mac build.
+1. Fix the Windows `goalc` crash in `dma-disasm.gc`, then compare all
+   `out/jak1/iso` files and the data pack with the Mac build above, on ARM64
+   and on a real x64 PC.
 2. Design the module boundary: which symbols the signed modules need from the
    app and which the app needs from them, the loader and identity check, and
    how `build-ios.sh` builds the game-free shell.
