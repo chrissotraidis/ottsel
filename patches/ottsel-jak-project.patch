@@ -19212,7 +19212,7 @@ index 23906752a..d98b0e461 100644
          if (debug_server_ok) {
            debug_server.set_compiler(compiler.get(), &compiler_mutex);
 diff --git a/goalc/regalloc/Allocator_v2.cpp b/goalc/regalloc/Allocator_v2.cpp
-index 20e0788d2..cb44fc6f9 100644
+index 20e0788d2..32aa3e9d2 100644
 --- a/goalc/regalloc/Allocator_v2.cpp
 +++ b/goalc/regalloc/Allocator_v2.cpp
 @@ -272,67 +272,85 @@ struct AssignmentOrder {
@@ -19343,7 +19343,17 @@ index 20e0788d2..cb44fc6f9 100644
        }
      }
    }
-@@ -890,7 +908,7 @@ loop_top:
+@@ -624,7 +642,8 @@ std::vector<int> var_indices_of_function_crossers_large_to_small(const Allocatio
+     }
+   }
+ 
+-  std::sort(result.begin(), result.end(), [&](int a, int b) {
++  // stable: equal range sizes keep variable order, so every standard library allocates alike.
++  std::stable_sort(result.begin(), result.end(), [&](int a, int b) {
+     return cache.vars.at(a).range_size() > cache.vars.at(b).range_size();
+   });
+ 
+@@ -890,7 +909,7 @@ loop_top:
        auto& check_other_var = cache->vars.at(check_other_reg);
        if (check_other_var.assigned_to_reg()) {
          auto reg = check_other_var.reg();
@@ -19352,7 +19362,7 @@ index 20e0788d2..cb44fc6f9 100644
            if (check_register_assign_at(input, *cache, var_idx, instr_idx, reg)) {
              var.set_stack_slot_reg(reg, instr_idx);
              bonus.reg = reg;
-@@ -1012,7 +1030,7 @@ bool run_assignment_on_var(const AllocationInput& input,
+@@ -1012,7 +1031,7 @@ bool run_assignment_on_var(const AllocationInput& input,
        const auto& other_var = cache->vars.at(other_live_var_idx);
        if (other_var.assigned_to_reg() &&
            safe_overlap(input, *cache, var, other_var, var.first_live())) {
@@ -19361,7 +19371,7 @@ index 20e0788d2..cb44fc6f9 100644
            bool worked = check_register_assign(input, *cache, var_idx, other_var.reg());
            if (trace) {
              lg::print("m0 trying var {} in {}: {}\n", cache->iregs.at(var_idx).to_string(),
-@@ -1040,7 +1058,7 @@ bool run_assignment_on_var(const AllocationInput& input,
+@@ -1040,7 +1059,7 @@ bool run_assignment_on_var(const AllocationInput& input,
  
        if (other_var.assigned_to_reg() &&
            safe_overlap(input, *cache, var, other_var, var.last_live())) {

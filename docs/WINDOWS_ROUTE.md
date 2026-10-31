@@ -61,20 +61,26 @@ shell.
   inside it corrupted memory in the optimized ARM64 build. The patch now leaves
   the handler first and retries afterwards, with the same result. With that
   change `goalc` built all 1,068 targets. The Mac output is unchanged.
-- **Windows output is close to the Mac's, not identical.** Of 321 `out/jak1/iso`
-  files, 304 match the Mac byte for byte, and so do 959 of 1,039 object files.
-  The other 80 objects, which make up the 17 code containers including
-  `KERNEL.CGO` and `GAME.CGO`, have the same sizes and differ in a few
-  instruction fields: register choices and stack-slot offsets. That points to
-  the compiler visiting something in a different order on Windows. It should
-  behave the same, but that is unproven until the source of the difference is
-  found or a Windows-built game is tested on a device.
+- **Windows and Mac now compile the game identically.** Before the next fix,
+  80 of 1,039 objects differed in register choices and stack-slot offsets.
+  The cause was upstream OpenGOAL's `var_indices_of_function_crossers_large_to_small`
+  (`goalc/regalloc/Allocator_v2.cpp`). It sorted variables by range size alone, so
+  variables with equal sizes came out in an order that libc++ and Microsoft's
+  STL resolve differently. The patch makes that sort stable. With it, Windows
+  11 ARM64 and the Mac produce byte-identical `KERNEL.CGO`
+  (`ac7ac09b…bfec72`) and `GAME.CGO` (`06bd18ed…d2b695b`): 320 of 321
+  `out/jak1/iso` files and 1,037 of 1,039 objects. The remaining differences
+  are OpenGOAL's sample test level (`TSZ.DGO`, `test-zone.go`,
+  `test-actor-ag.go`), not code from the disc.
+- **This changes the Mac's own output.** Fixing tie order alters register
+  assignments in 16 code containers of the Mac build, including `KERNEL.CGO`
+  and `GAME.CGO`. The change should not alter behavior, but those builds must
+  be played on a device before a release uses this patch.
 
 ## Next steps
 
-1. Find why register and stack-slot choices differ between Windows and Mac
-   (likely container iteration order), make the 80 objects identical, then
-   repeat the comparison on a real x64 PC.
+1. Play a Mac build made with this patch on a device, then repeat the
+   Windows comparison on a real x64 PC.
 2. Design the module boundary: which symbols the signed modules need from the
    app and which the app needs from them, the loader and identity check, and
    how `build-ios.sh` builds the game-free shell.
