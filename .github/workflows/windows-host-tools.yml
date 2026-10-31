@@ -17,6 +17,8 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 90
     steps:
+      # Keep the 1 MB patch byte-exact: Windows git would otherwise convert it to CRLF.
+      - run: git config --global core.autocrlf false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
