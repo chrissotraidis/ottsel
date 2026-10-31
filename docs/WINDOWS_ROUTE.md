@@ -35,8 +35,11 @@ shell.
   x64 emulation has no AVX: a two-line AVX test program stops with
   `0xC000001D` (illegal instruction), and both tools exit at startup. A real x64
   PC, or Windows 11 24H2's emulator, is needed to run them.
-  `.github/workflows/windows-host-tools.yml` builds and starts them on GitHub's
-  x64 Windows runner, using public code only.
+- **They build and run on real x64 Windows.** `.github/workflows/windows-host-tools.yml`
+  builds both with Visual Studio 2022's clang-cl on GitHub's x64 Windows runner
+  and starts them, using public code only. Both print their options, and
+  `goalc.exe` offers Ottsel's `--isa arm64` code generation. The runner's git must
+  not convert the patch to CRLF line endings.
 - **Native ARM64 Windows does not configure yet.** The pinned
   `game/CMakeLists.txt` matches `CMAKE_SYSTEM_PROCESSOR` against lowercase
   `arm64`, but Windows reports `ARM64`, so it falls back to the x64 NASM path.
@@ -45,9 +48,9 @@ shell.
 
 ## Next steps
 
-1. Get the workflow's tools running on x64, then run extraction and
-   `goalc --isa arm64` on a real x64 PC with the supported Black Label disc and
-   compare `KERNEL.CGO`, `GAME.CGO` and the data pack with a Mac build.
+1. Run extraction and `goalc --isa arm64` on a real x64 PC with the supported
+   Black Label disc and compare `KERNEL.CGO`, `GAME.CGO` and the data pack with
+   a Mac build.
 2. Design the module boundary: which symbols the signed modules need from the
    app and which the app needs from them, the loader and identity check, and
    how `build-ios.sh` builds the game-free shell.
