@@ -9,6 +9,7 @@
 // no-emit linker; code pages flip RW -> RX exactly like the host H3 proof.
 
 #include "ios_boot.h"
+#include "log_retention.h"
 #include <TargetConditionals.h>
 #include "goal_pointer_policy.h"
 #include "game/sound/sdshim.h"
@@ -2321,8 +2322,11 @@ void ottsel_ios_set_writable_dir(const std::string& dir) {
   if (g_fault_log_fd >= 0) {
     close(g_fault_log_fd);
   }
+  const bool fault_log_preserved =
+      ottsel_preserve_previous_log(g_writable_dir + "ottsel-fault.log",
+                                  g_writable_dir + "ottsel-fault.previous.log");
   g_fault_log_fd = open((g_writable_dir + "ottsel-fault.log").c_str(),
-                        O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                        O_WRONLY | O_CREAT | (fault_log_preserved ? O_TRUNC : O_APPEND), 0644);
 }
 
 std::string ottsel_ios_writable_dir() {

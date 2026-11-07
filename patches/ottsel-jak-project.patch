@@ -15081,7 +15081,7 @@ index 06a8e6475..226b203c2 100644
    Val* compile_asm_add(const goos::Object& form, const goos::Object& rest, Env* env);
    Val* compile_asm_load_sym(const goos::Object& form, const goos::Object& rest, Env* env);
 diff --git a/goalc/compiler/IR.cpp b/goalc/compiler/IR.cpp
-index ce4f98f91..e67b01c07 100644
+index ce4f98f91..fa910d4c7 100644
 --- a/goalc/compiler/IR.cpp
 +++ b/goalc/compiler/IR.cpp
 @@ -1,11 +1,17 @@
@@ -16517,66 +16517,27 @@ index ce4f98f91..e67b01c07 100644
  }
  
  // ---- Swizzle VF
-@@ -2260,7 +3201,57 @@ void IR_SwizzleVF::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -2260,7 +3201,18 @@ void IR_SwizzleVF::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_SwizzleVF::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                      const AllocationResult& allocs,
                                      emitter::IR_Record irec) {
 -  throw std::runtime_error("NYI - IR_SwizzleVF::do_codegen_arm64");
-+  // dst lane i = src lane ((m_controlBytes >> (2*i)) & 3).
-+  // A cycle rotation is correct only for a permutation.  Cross-product
-+  // lowering uses duplicated selectors (for example 0x09 and 0x12), so take
-+  // an immutable SIMD snapshot before filling the destination lanes.
++  // Read every lane from an immutable snapshot. Permutation masks need the
++  // same protection as duplicate selectors: fixed lanes must be copied when
++  // dst != src, and a three/four-lane cycle must follow the selector direction.
 +  auto dst = get_reg_asm(m_dst, allocs, irec, m_use_coloring);
 +  auto src = get_reg_asm(m_src, allocs, irec, m_use_coloring);
-+  u8 sel[4] = {};
++  constexpr auto snapshot = emitter::V31;  // outside ARM64's allocator set
++  gen->add_instr(IGen::ARM64::mov_vf_vf(snapshot, src), irec);
 +  for (int i = 0; i < 4; i++) {
-+    sel[i] = (m_controlBytes >> (2 * i)) & 3;
-+  }
-+  bool seen_source[4] = {};
-+  bool has_duplicate_selector = false;
-+  for (const auto source : sel) {
-+    has_duplicate_selector |= seen_source[source];
-+    seen_source[source] = true;
-+  }
-+  if (has_duplicate_selector) {
-+    constexpr auto snapshot = emitter::V31;  // outside ARM64's allocator set
-+    gen->add_instr(IGen::ARM64::mov_vf_vf(snapshot, src), irec);
-+    for (int i = 0; i < 4; i++) {
-+      gen->add_instr(IGen::ARM64::umov_gpr32_vf_element(emitter::X16, snapshot, sel[i]), irec);
-+      gen->add_instr(IGen::ARM64::ins_vf_element_gpr32(dst, i, emitter::X16), irec);
-+    }
-+    return;
-+  }
-+  bool visited[4] = {};
-+  for (int i = 0; i < 4; i++) {
-+    if (visited[i] || sel[i] == i) {
-+      visited[i] = true;
-+      continue;
-+    }
-+    // walk the cycle starting at i: i -> sel[i] -> ...
-+    std::vector<int> cycle;
-+    int cur = i;
-+    while (!visited[cur]) {
-+      visited[cur] = true;
-+      cycle.push_back(cur);
-+      cur = sel[cur];
-+    }
-+    // rotate with two 32-bit scratch values (W16/W17):
-+    //   t = src.cycle[0]
-+    //   for j = 1..k: save src.cycle[j] in u, write dst.cycle[j] = t, t = u
-+    //   write dst.cycle[0] = t
-+    gen->add_instr(IGen::ARM64::umov_gpr32_vf_element(emitter::X16, src, cycle[0]), irec);
-+    for (size_t j = 1; j < cycle.size(); j++) {
-+      gen->add_instr(IGen::ARM64::umov_gpr32_vf_element(emitter::X17, src, cycle[j]), irec);
-+      gen->add_instr(IGen::ARM64::ins_vf_element_gpr32(dst, cycle[j], emitter::X16), irec);
-+      gen->add_instr(IGen::mov_gpr64_gpr64(*gen, emitter::X16, emitter::X17), irec);
-+    }
-+    gen->add_instr(IGen::ARM64::ins_vf_element_gpr32(dst, cycle[0], emitter::X16), irec);
++    const auto source_lane = (m_controlBytes >> (2 * i)) & 3;
++    gen->add_instr(IGen::ARM64::umov_gpr32_vf_element(emitter::X16, snapshot, source_lane), irec);
++    gen->add_instr(IGen::ARM64::ins_vf_element_gpr32(dst, i, emitter::X16), irec);
 +  }
  }
  
  // ---- Square Root VF
-@@ -2293,5 +3284,10 @@ void IR_SqrtVF::do_codegen_x86(emitter::ObjectGenerator* gen,
+@@ -2293,5 +3245,10 @@ void IR_SqrtVF::do_codegen_x86(emitter::ObjectGenerator* gen,
  void IR_SqrtVF::do_codegen_arm64(emitter::ObjectGenerator* gen,
                                   const AllocationResult& allocs,
                                   emitter::IR_Record irec) {
@@ -21141,10 +21102,10 @@ index 000000000..cc5460924
 +}
 diff --git a/tools/ottsel_a1/semantic_regressions.cpp b/tools/ottsel_a1/semantic_regressions.cpp
 new file mode 100644
-index 000000000..e742b5efc
+index 000000000..5c88aed87
 --- /dev/null
 +++ b/tools/ottsel_a1/semantic_regressions.cpp
-@@ -0,0 +1,1118 @@
+@@ -0,0 +1,1102 @@
 +// Ottsel A1.0 semantic ARM64 regression harness.
 +//
 +// The emission validator proves only that words decode as legal A64
@@ -21703,25 +21664,9 @@ index 000000000..e742b5efc
 +          "VPSHUF 0x88 preserves duplicated source lanes for .ppach itimes");
 +  }
 +
-+  // 30. IR_SwizzleVF also lowers cross-product swizzles with duplicated
-+  // selectors (0x09 / 0x12).  A cycle rewrite destroys those source lanes;
-+  // the ARM64 camera basis becomes reflected and quaternion blending collapses
-+  // toward identity.  Duplicate selectors must read an immutable V31 copy.
-+  {
-+    std::string path = file_util::get_file_path({"goalc/compiler/IR.cpp"});
-+    std::ifstream f(path);
-+    std::string body((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-+    const auto swizzle = body.find("void IR_SwizzleVF::do_codegen_arm64");
-+    const auto duplicate = body.find("has_duplicate_selector", swizzle);
-+    const auto snapshot = body.find("constexpr auto snapshot = emitter::V31", swizzle);
-+    const auto immutable_read = body.find("umov_gpr32_vf_element(emitter::X16, snapshot, sel[i])", swizzle);
-+    const auto lane_write = body.find("ins_vf_element_gpr32(dst, i, emitter::X16)", swizzle);
-+    check(swizzle != std::string::npos && duplicate != std::string::npos &&
-+              snapshot != std::string::npos && immutable_read != std::string::npos &&
-+              lane_write != std::string::npos && swizzle < duplicate && duplicate < snapshot &&
-+              snapshot < immutable_read && immutable_read < lane_write,
-+          "duplicate VF swizzles snapshot source lanes before cross-product writes");
-+  }
++  // VF swizzle semantics are executed for all 256 masks, with aliased and
++  // distinct registers, by Ottsel's test/arm64_swizzle_test.py. The former
++  // source-string check missed reversed permutation cycles and uncopied lanes.
 +}
 +
 +// ---------------------------------------------------------------------------
