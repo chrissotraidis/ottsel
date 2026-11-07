@@ -1,0 +1,60 @@
+name: Windows host tools
+# Builds Ottsel's patched OpenGOAL host tools (goalc, extractor) on GitHub's
+# x64 Windows runner and starts them. Public code only: no disc, no game data,
+# and nothing is uploaded. This is the first half of a Windows build route;
+# see docs/WINDOWS_ROUTE.md.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - patches/ottsel-jak-project.patch
+      - scripts/build-personal.sh
+      - .github/workflows/windows-host-tools.yml
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            arch: x64
+          - runner: windows-11-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      # Keep the 1 MB patch byte-exact: Windows git would otherwise convert it to CRLF.
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: OpenGOAL at Ottsel's pin, with Ottsel's patch
+        shell: bash
+        run: |
+          pin=$(sed -n 's/^pin=\([0-9a-f]*\).*/\1/p' scripts/build-personal.sh)
+          test -n "$pin"
+          git init -q jak-project
+          git -C jak-project fetch -q --depth 1 https://github.com/open-goal/jak-project "$pin"
+          git -C jak-project -c advice.detachedHead=false checkout -q FETCH_HEAD
+          git -C jak-project apply --binary --whitespace=nowarn ../patches/ottsel-jak-project.patch
+      - name: NASM (x64 only)
+        if: matrix.arch == 'x64'
+        run: choco install nasm -y --no-progress
+      - name: Build goalc and extractor
+        shell: cmd
+        run: |
+          for /f "usebackq delims=" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set "VS=%%i"
+          call "%VS%\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.arch }} || exit /b 1
+          set PATH=C:\Program Files\NASM;%PATH%
+          cmake -S jak-project -B jak-project\build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DSTATICALLY_LINK=OFF -DINSTALL_GTEST=OFF -DOTTSEL_NO_EMIT=ON || exit /b 1
+          ninja -C jak-project\build goalc extractor || exit /b 1
+      - name: Start both tools
+        shell: pwsh
+        run: |
+          Set-Location jak-project
+          foreach ($tool in 'goalc', 'extractor') {
+            & ".\build\bin\$tool.exe" --help
+            if ($LASTEXITCODE -ne 0) { throw "$tool exited with $LASTEXITCODE" }
+          }
