@@ -586,19 +586,20 @@ UIColor* border_color(bool selected) {
 }
 
 - (void)stick:(BOOL)camera x:(float)x y:(float)y {
-  if (_editing) return;
+  // A touch that began before the controls hid presses nothing.
+  if (_editing || _controls.hidden) return;
   (camera ? _pad.rx : _pad.lx) = x;
   (camera ? _pad.ry : _pad.ly) = y;
   [self publish];
 }
 
 - (void)cluster:(int)index mask:(uint16_t)mask {
-  _clusterMasks[index] = _editing ? 0 : mask;
+  _clusterMasks[index] = _editing || _controls.hidden ? 0 : mask;
   [self publish];
 }
 
 - (void)buttonDown:(OttselPadButton*)button {
-  if (_editing) return;
+  if (_editing || _controls.hidden) return;
   _pad.buttons |= button.mask;
   button.transform = CGAffineTransformMakeScale(0.92, 0.92);
   button.backgroundColor = [UIColor colorWithWhite:0.5 alpha:0.8];
@@ -882,10 +883,29 @@ UIColor* border_color(bool selected) {
 }
 
 - (void)updateVisibility {
-  const int mode = setting("controls");
-  const BOOL hidden = !_editing && (mode == 2 || (mode == 0 && _hiddenByInput));
+  const BOOL hidden = [self touchControlsHidden];
+  const BOOL changed = hidden != _controls.hidden;
   if (hidden && !_controls.hidden) [self clearInput];
   _controls.hidden = hidden;
+  // The menu's first row, Show Touch Controls, is there only while they are hidden.
+  if (changed) [self refreshMenu];
+}
+
+// "controls" is 0 Automatically (hidden while a keyboard, mouse or controller is in use, until a
+// finger touches the game), 1 Always or 2 Never. Moving the layout always shows them.
+- (BOOL)touchControlsHidden {
+  const int mode = setting("controls");
+  return !_editing && (mode == 2 || (mode == 0 && _hiddenByInput));
+}
+
+// Show Touch Controls and the menu's auto-hide choice write the same setting as the panel's
+// Show control. Showing them chooses Always, so the next controller or key press does not hide them
+// again until auto-hide is turned back on.
+- (void)setControlsMode:(int)mode {
+  set_setting("controls", mode);
+  _showControl.selectedSegmentIndex = std::clamp(mode, 0, 2);
+  [self updateVisibility];
+  [self refreshMenu];
 }
 
 // MARK: FPS counter
@@ -1240,6 +1260,13 @@ UIColor* border_color(bool selected) {
 
 - (UIMenu*)buildMenuElements {
   __weak OttselTouchOverlay* weakSelf = self;
+  const BOOL touchHidden = [self touchControlsHidden];
+  UIAction* showTouch = [self action:@"Show Touch Controls" symbol:@"hand.tap"
+                             handler:^{ [weakSelf setControlsMode:1]; }];
+  UIAction* autoHide = [self action:@"Auto-hide Touch Controls with Controller" symbol:@"gamecontroller"
+                            handler:^{ [weakSelf setControlsMode:setting("controls") == 0 ? 1 : 0]; }];
+  autoHide.subtitle = @"Also with a keyboard or mouse. A touch on the game shows them again.";
+  autoHide.state = setting("controls") == 0 ? UIMenuElementStateOn : UIMenuElementStateOff;
   NSMutableArray* render = [NSMutableArray array];
   const int scale = setting("render_scale");
   for (NSNumber* value in @[ @100, @75, @50 ]) {
@@ -1278,6 +1305,10 @@ UIColor* border_color(bool selected) {
          identifier:nil
             options:0
            children:@[
+             touchHidden ? showTouch
+                         : [self action:@"Hide Touch Controls" symbol:@"eye.slash"
+                                handler:^{ [weakSelf setControlsMode:2]; }],
+             autoHide,
              [self action:@"Touch Control Settings…" symbol:@"slider.horizontal.3"
                   handler:^{ [weakSelf openPanel]; }],
              [self action:@"Move Touch Controls" symbol:@"arrow.up.and.down.and.arrow.left.and.right"
@@ -1347,8 +1378,10 @@ UIColor* border_color(bool selected) {
                   handler:^{ [weakSelf openURL:kDiscordURL]; }],
              [self action:@"Ottsel on GitHub" symbol:@"safari" handler:^{ [weakSelf openURL:kGitHubURL]; }],
            ]];
-  return [UIMenu menuWithTitle:@"Ottsel"
-                      children:@[ display, [self cheatsMenu], [self modsMenu], controls, data, help, diagnostics ]];
+  NSMutableArray<UIMenuElement*>* items = [NSMutableArray array];
+  if (touchHidden) [items addObject:showTouch];
+  [items addObjectsFromArray:@[ display, [self cheatsMenu], [self modsMenu], controls, data, help, diagnostics ]];
+  return [UIMenu menuWithTitle:@"Ottsel" children:items];
 }
 
 // Mods that run inside the game. Play as Mario needs the player's own US Super Mario 64 ROM in
