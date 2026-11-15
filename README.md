@@ -182,7 +182,8 @@ and game data stay. Deleting the app deletes its saves.
   PlayStation pad; hardware keyboards use OpenGOAL's layout (W/A/S/D, I/J/K/L camera, Space/E/F/R, Return
   for Start). The touch controls hide as soon as you use either and come back on your next touch or when
   the controller disconnects. To keep them on screen with a controller, choose **••• → Show Touch
-  Controls**; **Touch Controls → Auto-hide Touch Controls with Controller** turns hiding back on.
+  Controls**; **Touch Controls → Auto-hide Touch Controls with Controller** turns hiding back on. (Both
+  come with Ottsel 0.1.1, which isn't released yet.)
 - **Play on a TV.** Connect a TV or monitor over HDMI or USB-C, or use AirPlay: the game fills it at the
   display's resolution and the iPad becomes the controller. Unplug and the game returns to the iPad.
 - **Cheats.** **••• → Cheats** switches OpenGOAL's cheats on in one tap: invincibility, infinite eco,
