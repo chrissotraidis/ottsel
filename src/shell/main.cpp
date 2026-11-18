@@ -471,6 +471,7 @@ bool acquire_mobile_gamepad(SDL_JoystickID instance_id) {
   }
   g_gamepad = gamepad;
   g_gamepad_id = SDL_GetGamepadID(gamepad);
+  hide_touch_overlay_for_native_input();
   lg::info("OTTSEL GAMEPAD: pad0 acquired id={} name={}", g_gamepad_id,
            SDL_GetGamepadName(gamepad) ? SDL_GetGamepadName(gamepad) : "unknown");
   return true;
@@ -499,10 +500,12 @@ void handle_mobile_gamepad_removed(SDL_JoystickID instance_id) {
     return;
   }
   release_mobile_gamepad("disconnect");
-  show_touch_overlay_again("controller disconnected");
   // SDL may deliver another GAMEPAD_ADDED event after the replacement is
   // enumerated; select now as well for already-present reconnects.
   select_mobile_gamepad();
+  if (!g_gamepad) {
+    show_touch_overlay_again("controller disconnected");
+  }
 }
 
 void handle_mobile_gamepad_remapped(SDL_JoystickID instance_id) {
